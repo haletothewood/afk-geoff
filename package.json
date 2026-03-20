@@ -1,0 +1,20 @@
+{
+  "name": "afk-geoff",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "aiwf": "node --import tsx ./packages/cli/src/index.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:developer-workflow": "node --import tsx ./scripts/developer-workflow-smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.7",
+    "@types/better-sqlite3": "^7.6.13",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "yaml": "^2.8.1"
+  }
+}

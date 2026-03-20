@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "baseUrl": ".",
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@afk-geoff/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "@afk-geoff/core": [
+        "packages/core/src/index.ts"
+      ],
+      "@afk-geoff/adapter-sqlite": [
+        "packages/adapter-sqlite/src/index.ts"
+      ],
+      "@afk-geoff/adapter-local-git": [
+        "packages/adapter-local-git/src/index.ts"
+      ],
+      "@afk-geoff/adapter-github": [
+        "packages/adapter-github/src/index.ts"
+      ],
+      "@afk-geoff/runtime-docker": [
+        "packages/runtime-docker/src/index.ts"
+      ],
+      "@afk-geoff/runner-claude": [
+        "packages/runner-claude/src/index.ts"
+      ],
+      "@afk-geoff/runner-codex": [
+        "packages/runner-codex/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "packages/**/*.ts"
+  ]
+}

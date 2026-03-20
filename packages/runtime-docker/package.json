@@ -1,0 +1,11 @@
+{
+  "name": "@afk-geoff/runtime-docker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@afk-geoff/core": "workspace:*",
+    "@afk-geoff/shared": "workspace:*"
+  }
+}

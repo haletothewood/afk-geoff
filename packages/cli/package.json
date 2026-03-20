@@ -1,0 +1,22 @@
+{
+  "name": "@afk-geoff/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aiwf": "./bin/aiwf.js"
+  },
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@afk-geoff/adapter-github": "workspace:*",
+    "@afk-geoff/adapter-local-git": "workspace:*",
+    "@afk-geoff/adapter-sqlite": "workspace:*",
+    "@afk-geoff/core": "workspace:*",
+    "@afk-geoff/runner-claude": "workspace:*",
+    "@afk-geoff/runner-codex": "workspace:*",
+    "@afk-geoff/runtime-docker": "workspace:*",
+    "@afk-geoff/shared": "workspace:*",
+    "commander": "^14.0.1",
+    "tsx": "^4.20.5"
+  }
+}
