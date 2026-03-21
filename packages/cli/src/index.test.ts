@@ -168,6 +168,84 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("Dispatch complete after 2 iteration(s): queue drained");
   });
 
+  it("Given an active run with a progress file, when status is used, then it shows live progress details for that run", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_active");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_active"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Implementing changes", iteration: 3, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["status"]);
+    });
+
+    expect(output).toContain("run_active");
+    expect(output).toContain("[running]");
+    expect(output).toContain("Implementing changes");
+    expect(output).toContain("iteration 3");
+  });
+
+  it("Given an active run with a progress file, when show is used for the work item, then it includes progress details", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_show_active");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_show_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/show-active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_show_active"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Writing tests", iteration: 7, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["show", backend!.id]);
+    });
+
+    expect(output).toContain("Active run: run_show_active");
+    expect(output).toContain("[running]");
+    expect(output).toContain("Writing tests");
+    expect(output).toContain("iteration 7");
+  });
+
   it("Given a stale running work item with a missing run directory, when status is refreshed, then the run and work item are marked failed", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(

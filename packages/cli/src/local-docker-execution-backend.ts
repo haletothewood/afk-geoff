@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner } from "@afk-geoff/core";
+import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
@@ -127,18 +127,35 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       ...runnerProcessEnv(this.runner, "/afk-run/runner-home"),
       ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
     };
-    const exitCode = await this.runtime.runWork({
-      image: this.config.docker.image,
-      worktreePath,
-      runDir,
-      envAllowlist: this.config.runner.envAllowlist,
-      extraEnv,
-      command: invocation.command,
-      args: invocation.args,
-      ...(workerStdin === undefined ? {} : { stdin: workerStdin }),
-      stdoutPath,
-      stderrPath
-    });
+
+    const progressPath = path.join(runDir, "progress.json");
+    writeProgress(progressPath, { phase: "running", message: "Worker started", iteration: 0, updatedAt: new Date().toISOString() });
+    const heartbeatInterval = setInterval(() => {
+      try {
+        const current = readProgress(progressPath);
+        writeProgress(progressPath, { ...current, updatedAt: new Date().toISOString() });
+      } catch {
+        // ignore heartbeat errors
+      }
+    }, 10_000);
+
+    let exitCode: number;
+    try {
+      exitCode = await this.runtime.runWork({
+        image: this.config.docker.image,
+        worktreePath,
+        runDir,
+        envAllowlist: this.config.runner.envAllowlist,
+        extraEnv,
+        command: invocation.command,
+        args: invocation.args,
+        ...(workerStdin === undefined ? {} : { stdin: workerStdin }),
+        stdoutPath,
+        stderrPath
+      });
+    } finally {
+      clearInterval(heartbeatInterval);
+    }
 
     const hostResultPath = path.join(runDir, "result.json");
 
@@ -203,6 +220,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       ...(pullRequest ? { pullRequest } : {})
     };
   }
+}
+
+function writeProgress(progressPath: string, progress: RunProgress): void {
+  fs.writeFileSync(progressPath, JSON.stringify(progress, null, 2));
+}
+
+function readProgress(progressPath: string): RunProgress {
+  return JSON.parse(fs.readFileSync(progressPath, "utf8")) as RunProgress;
 }
 
 function ensureRunnerHome(runner: AgentRunner, runDir: string): string {
