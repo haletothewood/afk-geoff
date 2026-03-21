@@ -12,6 +12,7 @@ import { runCli } from "./index.js";
 interface FixtureOptions {
   githubEnabled?: boolean;
   writeWorktreeChange?: boolean;
+  runnerScriptSuffix?: string;
   githubMirror?: MockGitHubMirror;
   githubIssueWorkSource?: WorkSource<string>;
   githubTokenResolver?: () => Promise<string | undefined>;
@@ -445,6 +446,47 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("Opened PR: https://example.com/pull_request/201");
   });
 
+  it("Given the worker leaves the worktree on a different branch, when run file is used with --pr, then AFK still pushes the intended publication branch", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      runnerScriptSuffix: 'execFileSync("git", ["checkout", "-B", "master"]);'
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Recover intended publication branch",
+        "",
+        "## Work Item Body",
+        "Ensure publish still works even if the worker changes the current branch.",
+        "",
+        "## Acceptance Criteria",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    });
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const publishedSha = execFileSync("git", ["rev-parse", `refs/heads/${run!.branchName}`], { cwd: run!.worktreePath, encoding: "utf8" }).trim();
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: run!.worktreePath, encoding: "utf8" }).trim();
+
+    expect(githubMirror.pullRequestRequests).toHaveLength(1);
+    expect(publishedSha).toBe(headSha);
+    expect(output).toContain("Opened PR: https://example.com/pull_request/201");
+  });
+
   it("Given an open AFK-created pull request, when undo is used, then the PR is closed, the branch is deleted, and the work item is marked failed", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
@@ -667,7 +709,7 @@ async function createFixture(tempDir: string, options: FixtureOptions = {}): Pro
   fs.mkdirSync(fakeBinDir, { recursive: true });
 
   writeFakeDocker(fakeBinDir);
-  writeRepoFiles(repoDir, options.writeWorktreeChange ?? true);
+  writeRepoFiles(repoDir, options.writeWorktreeChange ?? true, options.runnerScriptSuffix);
   process.env.PATH = `${fakeBinDir}:${process.env.PATH ?? ""}`;
 
   execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
@@ -795,7 +837,7 @@ function createSeedWorkItems(): Array<{
   ];
 }
 
-function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean): void {
+function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean, runnerScriptSuffix?: string): void {
   fs.writeFileSync(path.join(repoDir, "package.json"), JSON.stringify({ name: "fixture", private: true }, null, 2));
   fs.writeFileSync(path.join(repoDir, "README.md"), "# Fixture\n");
   fs.writeFileSync(
@@ -803,6 +845,7 @@ function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean): void {
     `#!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 const promptPath = process.argv.at(-1);
 const prompt = fs.readFileSync(promptPath, "utf8");
@@ -846,6 +889,7 @@ if (prompt.includes('"items": [')) {
 }
 
 ${writeWorktreeChange ? 'fs.writeFileSync(path.join(process.cwd(), "implemented.txt"), "done\\\\n");' : ""}
+${runnerScriptSuffix ?? ""}
 fs.writeFileSync(outputPath, JSON.stringify({
   status: "done",
   summary: "Completed work item",
