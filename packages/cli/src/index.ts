@@ -56,6 +56,11 @@ interface RunOutcome {
   prUrl?: string;
 }
 
+interface DetachedRunOptions {
+  verification?: string[];
+  issueUrl?: string;
+}
+
 export async function runCli(argv = process.argv, dependencies: CliDependencies = {}): Promise<void> {
   const program = new Command();
   program.name("afk").description("afk-geoff orchestrator");
@@ -550,6 +555,7 @@ async function runTrackedWorkItem(
   // Allow in_progress when this process was spawned as a detached worker by a --detach parent that
   // already set the work item status before spawning this background process.
   const isDetachedResume = !!process.env.AFK_DETACH_RUN_ID;
+  const detachedOptions = isDetachedResume ? consumeDetachedRunOptionsFromEnv() : {};
   const isRunnable = workItem.status === "todo" || workItem.status === "failed" || (isDetachedResume && workItem.status === "in_progress");
 
   if (!isRunnable) {
@@ -557,14 +563,15 @@ async function runTrackedWorkItem(
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
-  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? [])])];
+  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? []), ...(detachedOptions.verification ?? [])])];
+  const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
       requirement,
       workItem,
       verification,
-      ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+      ...(issueUrl ? { issueUrl } : {})
     });
   } catch (error) {
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -669,7 +676,7 @@ async function runWorkItemDetached(
   ctx: CliContext,
   workItemId: string,
   dependencies: CliDependencies,
-  options: { requirePullRequest?: boolean } = {}
+  options: DetachedRunOptions & { requirePullRequest?: boolean } = {}
 ): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
 
@@ -710,6 +717,11 @@ async function runWorkItemDetached(
   );
 
   const launchEnv: NodeJS.ProcessEnv = { ...process.env, AFK_DETACH_RUN_ID: runId };
+  const detachedOptions = JSON.stringify({
+    verification: options.verification ?? [],
+    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+  });
+  launchEnv.AFK_DETACH_RUN_OPTIONS = detachedOptions;
   const launchArgv: string[] = [
     process.execPath,
     process.argv[1] ?? "afk",
@@ -719,7 +731,16 @@ async function runWorkItemDetached(
   ];
 
   const launcher = dependencies.detachLauncher ?? spawnDetachedProcess;
-  const { pid } = launcher(launchArgv, launchEnv, ctx.repoRoot);
+  let pid = 0;
+  try {
+    ({ pid } = launcher(launchArgv, launchEnv, ctx.repoRoot));
+  } catch (error) {
+    const message = `Detached launch failed: ${formatErrorMessage(error)}`;
+    await ctx.store.updateRun(runId, { status: "failed", summary: message });
+    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
+    await refreshRequirementStatuses(ctx);
+    throw new Error(message);
+  }
 
   if (pid > 0) {
     fs.writeFileSync(
@@ -731,7 +752,6 @@ async function runWorkItemDetached(
   console.log(`Run ${runId}`);
   console.log(`  pnpm afk status`);
   console.log(`  pnpm afk runs`);
-  console.log(`  pnpm afk watch ${runId}`);
 
   return {};
 }
@@ -766,7 +786,11 @@ async function runExecutionBriefFileDetached(
     sourceSummary: `Imported from ${briefPath}`,
     printedSource: briefPath
   });
-  return runWorkItemDetached(ctx, workItem.id, dependencies, options);
+  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+    ...options,
+    verification: brief.verification,
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+  });
 }
 
 async function runGitHubIssueDetached(
@@ -790,10 +814,45 @@ async function runGitHubIssueDetached(
     sourceSummary: `Imported from ${issueUrl}`,
     printedSource: issueUrl
   });
-  return runWorkItemDetached(ctx, workItem.id, dependencies, options);
+  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+    ...options,
+    verification: brief.verification,
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+  });
 }
 
 // ---------------------------------------------------------------------------
+
+function consumeDetachedRunOptionsFromEnv(): DetachedRunOptions {
+  const source = process.env.AFK_DETACH_RUN_OPTIONS;
+  delete process.env.AFK_DETACH_RUN_OPTIONS;
+
+  if (!source) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(source) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    const maybeVerification = (parsed as { verification?: unknown }).verification;
+    const maybeIssueUrl = (parsed as { issueUrl?: unknown }).issueUrl;
+
+    const verification = Array.isArray(maybeVerification)
+      ? maybeVerification.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+    const issueUrl = typeof maybeIssueUrl === "string" && maybeIssueUrl.trim().length > 0 ? maybeIssueUrl : undefined;
+
+    return {
+      verification,
+      ...(issueUrl ? { issueUrl } : {})
+    };
+  } catch {
+    return {};
+  }
+}
 
 async function runExecutionBriefFile(
   ctx: CliContext,
