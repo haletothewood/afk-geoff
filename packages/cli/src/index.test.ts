@@ -33,6 +33,7 @@ describe("afk CLI BDD scenarios", () => {
   const originalCwd = process.cwd();
   const originalPath = process.env.PATH ?? "";
   const originalGhToken = process.env.GH_TOKEN;
+  const originalBreakWorktreeGit = process.env.AFK_TEST_BREAK_WORKTREE_GIT;
   let tempDir = "";
 
   beforeEach(() => {
@@ -47,6 +48,12 @@ describe("afk CLI BDD scenarios", () => {
       delete process.env.GH_TOKEN;
     } else {
       process.env.GH_TOKEN = originalGhToken;
+    }
+
+    if (originalBreakWorktreeGit === undefined) {
+      delete process.env.AFK_TEST_BREAK_WORKTREE_GIT;
+    } else {
+      process.env.AFK_TEST_BREAK_WORKTREE_GIT = originalBreakWorktreeGit;
     }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -451,7 +458,14 @@ describe("afk CLI BDD scenarios", () => {
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
       githubMirror,
-      runnerScriptSuffix: 'execFileSync("git", ["checkout", "-B", "master"]);'
+      runnerScriptSuffix: [
+        'const worktreeGitPath = path.join(process.cwd(), ".git");',
+        'if (fs.existsSync(worktreeGitPath) && fs.lstatSync(worktreeGitPath).isFile()) {',
+        '  fs.unlinkSync(worktreeGitPath);',
+        '  fs.cpSync(path.join(process.cwd(), "..", "..", "..", ".git"), worktreeGitPath, { recursive: true });',
+        '}',
+        'execFileSync("git", ["checkout", "-B", "master"]);'
+      ].join("\n")
     });
     const briefPath = path.join(fixture.repoDir, "brief.md");
     fs.writeFileSync(
@@ -479,12 +493,87 @@ describe("afk CLI BDD scenarios", () => {
 
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
-    const publishedSha = execFileSync("git", ["rev-parse", `refs/heads/${run!.branchName}`], { cwd: run!.worktreePath, encoding: "utf8" }).trim();
     const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: run!.worktreePath, encoding: "utf8" }).trim();
+    const publishedSha = execFileSync("git", ["ls-remote", "origin", `refs/heads/${run!.branchName}`], { cwd: run!.worktreePath, encoding: "utf8" })
+      .trim()
+      .split(/\s+/)[0];
 
     expect(githubMirror.pullRequestRequests).toHaveLength(1);
     expect(publishedSha).toBe(headSha);
     expect(output).toContain("Opened PR: https://example.com/pull_request/201");
+  });
+
+  it("Given Docker requires real git worktree metadata, when run file is used with --pr, then AFK preserves origin and still opens the PR", async () => {
+    process.env.AFK_TEST_BREAK_WORKTREE_GIT = "1";
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Preserve git worktree metadata in Docker",
+        "",
+        "## Work Item Body",
+        "Ensure the Docker runtime keeps the real git worktree and origin remote intact.",
+        "",
+        "## Acceptance Criteria",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    });
+
+    expect(githubMirror.pullRequestRequests).toHaveLength(1);
+    expect(output).toContain("Opened PR: https://example.com/pull_request/201");
+  });
+
+  it("Given post-run PR publishing fails, when run file is used with --pr, then the work item and run are marked failed instead of staying running", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.openPullRequestError = new Error("simulated PR failure");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Fail publish cleanly",
+        "",
+        "## Work Item Body",
+        "Ensure publish failures leave AFK in a recoverable failed state.",
+        "",
+        "## Acceptance Criteria",
+        "- The failed publish does not leave the run stuck in running"
+      ].join("\n")
+    );
+
+    await expect(fixture.cli(["run", "file", "brief.md", "--pr"])).rejects.toThrow("simulated PR failure");
+
+    const [requirement] = await fixture.store.listRequirements();
+    const [workItem] = await fixture.items(requirement!.id);
+    const [run] = await fixture.store.listRuns();
+
+    expect(workItem?.status).toBe("failed");
+    expect(run?.status).toBe("failed");
+    expect(run?.summary).toContain("Post-run publication failed: simulated PR failure");
   });
 
   it("Given an open AFK-created pull request, when undo is used, then the PR is closed, the branch is deleted, and the work item is marked failed", async () => {
@@ -926,6 +1015,7 @@ if (args[0] !== "run") {
 
 let worktree = process.cwd();
 const mounts = new Map();
+let workdir = process.cwd();
 let index = 1;
 while (index < args.length) {
   if (args[index] === "--rm") {
@@ -937,6 +1027,7 @@ while (index < args.length) {
     continue;
   }
   if (args[index] === "-w") {
+    workdir = args[index + 1];
     index += 2;
     continue;
   }
@@ -954,6 +1045,29 @@ while (index < args.length) {
     continue;
   }
   break;
+}
+
+for (const [container, host] of mounts.entries()) {
+  if (workdir.startsWith(container)) {
+    worktree = workdir.replace(container, host);
+    break;
+  }
+}
+
+if (process.env.AFK_TEST_BREAK_WORKTREE_GIT === "1") {
+  const expectedGitDir = path.resolve(worktree, "..", "..", "..", ".git");
+  const hasRealWorktreeMount = mounts.has(worktree);
+  const hasSharedGitMount = mounts.has(expectedGitDir);
+
+  if (!hasRealWorktreeMount || !hasSharedGitMount || workdir !== worktree) {
+    const worktreeGitPath = path.join(worktree, ".git");
+    if (fs.existsSync(worktreeGitPath) && fs.lstatSync(worktreeGitPath).isFile()) {
+      fs.unlinkSync(worktreeGitPath);
+      spawnSync("git", ["init"], { cwd: worktree, stdio: "inherit" });
+      spawnSync("git", ["config", "user.email", "agent@afk"], { cwd: worktree, stdio: "inherit" });
+      spawnSync("git", ["config", "user.name", "AFK Agent"], { cwd: worktree, stdio: "inherit" });
+    }
+  }
 }
 
 index += 1;
@@ -995,6 +1109,7 @@ class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
   public readonly pullRequestRequests: ChangeRequest[] = [];
   public readonly closedPullRequestNumbers: number[] = [];
   public readonly issueComments: Array<{ issueNumber: number; body: string }> = [];
+  public openPullRequestError: Error | undefined;
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
 
   public async mirrorRequirement(input: { owner: string; repo: string; requirement: Requirement }): Promise<ExternalRef> {
@@ -1016,6 +1131,9 @@ class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
   }
 
   public async openPullRequest(input: { owner: string; repo: string; changeRequest: ChangeRequest }): Promise<ExternalRef> {
+    if (this.openPullRequestError) {
+      throw this.openPullRequestError;
+    }
     this.pullRequestRequests.push(input.changeRequest);
     const ref = createRef("work_item", input.changeRequest.workItemId, "pull_request", this.pullRequestRequests.length + 200);
     this.pullRequestStates.set(ref.remoteNumber, { state: "open", merged: false });

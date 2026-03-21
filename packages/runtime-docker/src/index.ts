@@ -18,6 +18,7 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
 
   public async runWork(input: {
     image: string;
+    repoGitDir: string;
     worktreePath: string;
     runDir: string;
     envAllowlist: string[];
@@ -46,9 +47,13 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       ...(input.stdin === undefined ? [] : ["-i"]),
       ...userArgs,
       "-w",
-      "/workspace",
+      input.worktreePath,
       "-v",
       `${input.worktreePath}:/workspace`,
+      "-v",
+      `${input.worktreePath}:${input.worktreePath}`,
+      "-v",
+      `${input.repoGitDir}:${input.repoGitDir}`,
       "-v",
       `${input.runDir}:/afk-run`,
       ...envArgs,

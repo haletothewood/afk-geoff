@@ -554,61 +554,66 @@ async function runTrackedWorkItem(
     return {};
   }
 
-  if (!result.hasDiff) {
+  try {
+    if (!result.hasDiff) {
+      if (options.requirePullRequest) {
+        await ctx.store.updateWorkItemStatus(workItem.id, "failed");
+        const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (latestRun) {
+          await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Run completed without repo changes; no pull request could be opened" });
+        }
+        throw new Error(`Run completed without repo changes; no pull request could be opened for ${workItem.id}`);
+      }
+
+      await refreshRequirementStatuses(ctx);
+      return {};
+    }
+
+    if (ctx.resultPublisher && result.branchName && result.worktreePath) {
+      const publication = await ctx.resultPublisher.publish({
+        workItem,
+        branchName: result.branchName,
+        worktreePath: result.worktreePath,
+        baseBranch: ctx.config.baseBranch,
+        summary: result.summary,
+        agentName: "Geoff",
+        modelLabel: describeRunnerModel(ctx),
+        ...(result.pullRequest ? { pullRequest: result.pullRequest } : {})
+      });
+      if (publication.externalRef) {
+        await ctx.store.saveExternalRef(publication.externalRef);
+      }
+      const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+      await ctx.store.updateWorkItemStatus(workItem.id, "done");
+      if (latestRun) {
+        await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
+      }
+      await refreshRequirementStatuses(ctx);
+      return {
+        ...(publication.url ? { prUrl: publication.url } : {})
+      };
+    }
+
     if (options.requirePullRequest) {
       await ctx.store.updateWorkItemStatus(workItem.id, "failed");
       const latestRun = await latestRunForWorkItem(ctx, workItem.id);
       if (latestRun) {
-        await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Run completed without repo changes; no pull request could be opened" });
+        await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Pull request was required but publishing was unavailable" });
       }
-      throw new Error(`Run completed without repo changes; no pull request could be opened for ${workItem.id}`);
+      throw new Error(`Pull request was required but GitHub publishing was unavailable for ${workItem.id}`);
     }
 
-    await refreshRequirementStatuses(ctx);
-    return {};
-  }
-
-  if (ctx.resultPublisher && result.branchName && result.worktreePath) {
-    const publication = await ctx.resultPublisher.publish({
-      workItem,
-      branchName: result.branchName,
-      worktreePath: result.worktreePath,
-      baseBranch: ctx.config.baseBranch,
-      summary: result.summary,
-      agentName: "Geoff",
-      modelLabel: describeRunnerModel(ctx),
-      ...(result.pullRequest ? { pullRequest: result.pullRequest } : {})
-    });
-    if (publication.externalRef) {
-      await ctx.store.saveExternalRef(publication.externalRef);
-    }
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
     await ctx.store.updateWorkItemStatus(workItem.id, "done");
     if (latestRun) {
       await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
     }
     await refreshRequirementStatuses(ctx);
-    return {
-      ...(publication.url ? { prUrl: publication.url } : {})
-    };
+    return {};
+  } catch (error) {
+    await markWorkItemRunFailed(ctx, workItem.id, `Post-run publication failed: ${formatErrorMessage(error)}`);
+    throw error;
   }
-
-  if (options.requirePullRequest) {
-    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
-    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
-    if (latestRun) {
-      await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Pull request was required but publishing was unavailable" });
-    }
-    throw new Error(`Pull request was required but GitHub publishing was unavailable for ${workItem.id}`);
-  }
-
-  const latestRun = await latestRunForWorkItem(ctx, workItem.id);
-  await ctx.store.updateWorkItemStatus(workItem.id, "done");
-  if (latestRun) {
-    await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
-  }
-  await refreshRequirementStatuses(ctx);
-  return {};
 }
 
 async function runExecutionBriefFile(
@@ -981,6 +986,19 @@ async function latestRunForWorkItem(ctx: CliContext, workItemId: string) {
   return runs
     .filter((run) => run.workItemId === workItemId && run.mode === "work")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
+async function markWorkItemRunFailed(ctx: CliContext, workItemId: string, summary: string): Promise<void> {
+  await ctx.store.updateWorkItemStatus(workItemId, "failed");
+  const latestRun = await latestRunForWorkItem(ctx, workItemId);
+  if (latestRun) {
+    await ctx.store.updateRun(latestRun.id, { status: "failed", summary });
+  }
+  await refreshRequirementStatuses(ctx);
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function undoWorkItem(

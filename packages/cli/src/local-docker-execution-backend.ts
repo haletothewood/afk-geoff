@@ -145,6 +145,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     try {
       exitCode = await this.runtime.runWork({
         image: this.config.docker.image,
+        repoGitDir: path.join(this.repoRoot, ".git"),
         worktreePath,
         runDir,
         envAllowlist: this.config.runner.envAllowlist,
