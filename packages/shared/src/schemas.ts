@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const runProgressSchema = z.object({
+  phase: z.string(),
+  message: z.string(),
+  iteration: z.number().int(),
+  updatedAt: z.string()
+});
+
+export type RunProgress = z.infer<typeof runProgressSchema>;
+
 export const plannerOutputSchema = z.object({
   summary: z.string().min(1),
   items: z.array(

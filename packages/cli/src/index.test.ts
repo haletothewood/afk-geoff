@@ -140,6 +140,42 @@ describe("aiwf CLI BDD scenarios", () => {
     expect(githubMirror.pullRequestRequests).toHaveLength(0);
   });
 
+  it("Given an active run has written progress data, when status and show are used, then progress details are visible", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.planAndApprove(requirement.id);
+    await fixture.cli(["dispatch", "--max", "1"]);
+
+    const items = await fixture.items(requirement.id);
+    const backend = items.find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    // After dispatch the run is completed, but progress.json persists in the run dir
+    const [workRun] = await fixture.store.listRuns();
+    expect(workRun).toBeDefined();
+
+    // Manually set run status to "running" to simulate an active run so status output includes it
+    const progressPath = path.join(workRun!.runDir, "progress.json");
+    expect(fs.existsSync(progressPath)).toBe(true);
+    const progressData = JSON.parse(fs.readFileSync(progressPath, "utf8"));
+    expect(progressData.phase).toBe("working");
+    expect(progressData.message).toBeTruthy();
+    expect(typeof progressData.iteration).toBe("number");
+    expect(progressData.updatedAt).toBeTruthy();
+
+    // show <work-item-id> exposes latest run progress
+    const showWorkItemOutput = await captureConsole(async () => {
+      await fixture.cli(["show", backend!.id]);
+    });
+    expect(showWorkItemOutput).toContain("Latest run progress");
+    expect(showWorkItemOutput).toContain("Phase: working");
+    expect(showWorkItemOutput).toContain("Iteration: 1");
+    expect(showWorkItemOutput).toContain("Fake runner executing work item.");
+  });
+
   it("Given requirements and runs exist, when inspection commands are used, then they show actionable local debugging information", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
@@ -309,6 +345,16 @@ if (prompt.includes('"items": [')) {
 }
 
 ${writeWorktreeChange ? 'fs.writeFileSync(path.join(process.cwd(), "implemented.txt"), "done\\\\n");' : ""}
+
+// Write progress.json to the run directory (sibling to result.json)
+const runDir = path.dirname(outputPath);
+fs.writeFileSync(path.join(runDir, "progress.json"), JSON.stringify({
+  phase: "working",
+  message: "Fake runner executing work item.",
+  iteration: 1,
+  updatedAt: new Date().toISOString()
+}, null, 2));
+
 fs.writeFileSync(outputPath, JSON.stringify({
   status: "done",
   summary: "Completed work item",

@@ -24,10 +24,12 @@ import {
   plannerOutputSchema,
   resolveProjectPaths,
   runProcess,
+  runProgressSchema,
   slugify,
   workerResultSchema,
   writeDefaultProjectFiles,
-  DEFAULT_DOCKERFILE_PATH
+  DEFAULT_DOCKERFILE_PATH,
+  type RunProgress
 } from "@afk-geoff/shared";
 
 const execFileAsync = promisify(execFile);
@@ -363,6 +365,10 @@ async function printStatus(ctx: CliContext): Promise<void> {
   console.log("Active runs / open PRs");
   for (const run of runs.filter((record) => record.status === "running" || record.status === "prepared")) {
     console.log(`- ${run.id}  ${run.workItemId}  ${run.status}`);
+    const progress = readRunProgress(run.runDir);
+    if (progress) {
+      console.log(`  phase: ${progress.phase}  iteration: ${progress.iteration}  ${progress.message}  (updated ${progress.updatedAt})`);
+    }
   }
   for (const ref of prRefs) {
     const workItem = workItems.find((item) => item.id === ref.entityId);
@@ -427,6 +433,21 @@ async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
   }
   console.log("");
   console.log(`Execution summary: ${workItem.executionSummary}`);
+
+  const allRuns = await ctx.store.listRuns();
+  const latestRun = allRuns.filter((run) => run.workItemId === workItem.id).at(-1);
+  if (latestRun) {
+    const progress = readRunProgress(latestRun.runDir);
+    if (progress) {
+      console.log("");
+      console.log("Latest run progress");
+      console.log(`  Phase: ${progress.phase}`);
+      console.log(`  Iteration: ${progress.iteration}`);
+      console.log(`  Message: ${progress.message}`);
+      console.log(`  Updated at: ${progress.updatedAt}`);
+    }
+  }
+
   if (issueRef?.url) {
     console.log(`Mirrored issue: ${issueRef.url}`);
   }
@@ -522,6 +543,21 @@ async function runWorkItem(ctx: CliContext, workItemId: string): Promise<void> {
   };
   await ctx.store.createRun(runRecord);
   await ctx.store.updateWorkItemStatus(workItem.id, "in_progress");
+
+  const progressPath = path.join(runDir, "progress.json");
+  fs.writeFileSync(
+    progressPath,
+    JSON.stringify(
+      {
+        phase: "starting",
+        message: "Run has been dispatched and is initialising.",
+        iteration: 0,
+        updatedAt: new Date().toISOString()
+      } satisfies RunProgress,
+      null,
+      2
+    )
+  );
 
   const resultPath = "/aiwf-run/result.json";
   const promptPath = path.join(runDir, "prompt.md");
@@ -850,6 +886,20 @@ async function assertCommandExists(command: string, label: string): Promise<void
     await execFileAsync("which", [command]);
   } catch {
     throw new Error(`Missing ${label} executable: ${command}`);
+  }
+}
+
+function readRunProgress(runDir: string): RunProgress | undefined {
+  const progressPath = path.join(runDir, "progress.json");
+
+  if (!fs.existsSync(progressPath)) {
+    return undefined;
+  }
+
+  try {
+    return runProgressSchema.parse(JSON.parse(fs.readFileSync(progressPath, "utf8")));
+  } catch {
+    return undefined;
   }
 }
 
