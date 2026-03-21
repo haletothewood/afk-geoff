@@ -8,3 +8,4 @@ coverage
 .codex/
 scratchpad.md
 .koi/private/
+.claude/

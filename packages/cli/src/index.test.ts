@@ -76,6 +76,15 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("pnpm afk run file <path>");
   });
 
+  it("Given a newly initialized repo, when init scaffolds project files, then it includes the iteration loop template", async () => {
+    const fixture = await createFixture(tempDir);
+    const loopPath = path.join(fixture.repoDir, ".afk", "iteration-loop.md");
+    const loopTemplate = fs.readFileSync(loopPath, "utf8");
+
+    expect(loopTemplate).toContain("Map all behavior paths");
+    expect(loopTemplate).toContain("Run language-specific checks before PR");
+  });
+
   it("Given a captured requirement with no work items, when show is used, then it points to external planning plus run file", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
@@ -550,6 +559,33 @@ describe("afk CLI BDD scenarios", () => {
     expect(prompt).toContain("- pnpm test -- packages/cli/src/index.test.ts");
     expect(output).toContain("Imported execution brief");
     expect(output).toContain(`Work item ${items[0]!.id}`);
+  });
+
+  it("Given repo-level claude.md and .claude config, when a Claude run executes, then runner-home includes both", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, "claude.md"), "# Project Claude instructions\nUse deterministic output.\n");
+    fs.mkdirSync(path.join(fixture.repoDir, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(fixture.repoDir, ".claude", "settings.json"), JSON.stringify({ mode: "test" }, null, 2));
+
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const runnerHome = path.join(run!.runDir, "runner-home");
+    const copiedInstructions = path.join(runnerHome, "CLAUDE.md");
+    const copiedClaudeSettings = path.join(runnerHome, ".claude", "settings.json");
+
+    expect(fs.existsSync(copiedInstructions)).toBe(true);
+    expect(fs.existsSync(copiedClaudeSettings)).toBe(true);
+    expect(fs.readFileSync(copiedInstructions, "utf8")).toContain("Project Claude instructions");
+    expect(JSON.parse(fs.readFileSync(copiedClaudeSettings, "utf8"))).toEqual({ mode: "test" });
   });
 
   it("Given the worker writes malformed JSON with unescaped quotes, when run file is used, then AFK repairs the result and completes the run", async () => {
