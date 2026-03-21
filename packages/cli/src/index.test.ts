@@ -1262,25 +1262,44 @@ if (process.env.AFK_TEST_BREAK_WORKTREE_GIT === "1") {
 
 index += 1;
 const command = args[index];
-const commandArgs = args.slice(index + 1).map((value) => {
+let commandArgs = args.slice(index + 1).map((value) => {
+  let rewritten = value;
   for (const [container, host] of mounts.entries()) {
-    if (value.startsWith(container)) {
-      return value.replace(container, host);
-    }
+    rewritten = rewritten.split(container).join(host);
   }
-  return value;
+  return rewritten;
 });
 
-const promptArgIndex = commandArgs.findIndex((value) => value.endsWith(".md"));
-if (promptArgIndex >= 0) {
-  const originalPromptPath = commandArgs[promptArgIndex];
-  let prompt = fs.readFileSync(originalPromptPath, "utf8");
+const promptPaths = new Set();
+for (const value of commandArgs) {
+  const matches = value.match(/\\/[A-Za-z0-9._\\/-]+\\.md/g) ?? [];
+  for (const promptPath of matches) {
+    promptPaths.add(promptPath);
+  }
+}
+
+const rewrittenPromptPaths = new Map();
+for (const promptPath of promptPaths) {
+  if (!fs.existsSync(promptPath)) {
+    continue;
+  }
+  let prompt = fs.readFileSync(promptPath, "utf8");
   for (const [container, host] of mounts.entries()) {
     prompt = prompt.split(container).join(host);
   }
-  const rewrittenPromptPath = path.join(os.tmpdir(), \`afk-prompt-\${process.pid}-\${Date.now()}.md\`);
+  const rewrittenPromptPath = path.join(os.tmpdir(), \`afk-prompt-\${process.pid}-\${Date.now()}-\${Math.random().toString(16).slice(2)}.md\`);
   fs.writeFileSync(rewrittenPromptPath, prompt);
-  commandArgs[promptArgIndex] = rewrittenPromptPath;
+  rewrittenPromptPaths.set(promptPath, rewrittenPromptPath);
+}
+
+if (rewrittenPromptPaths.size > 0) {
+  commandArgs = commandArgs.map((value) => {
+    let rewritten = value;
+    for (const [originalPromptPath, rewrittenPromptPath] of rewrittenPromptPaths.entries()) {
+      rewritten = rewritten.split(originalPromptPath).join(rewrittenPromptPath);
+    }
+    return rewritten;
+  });
 }
 
 const result = spawnSync(command, commandArgs, {
