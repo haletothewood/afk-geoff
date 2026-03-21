@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -6,15 +7,29 @@ import type { WorkspaceRuntime } from "@afk-geoff/core";
 import { runProcess } from "@afk-geoff/shared";
 
 const execFileAsync = promisify(execFile);
+const DOCKERFILE_SHA_LABEL = "afk.dockerfile-sha";
 
 export class DockerWorkspaceRuntime implements WorkspaceRuntime {
   public async ensureImage(input: { cwd: string; image: string; dockerfilePath: string; buildContext: string }): Promise<void> {
+    const dockerfileSha = dockerfileFingerprint(input.dockerfilePath);
     try {
-      await execFileAsync("docker", ["image", "inspect", input.image], { cwd: input.cwd });
-      return;
+      const { stdout } = await execFileAsync(
+        "docker",
+        ["image", "inspect", input.image, "--format", `{{ index .Config.Labels "${DOCKERFILE_SHA_LABEL}" }}`],
+        { cwd: input.cwd }
+      );
+      if (stdout.trim() === dockerfileSha) {
+        return;
+      }
     } catch {
-      await execFileAsync("docker", ["build", "-t", input.image, "-f", input.dockerfilePath, input.buildContext], { cwd: input.cwd });
+      // fall through to rebuild when the image is missing or unlabeled
     }
+
+    await execFileAsync(
+      "docker",
+      ["build", "--label", `${DOCKERFILE_SHA_LABEL}=${dockerfileSha}`, "-t", input.image, "-f", input.dockerfilePath, input.buildContext],
+      { cwd: input.cwd }
+    );
   }
 
   public async runWork(input: {
@@ -88,18 +103,16 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
   }
 }
 
-function buildRuntimeEntrypoint(command: string, args: string[]): string {
+export function buildRuntimeEntrypoint(command: string, args: string[]): string {
   const executable = [command, ...args].map(shellQuote).join(" ");
   const bootstrap = [
     "if [ -f package.json ]; then",
     "  if [ -f pnpm-lock.yaml ]; then",
-    "    corepack enable >/dev/null 2>&1 || true",
-    "    pnpm install --frozen-lockfile",
+    "    corepack pnpm install --frozen-lockfile",
     "  elif [ -f package-lock.json ]; then",
     "    npm ci",
     "  elif [ -f yarn.lock ]; then",
-    "    corepack enable >/dev/null 2>&1 || true",
-    "    yarn install --frozen-lockfile",
+    "    corepack yarn install --frozen-lockfile",
     "  fi",
     "fi"
   ].join("\n");
@@ -109,4 +122,8 @@ function buildRuntimeEntrypoint(command: string, args: string[]): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+export function dockerfileFingerprint(dockerfilePath: string): string {
+  return crypto.createHash("sha256").update(fs.readFileSync(dockerfilePath)).digest("hex");
 }
