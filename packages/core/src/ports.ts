@@ -79,8 +79,11 @@ export interface CodeHost {
   assertRepository(cwd: string): Promise<string>;
   getRemoteSlug(cwd: string): Promise<{ owner: string; repo: string } | undefined>;
   createWorktree(input: { cwd: string; branchName: string; baseBranch: string; path: string }): Promise<void>;
+  removeWorktree(input: { cwd: string; path: string; force?: boolean }): Promise<void>;
   commitAll(input: { cwd: string; message: string }): Promise<{ created: boolean; sha?: string }>;
   pushBranch(input: { cwd: string; branchName: string }): Promise<void>;
+  deleteRemoteBranch(input: { cwd: string; branchName: string }): Promise<void>;
+  deleteLocalBranch(input: { cwd: string; branchName: string }): Promise<void>;
   hasDiffAgainst(input: { cwd: string; baseBranch: string }): Promise<boolean>;
 }
 
@@ -109,6 +112,7 @@ export interface IssueMirror {
 
 export interface ChangeRequestPublisher {
   openPullRequest(input: { owner: string; repo: string; changeRequest: ChangeRequest }): Promise<ExternalRef>;
+  closePullRequest(input: { owner: string; repo: string; pullNumber: number }): Promise<void>;
   syncPullRequests(input: { owner: string; repo: string; refs: ExternalRef[] }): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>>;
 }
 

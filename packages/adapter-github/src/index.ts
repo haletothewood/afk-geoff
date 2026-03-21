@@ -11,6 +11,7 @@ export interface OctokitLike {
   };
   pulls: {
     create(input: { owner: string; repo: string; title: string; head: string; base: string; body: string }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
+    update(input: { owner: string; repo: string; pull_number: number; state: "open" | "closed" }): Promise<unknown>;
     get(input: { owner: string; repo: string; pull_number: number }): Promise<{ data: { state: string; merged: boolean } }>;
   };
 }
@@ -130,6 +131,15 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
       body: `${input.changeRequest.body}\n\n<!-- afk:work_item:${input.changeRequest.workItemId} -->`
     });
     return this.buildExternalRef("work_item", input.changeRequest.workItemId, "pull_request", response.data.id, response.data.number, response.data.html_url);
+  }
+
+  public async closePullRequest(input: { owner: string; repo: string; pullNumber: number }): Promise<void> {
+    await this.client.pulls.update({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.pullNumber,
+      state: "closed"
+    });
   }
 
   public async syncPullRequests(input: { owner: string; repo: string; refs: ExternalRef[] }): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>> {

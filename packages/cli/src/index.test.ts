@@ -308,6 +308,54 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("Opened PR: https://example.com/pull_request/201");
   });
 
+  it("Given an open AFK-created pull request, when undo is used, then the PR is closed, the branch is deleted, and the work item is marked failed", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Undoable PR from a brief",
+        "",
+        "## Work Item Body",
+        "Implement direct execution from a hand-written brief file and publish a PR.",
+        "",
+        "## Acceptance Criteria",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+
+    const [requirement] = await fixture.store.listRequirements();
+    const [workItem] = await fixture.items(requirement!.id);
+    expect(workItem).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["undo", workItem!.id]);
+    });
+
+    const refreshed = await fixture.items(requirement!.id);
+    expect(refreshed[0]?.status).toBe("failed");
+    expect(refreshed[0]?.executionSummary).toContain("Undone by operator");
+    expect(githubMirror.closedPullRequestNumbers).toEqual([201]);
+    expect(output).toContain("Closed PR #201");
+
+    const statusOutput = await captureConsole(async () => {
+      await fixture.cli(["status"]);
+    });
+    expect(statusOutput).not.toContain("PR #201");
+  });
+
   it("Given GH_TOKEN is unset but GitHub auth can be resolved, when run file is used with --pr, then publishing still works", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
@@ -764,7 +812,9 @@ class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
   public readonly requirementMirrorIds: string[] = [];
   public readonly workItemMirrorIds: string[] = [];
   public readonly pullRequestRequests: ChangeRequest[] = [];
+  public readonly closedPullRequestNumbers: number[] = [];
   public readonly issueComments: Array<{ issueNumber: number; body: string }> = [];
+  private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
 
   public async mirrorRequirement(input: { owner: string; repo: string; requirement: Requirement }): Promise<ExternalRef> {
     this.requirementMirrorIds.push(input.requirement.id);
@@ -786,11 +836,21 @@ class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
 
   public async openPullRequest(input: { owner: string; repo: string; changeRequest: ChangeRequest }): Promise<ExternalRef> {
     this.pullRequestRequests.push(input.changeRequest);
-    return createRef("work_item", input.changeRequest.workItemId, "pull_request", this.pullRequestRequests.length + 200);
+    const ref = createRef("work_item", input.changeRequest.workItemId, "pull_request", this.pullRequestRequests.length + 200);
+    this.pullRequestStates.set(ref.remoteNumber, { state: "open", merged: false });
+    return ref;
   }
 
-  public async syncPullRequests(): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>> {
-    return [];
+  public async closePullRequest(input: { owner: string; repo: string; pullNumber: number }): Promise<void> {
+    this.closedPullRequestNumbers.push(input.pullNumber);
+    this.pullRequestStates.set(input.pullNumber, { state: "closed", merged: false });
+  }
+
+  public async syncPullRequests(input: { owner: string; repo: string; refs: ExternalRef[] }): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>> {
+    return input.refs.map((ref) => ({
+      refId: ref.id,
+      ...(this.pullRequestStates.get(ref.remoteNumber) ?? { state: "open", merged: false })
+    }));
   }
 }
 

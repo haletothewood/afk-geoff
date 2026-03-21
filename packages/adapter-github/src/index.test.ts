@@ -74,6 +74,9 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
         pullCreates.push(input);
         return { data: { id: 44, number: 55, html_url: "https://example.com/pulls/55" } };
       },
+      async update() {
+        return {};
+      },
       async get() {
         return { data: { state: "closed", merged: true } };
       }
@@ -188,6 +191,17 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(pullState.merged).toBe(true);
   });
 
+  it("Given a pull request exists, when closePullRequest is called, then the adapter closes it through GitHub", async () => {
+    const client = createMockClient();
+    const mirror = new GitHubMirror("token", client);
+
+    await expect(mirror.closePullRequest({
+      owner: "acme",
+      repo: "demo",
+      pullNumber: 55
+    })).resolves.toBeUndefined();
+  });
+
   it("Given a GitHub issue URL, when the issue body is an execution brief, then it becomes a normalized work source input", async () => {
     const source = new GitHubIssueWorkSource("token", createMockClient());
 
@@ -205,8 +219,11 @@ describe("GitHubMirror adapter scenarios", () => {
       assertRepository: vi.fn(),
       getRemoteSlug: vi.fn(),
       createWorktree: vi.fn(),
+      removeWorktree: vi.fn(),
       commitAll: vi.fn(),
       pushBranch: vi.fn(),
+      deleteRemoteBranch: vi.fn(),
+      deleteLocalBranch: vi.fn(),
       hasDiffAgainst: vi.fn()
     };
     const publisher = new GitHubPullRequestPublisher(codeHost, mirror, {

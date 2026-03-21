@@ -32,6 +32,11 @@ export class LocalGitCodeHost implements CodeHost {
     await execFileAsync("git", ["checkout", "-B", input.branchName], { cwd: input.path });
   }
 
+  public async removeWorktree(input: { cwd: string; path: string; force?: boolean }): Promise<void> {
+    const args = ["worktree", "remove", ...(input.force ? ["--force"] : []), input.path];
+    await execFileAsync("git", args, { cwd: input.cwd });
+  }
+
   public async commitAll(input: { cwd: string; message: string }): Promise<{ created: boolean; sha?: string }> {
     const { stdout: status } = await execFileAsync("git", ["status", "--short"], { cwd: input.cwd });
 
@@ -47,6 +52,14 @@ export class LocalGitCodeHost implements CodeHost {
 
   public async pushBranch(input: { cwd: string; branchName: string }): Promise<void> {
     await execFileAsync("git", ["push", "-u", "origin", input.branchName], { cwd: input.cwd });
+  }
+
+  public async deleteRemoteBranch(input: { cwd: string; branchName: string }): Promise<void> {
+    await execFileAsync("git", ["push", "origin", "--delete", input.branchName], { cwd: input.cwd });
+  }
+
+  public async deleteLocalBranch(input: { cwd: string; branchName: string }): Promise<void> {
+    await execFileAsync("git", ["branch", "-D", input.branchName], { cwd: input.cwd });
   }
 
   public async hasDiffAgainst(input: { cwd: string; baseBranch: string }): Promise<boolean> {
