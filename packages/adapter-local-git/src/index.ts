@@ -52,10 +52,11 @@ export class LocalGitCodeHost implements CodeHost {
 
   public async pushBranch(input: { cwd: string; branchName: string }): Promise<void> {
     const { stdout: currentBranch } = await execFileAsync("git", ["branch", "--show-current"], { cwd: input.cwd });
-    if (currentBranch.trim() !== input.branchName) {
-      await execFileAsync("git", ["branch", "-f", input.branchName, "HEAD"], { cwd: input.cwd });
+    if (currentBranch.trim() === input.branchName) {
+      await execFileAsync("git", ["push", "-u", "origin", input.branchName], { cwd: input.cwd });
+      return;
     }
-    await execFileAsync("git", ["push", "-u", "origin", input.branchName], { cwd: input.cwd });
+    await execFileAsync("git", ["push", "origin", `HEAD:refs/heads/${input.branchName}`], { cwd: input.cwd });
   }
 
   public async deleteRemoteBranch(input: { cwd: string; branchName: string }): Promise<void> {

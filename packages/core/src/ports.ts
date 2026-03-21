@@ -91,6 +91,7 @@ export interface WorkspaceRuntime {
   ensureImage(input: { cwd: string; image: string; dockerfilePath: string; buildContext: string }): Promise<void>;
   runWork(input: {
     image: string;
+    repoGitDir: string;
     worktreePath: string;
     runDir: string;
     envAllowlist: string[];

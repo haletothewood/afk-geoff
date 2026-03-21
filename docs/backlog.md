@@ -15,7 +15,7 @@ These are the next three features to build in order.
 
 Why now:
 - it fixes the biggest current usability gap: active runs are too opaque
-- it creates the foundation for both timeout handling and watch mode
+- it creates the foundation for timeout handling, watch mode, and safe background execution
 
 ### 2. Run timeouts and heartbeat expiry
 
@@ -23,11 +23,11 @@ Why next:
 - once heartbeat exists, AFK can fail hung runs predictably
 - this is the core reliability guardrail for unattended execution
 
-### 3. `afk watch <runId>`
+### 3. Detached background execution
 
 Why third:
-- once progress and heartbeat exist, watch mode becomes straightforward and genuinely useful
-- it gives the operator a clean monitoring surface without changing the execution model
+- once progress and timeout handling exist, AFK can safely run in the background without trapping the operator in a blocked terminal
+- this unlocks the actual “carry on with other things” workflow the product is aiming for
 
 ## Recently Landed
 
@@ -35,6 +35,8 @@ Why third:
 - `run file <path> --pr` one-shot branch and PR flow
 - ports/adapters refactor for work sources, execution backends, and result publishers
 - `run issue <github-issue-url>` as a work source
+- standardized PR bodies with manual QA guidance
+- `afk undo` for open AFK PRs and branches
 
 ## P0
 
@@ -62,7 +64,22 @@ Scope:
 - fail runs when heartbeat or progress updates go stale
 - record a clear failure summary for timeout versus ordinary worker failure
 
-### 3. `afk watch <runId>`
+### 3. Detached background execution
+
+Why:
+- AFK runs should not force the operator to keep a foreground terminal blocked for long-running work
+- background mode becomes much more usable once heartbeat and timeout handling exist
+
+Scope:
+- add `--detach` support for `afk run ...`
+- return immediately with the run id and clear follow-up commands
+- persist enough process metadata to support later watch and cancel flows
+- fail clearly if AFK cannot keep the run alive after detaching
+
+Notes:
+- keep foreground mode as the default for debugging and short runs
+
+### 4. `afk watch <runId>`
 
 Why:
 - operators need a clean way to follow a live job without manually reopening `logs`
@@ -71,7 +88,7 @@ Scope:
 - stream `stdout.log`, `stderr.log`, and `progress.json`
 - show the current phase and iteration while the run is active
 
-### 4. PR/auth preflight hardening
+### 5. PR/auth preflight hardening
 
 Why:
 - `--pr` should fail fast before spending time on a long run if push or PR auth is broken
@@ -83,7 +100,7 @@ Scope:
 
 ## P1
 
-### 5. Configurable model selection and runner presets
+### 6. Configurable model selection and runner presets
 
 Why:
 - the operator should be able to choose the cost/capability tradeoff for a run instead of accepting a hidden default
@@ -98,19 +115,23 @@ Scope:
 Notes:
 - the abstraction should be “model preference” or “model id”, not Claude-only naming in the core
 
-### 6. Structured PR bodies with manual QA guidance
+### 7. PR comment resolution pass
 
 Why:
-- a successful AFK run should open a reviewable PR, not just a diff
-- reviewers should get a consistent summary of what changed, what was verified automatically, and how to manually QA the work
+- AFK-generated pull requests should support a second execution pass driven by human review comments
+- this creates a practical reviewer loop instead of forcing the operator to manually translate comments back into a new brief
 
 Scope:
-- define a standard PR body structure
-- include at least summary, automated verification, manual QA steps, and notable risks or follow-ups
-- make manual QA instructions part of the worker result contract so the publisher can render them consistently
-- keep the final PR body shape predictable across runs
+- ingest unresolved review comments from an open pull request
+- run against the existing PR branch rather than creating a new branch
+- push follow-up commits to the same PR
+- report what comments were addressed and what verification ran
 
-### 7. Optional GitHub Actions backend
+Notes:
+- scope the first version to AFK-created pull requests
+- do not auto-resolve comments in the first version
+
+### 8. Optional GitHub Actions backend
 
 Why:
 - for GitHub-backed repos, the cleanest unattended path is often “issue in, PR out” from CI instead of the local machine
@@ -119,7 +140,15 @@ Scope:
 - add a remote execution backend behind the existing execution backend port
 - keep local Docker execution as the portable default
 
-### 8. Source-aware run updates
+### 9. Explicit backend selection
+
+Why:
+- AFK should make it obvious whether a run is local or remote
+
+Scope:
+- support an explicit backend selector instead of burying environment-specific behavior in flags
+
+### 10. Source-aware run updates
 
 Why:
 - imported GitHub issues should receive useful progress or completion comments without the CLI having to special-case them inline
@@ -128,38 +157,13 @@ Scope:
 - publish final run summaries back to the source issue when appropriate
 - later extend to progress comments or status notes
 
-### 9. Cleanup command
+### 11. Cleanup command
 
 Why:
 - local dogfooding leaves runs, worktrees, and state artifacts behind
 
 Scope:
 - add a supported command to prune local run artifacts safely
-
-### 10. Explicit backend selection
-
-Why:
-- AFK should make it obvious whether a run is local or remote
-
-Scope:
-- support an explicit backend selector instead of burying environment-specific behavior in flags
-
-### 11. Undo open AFK PRs and branches
-
-Why:
-- AFK should have a safe rollback path for its own unmerged work without asking the operator to manually clean up Git state and local ledger state
-
-Scope:
-- only support undo for AFK-created pull requests and branches
-- only support the open, unmerged case
-- close the open PR
-- optionally delete the branch
-- mark the local work item and run state appropriately
-
-Non-goals:
-- no automatic revert flow for merged PRs
-- no history rewriting
-- no attempt to undo non-AFK or manually-created PRs
 
 ## P2
 

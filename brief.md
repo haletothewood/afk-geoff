@@ -1,39 +1,38 @@
 # AFK Execution Brief
 
 ## Requirement
-AFK runs are still too opaque while they are in progress. An operator can see that a run exists and can inspect logs, but cannot easily tell whether the worker is alive, what phase it is in, or whether it is making forward progress. The next step is to add explicit run progress reporting and heartbeat data so active jobs become observable.
+AFK now has the beginnings of live run progress, but it still lacks the reliability guardrail that matters most for unattended execution: hung runs can sit in `running` forever. Once a worker stops making progress, the operator needs AFK to detect that condition, fail the run cleanly, and leave the queue in a recoverable state instead of requiring manual diagnosis.
 
 ## Work Item Title
-Add live run progress and heartbeat reporting
+Add run timeouts and heartbeat expiry handling
 
 ## Work Item Body
-Implement a progress reporting mechanism for active AFK work runs.
+Implement timeout and stale-heartbeat handling for active AFK work runs.
 
-The worker should periodically write structured progress data into the run directory, using a stable file such as `/afk-run/progress.json`. The intent is not to expose every internal model detail, but to provide enough operator-facing state to answer basic questions like:
-- is the run still alive?
-- what phase is it in?
-- what iteration or step is it currently on?
+AFK should treat the run directory as the source of truth and use the existing `progress.json` heartbeat data to decide whether a worker is still alive. The feature should cover both of these cases:
+- the worker process never finishes and stops updating progress
+- the worker process keeps existing but the progress heartbeat goes stale beyond an allowed threshold
 
-At minimum, the progress payload should include:
-- `phase`
-- `message`
-- `iteration`
-- `updatedAt`
+Add explicit timeout configuration for work runs and fail them predictably when either:
+- the overall run exceeds its configured time budget, or
+- the progress heartbeat has not been updated within a configured stale window
 
-Use the existing run directory as the source of truth so this works for the current local Docker backend without requiring Docker-specific introspection. Then surface that progress in the CLI:
-- `pnpm afk status` should show useful progress for active runs
-- `pnpm afk show <work-item-id>` should expose the latest known progress for the relevant run
+When AFK marks a run as failed for one of these reasons, it should:
+- set the run status to `failed`
+- move the work item out of `in_progress`
+- record a clear summary that distinguishes timeout from stale heartbeat from ordinary worker failure
 
-Keep the implementation modest and portable. This feature should improve visibility for the current backend while fitting the port/adaptor shape already in place.
+Keep the implementation portable and focused on the existing local Docker backend. Do not add Docker-specific inspection. Use the run directory and existing run lifecycle paths so this also fits future detached mode and watch mode cleanly.
 
-Do not block on token accounting or runner-specific metrics. If a runner cannot cheaply provide more detail, AFK should still report heartbeat and phase cleanly.
+Do not block on cancellation or background execution in this task. This feature is specifically about failing hung runs cleanly and predictably.
 
 ## Acceptance Criteria
-- Active work runs write a structured progress file into the run directory.
-- The progress payload includes at least `phase`, `message`, `iteration`, and `updatedAt`.
-- `pnpm afk status` shows live progress details for active runs instead of only `running`.
-- `pnpm afk show <work-item-id>` includes the latest progress details for the active run when available.
-- CLI tests cover progress visibility for an active run.
+- AFK supports configurable timeout values for work runs and heartbeat staleness checks.
+- A run with a stale or missing heartbeat beyond the configured window is marked `failed` automatically.
+- A run that exceeds the configured overall timeout is marked `failed` automatically.
+- The failed run summary clearly identifies whether the failure was caused by timeout or stale heartbeat.
+- The affected work item is no longer left in `in_progress` after timeout expiry.
+- CLI tests cover both timeout and stale-heartbeat failure paths.
 
 ## Verification
 - pnpm typecheck
