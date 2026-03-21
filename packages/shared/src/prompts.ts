@@ -54,6 +54,7 @@ export function buildWorkerPrompt(input: {
   requirement: Requirement;
   workItem: WorkItem;
   verification: string[];
+  progressPath: string;
   resultPath: string;
   issueUrl?: string;
   overrideText?: string;
@@ -63,8 +64,19 @@ export function buildWorkerPrompt(input: {
 
   return `You are executing exactly one work item in a git worktree.
 
+Write progress updates to this exact path while the run is active:
+${input.progressPath}
+
 Write a JSON file to this exact path when you are done:
 ${input.resultPath}
+
+The progress JSON must match this schema:
+{
+  "phase": "short current phase",
+  "message": "short current activity summary",
+  "iteration": 1,
+  "updatedAt": "ISO timestamp"
+}
 
 The JSON must match this schema:
 {
@@ -82,6 +94,8 @@ Rules:
 - Work only on the assigned item.
 - Use git normally inside this worktree.
 - Create a commit if you changed repo files.
+- Overwrite the progress file when you start, when you move to a new major phase, and before long-running verification.
+- Keep the progress fields truthful; use concise operator-facing phase and message values.
 - Run verification commands before marking status "done".
 - Use "blocked" only if a real dependency or ambiguity prevented completion.
 - If you include PR data, keep "pr.body" focused on what changed and put reviewer steps in "pr.manualQa".

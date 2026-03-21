@@ -58,6 +58,13 @@ export interface ExternalRef {
   updatedAt: string;
 }
 
+export interface RunProgress {
+  phase: string;
+  message: string;
+  iteration: number;
+  updatedAt: string;
+}
+
 export interface ChangeRequest {
   workItemId: string;
   branchName: string;
