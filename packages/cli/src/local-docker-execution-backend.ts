@@ -73,6 +73,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     });
     await this.store.updateWorkItemStatus(input.workItem.id, "in_progress");
 
+    const progressContainerPath = "/afk-run/progress.json";
     const resultPath = "/afk-run/result.json";
     const promptPath = path.join(runDir, "prompt.md");
     const manifestPath = path.join(runDir, "manifest.json");
@@ -86,6 +87,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       requirement: input.requirement,
       workItem: input.workItem,
       verification: input.verification,
+      progressPath: progressContainerPath,
       resultPath,
       ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
       ...(overrideText ? { overrideText } : {})
@@ -129,7 +131,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     };
 
     const progressPath = path.join(runDir, "progress.json");
-    writeProgress(progressPath, { phase: "running", message: "Worker started", iteration: 0, updatedAt: new Date().toISOString() });
+    writeProgress(progressPath, { phase: "starting", message: "Worker started", iteration: 0, updatedAt: new Date().toISOString() });
     const heartbeatInterval = setInterval(() => {
       try {
         const current = readProgress(progressPath);

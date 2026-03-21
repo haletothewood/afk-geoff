@@ -444,7 +444,7 @@ async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
   const runs = await ctx.store.listRuns();
   const activeRun = runs
     .filter((run) => run.workItemId === workItem.id && (run.status === "running" || run.status === "prepared"))
-    .at(-1);
+    .at(0);
   if (activeRun) {
     const progress = readRunProgress(activeRun.runDir);
     if (progress) {
