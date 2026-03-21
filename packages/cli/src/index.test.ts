@@ -202,7 +202,7 @@ describe("afk CLI BDD scenarios", () => {
     });
     fs.writeFileSync(
       path.join(runDir, "progress.json"),
-      JSON.stringify({ phase: "running", message: "Implementing changes", iteration: 3, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+      JSON.stringify({ phase: "running", message: "Implementing changes", iteration: 3, updatedAt: new Date().toISOString() }, null, 2)
     );
 
     const output = await captureConsole(async () => {
@@ -241,7 +241,7 @@ describe("afk CLI BDD scenarios", () => {
     });
     fs.writeFileSync(
       path.join(runDir, "progress.json"),
-      JSON.stringify({ phase: "running", message: "Writing tests", iteration: 7, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+      JSON.stringify({ phase: "running", message: "Writing tests", iteration: 7, updatedAt: new Date().toISOString() }, null, 2)
     );
 
     const output = await captureConsole(async () => {
@@ -270,6 +270,8 @@ describe("afk CLI BDD scenarios", () => {
     fs.mkdirSync(newRunDir, { recursive: true });
 
     await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    const oldRunCreatedAt = new Date(Date.now() - 10000).toISOString();
+    const newRunCreatedAt = new Date(Date.now() - 5000).toISOString();
     await fixture.store.createRun({
       id: "run_old_active",
       workItemId: backend!.id,
@@ -278,8 +280,8 @@ describe("afk CLI BDD scenarios", () => {
       branchName: "afk/old-active",
       worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_old_active"),
       runDir: oldRunDir,
-      createdAt: "2026-03-21T11:00:00.000Z",
-      updatedAt: "2026-03-21T11:00:00.000Z"
+      createdAt: oldRunCreatedAt,
+      updatedAt: oldRunCreatedAt
     });
     await fixture.store.createRun({
       id: "run_new_active",
@@ -289,17 +291,17 @@ describe("afk CLI BDD scenarios", () => {
       branchName: "afk/new-active",
       worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_new_active"),
       runDir: newRunDir,
-      createdAt: "2026-03-21T12:00:00.000Z",
-      updatedAt: "2026-03-21T12:00:00.000Z"
+      createdAt: newRunCreatedAt,
+      updatedAt: newRunCreatedAt
     });
 
     fs.writeFileSync(
       path.join(oldRunDir, "progress.json"),
-      JSON.stringify({ phase: "running", message: "Old run", iteration: 1, updatedAt: "2026-03-21T11:05:00.000Z" }, null, 2)
+      JSON.stringify({ phase: "running", message: "Old run", iteration: 1, updatedAt: new Date().toISOString() }, null, 2)
     );
     fs.writeFileSync(
       path.join(newRunDir, "progress.json"),
-      JSON.stringify({ phase: "verifying", message: "Newest run", iteration: 4, updatedAt: "2026-03-21T12:05:00.000Z" }, null, 2)
+      JSON.stringify({ phase: "verifying", message: "Newest run", iteration: 4, updatedAt: new Date().toISOString() }, null, 2)
     );
 
     const output = await captureConsole(async () => {
@@ -341,6 +343,85 @@ describe("afk CLI BDD scenarios", () => {
     const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_stale");
     expect(staleRun?.status).toBe("failed");
     expect(staleRun?.summary).toContain("Run directory missing");
+  });
+
+  it("Given a running work item that exceeds the configured run timeout, when status is refreshed, then the run and work item are marked failed with a timeout summary", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_timeout");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_timeout",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/timeout",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_timeout"),
+      runDir,
+      createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1 hour ago
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    });
+
+    // Set a very short timeout so the 1-hour-old run is considered timed out
+    rewriteConfig(fixture.repoDir, { githubEnabled: false, timeouts: { runTimeoutMs: 1, heartbeatStaleMs: 5 * 60 * 1000 } });
+
+    await fixture.cli(["status"]);
+
+    const refreshed = await fixture.items(requirement.id);
+    expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
+    const timedOutRun = (await fixture.store.listRuns()).find((run) => run.id === "run_timeout");
+    expect(timedOutRun?.status).toBe("failed");
+    expect(timedOutRun?.summary).toContain("Run timeout exceeded");
+  });
+
+  it("Given a running work item with a stale heartbeat beyond the configured window, when status is refreshed, then the run and work item are marked failed with a heartbeat stale summary", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_stale_heartbeat");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_stale_heartbeat",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/stale-heartbeat",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_stale_heartbeat"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    // Write a progress file with an old timestamp
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Stuck", iteration: 2, updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString() }, null, 2)
+    );
+
+    // Set a very short heartbeat stale window and a long run timeout so only heartbeat fires
+    rewriteConfig(fixture.repoDir, { githubEnabled: false, timeouts: { runTimeoutMs: 24 * 60 * 60 * 1000, heartbeatStaleMs: 1 } });
+
+    await fixture.cli(["status"]);
+
+    const refreshed = await fixture.items(requirement.id);
+    expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
+    const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_stale_heartbeat");
+    expect(staleRun?.status).toBe("failed");
+    expect(staleRun?.summary).toContain("Heartbeat stale");
   });
 
   it("Given a failed AFK work item, when run is invoked again, then it is retried", async () => {
@@ -924,7 +1005,7 @@ async function firstRequirement(store: SqliteStateStore): Promise<Requirement> {
   return requirement;
 }
 
-function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[] }): void {
+function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
   const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
@@ -934,6 +1015,9 @@ function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runne
   config.runner.requiredEnv = options.runnerRequiredEnv ?? [];
   config.runner.envAllowlist = [];
   config.verification = [];
+  if (options.timeouts) {
+    config.timeouts = options.timeouts;
+  }
   fs.writeFileSync(configPath, YAML.stringify(config));
 }
 

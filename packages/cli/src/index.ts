@@ -883,24 +883,63 @@ async function autoSync(ctx: CliContext): Promise<void> {
 
 async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
   const runs = await ctx.store.listRuns();
+  const now = Date.now();
+  const { runTimeoutMs, heartbeatStaleMs } = ctx.config.timeouts;
 
   for (const run of runs) {
     if (run.status !== "running") {
       continue;
     }
 
-    if (fs.existsSync(run.runDir)) {
+    if (!fs.existsSync(run.runDir)) {
+      await ctx.store.updateRun(run.id, {
+        status: "failed",
+        summary: "Run directory missing; treating interrupted run as failed"
+      });
+
+      const workItem = await ctx.store.getWorkItem(run.workItemId);
+      if (workItem?.status === "in_progress") {
+        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      }
+
       continue;
     }
 
-    await ctx.store.updateRun(run.id, {
-      status: "failed",
-      summary: "Run directory missing; treating interrupted run as failed"
-    });
+    const runAgeMs = now - new Date(run.createdAt).getTime();
+    if (runAgeMs > runTimeoutMs) {
+      const ageSeconds = Math.round(runAgeMs / 1000);
+      const limitSeconds = Math.round(runTimeoutMs / 1000);
+      await ctx.store.updateRun(run.id, {
+        status: "failed",
+        summary: `Run timeout exceeded: run active for ${ageSeconds}s (limit: ${limitSeconds}s)`
+      });
 
-    const workItem = await ctx.store.getWorkItem(run.workItemId);
-    if (workItem?.status === "in_progress") {
-      await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      const workItem = await ctx.store.getWorkItem(run.workItemId);
+      if (workItem?.status === "in_progress") {
+        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      }
+
+      continue;
+    }
+
+    const progress = readRunProgress(run.runDir);
+    if (progress) {
+      const heartbeatAgeMs = now - new Date(progress.updatedAt).getTime();
+      if (heartbeatAgeMs > heartbeatStaleMs) {
+        const ageSeconds = Math.round(heartbeatAgeMs / 1000);
+        const limitSeconds = Math.round(heartbeatStaleMs / 1000);
+        await ctx.store.updateRun(run.id, {
+          status: "failed",
+          summary: `Heartbeat stale: progress not updated for ${ageSeconds}s (limit: ${limitSeconds}s)`
+        });
+
+        const workItem = await ctx.store.getWorkItem(run.workItemId);
+        if (workItem?.status === "in_progress") {
+          await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+        }
+
+        continue;
+      }
     }
   }
 }
