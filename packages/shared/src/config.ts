@@ -28,6 +28,12 @@ export const projectConfigSchema = z.object({
     dockerfilePath: z.string().min(1).optional()
   }),
   verification: z.array(z.string().min(1)).default([]),
+  timeouts: z
+    .object({
+      runTimeoutMs: z.number().int().positive().default(30 * 60 * 1000),
+      heartbeatStaleMs: z.number().int().positive().default(5 * 60 * 1000)
+    })
+    .default({ runTimeoutMs: 30 * 60 * 1000, heartbeatStaleMs: 5 * 60 * 1000 }),
   prompts: z
     .object({
       plan: z.string().min(1).optional(),

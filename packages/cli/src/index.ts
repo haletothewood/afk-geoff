@@ -883,24 +883,96 @@ async function autoSync(ctx: CliContext): Promise<void> {
 
 async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
   const runs = await ctx.store.listRuns();
+  const now = Date.now();
+  const { runTimeoutMs, heartbeatStaleMs } = ctx.config.timeouts;
 
   for (const run of runs) {
     if (run.status !== "running") {
       continue;
     }
 
-    if (fs.existsSync(run.runDir)) {
+    if (!fs.existsSync(run.runDir)) {
+      await ctx.store.updateRun(run.id, {
+        status: "failed",
+        summary: "Run directory missing; treating interrupted run as failed"
+      });
+
+      const workItem = await ctx.store.getWorkItem(run.workItemId);
+      if (workItem?.status === "in_progress") {
+        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      }
+
       continue;
     }
 
-    await ctx.store.updateRun(run.id, {
-      status: "failed",
-      summary: "Run directory missing; treating interrupted run as failed"
-    });
+    const runAgeMs = now - new Date(run.createdAt).getTime();
+    if (runAgeMs > runTimeoutMs) {
+      await terminateRunWorker(run.runDir);
+      const ageSeconds = Math.round(runAgeMs / 1000);
+      const limitSeconds = Math.round(runTimeoutMs / 1000);
+      await ctx.store.updateRun(run.id, {
+        status: "failed",
+        summary: `Run timeout exceeded: run active for ${ageSeconds}s (limit: ${limitSeconds}s)`
+      });
 
-    const workItem = await ctx.store.getWorkItem(run.workItemId);
-    if (workItem?.status === "in_progress") {
-      await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      const workItem = await ctx.store.getWorkItem(run.workItemId);
+      if (workItem?.status === "in_progress") {
+        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      }
+
+      continue;
+    }
+
+    const progress = readRunProgress(run.runDir);
+    if (progress) {
+      const heartbeatAgeMs = now - new Date(progress.updatedAt).getTime();
+      if (heartbeatAgeMs > heartbeatStaleMs) {
+        await terminateRunWorker(run.runDir);
+        const ageSeconds = Math.round(heartbeatAgeMs / 1000);
+        const limitSeconds = Math.round(heartbeatStaleMs / 1000);
+        await ctx.store.updateRun(run.id, {
+          status: "failed",
+          summary: `Heartbeat stale: progress not updated for ${ageSeconds}s (limit: ${limitSeconds}s)`
+        });
+
+        const workItem = await ctx.store.getWorkItem(run.workItemId);
+        if (workItem?.status === "in_progress") {
+          await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+        }
+
+        continue;
+      }
+    }
+  }
+}
+
+interface WorkerProcessInfo {
+  pid: number;
+}
+
+async function terminateRunWorker(runDir: string): Promise<void> {
+  const processInfo = readWorkerProcessInfo(runDir);
+  if (!processInfo) {
+    return;
+  }
+
+  const { pid } = processInfo;
+  if (!processExists(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  await delay(200);
+  if (processExists(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // best-effort cleanup
     }
   }
 }
@@ -1264,6 +1336,37 @@ function readRunProgress(runDir: string): RunProgress | undefined {
   } catch {
     return undefined;
   }
+}
+
+function readWorkerProcessInfo(runDir: string): WorkerProcessInfo | undefined {
+  const processPath = path.join(runDir, "worker-process.json");
+  try {
+    if (!fs.existsSync(processPath)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(fs.readFileSync(processPath, "utf8")) as Partial<WorkerProcessInfo>;
+    if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
+      return undefined;
+    }
+    return { pid: parsed.pid };
+  } catch {
+    return undefined;
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

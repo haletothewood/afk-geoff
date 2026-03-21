@@ -9,12 +9,37 @@ export interface ProcessSpec {
   stdin?: string;
 }
 
-export async function runProcess(spec: ProcessSpec, logs?: { stdoutPath?: string; stderrPath?: string; mirrorToConsole?: boolean }): Promise<number> {
+interface ProcessLogs {
+  stdoutPath?: string;
+  stderrPath?: string;
+  mirrorToConsole?: boolean;
+  pidPath?: string;
+  pidMetadata?: Record<string, unknown>;
+}
+
+export async function runProcess(spec: ProcessSpec, logs?: ProcessLogs): Promise<number> {
   const child = spawn(spec.command, spec.args, {
     cwd: spec.cwd,
     env: { ...process.env, ...spec.env },
     stdio: [spec.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
   });
+
+  if (logs?.pidPath && child.pid !== undefined) {
+    fs.writeFileSync(
+      logs.pidPath,
+      JSON.stringify(
+        {
+          pid: child.pid,
+          command: spec.command,
+          args: spec.args,
+          startedAt: new Date().toISOString(),
+          ...(logs.pidMetadata ?? {})
+        },
+        null,
+        2
+      )
+    );
+  }
 
   if (spec.stdin !== undefined) {
     child.stdin?.write(spec.stdin);
@@ -43,6 +68,9 @@ export async function runProcess(spec: ProcessSpec, logs?: { stdoutPath?: string
     child.on("close", (code) => {
       stdoutStream?.end();
       stderrStream?.end();
+      if (logs?.pidPath) {
+        fs.rmSync(logs.pidPath, { force: true });
+      }
       resolve(code ?? 1);
     });
   });

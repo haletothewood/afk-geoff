@@ -29,6 +29,10 @@ export function defaultProjectConfig(): ProjectConfig {
       image: "afk-worker:latest"
     },
     verification: [],
+    timeouts: {
+      runTimeoutMs: 30 * 60 * 1000,
+      heartbeatStaleMs: 5 * 60 * 1000
+    },
     paths: {
       state: path.posix.join(PROJECT_DIR, STATE_DB),
       runs: path.posix.join(PROJECT_DIR, RUNS_DIR),
