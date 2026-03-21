@@ -532,12 +532,23 @@ async function runTrackedWorkItem(
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
   const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? [])])];
-  const result = await ctx.executionBackend.run({
-    requirement,
-    workItem,
-    verification,
-    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
-  });
+  let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
+  try {
+    result = await ctx.executionBackend.run({
+      requirement,
+      workItem,
+      verification,
+      ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+    });
+  } catch (error) {
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    if (!latestRun || latestRun.status === "running") {
+      await markWorkItemRunFailed(ctx, workItem.id, `Worker execution failed: ${formatErrorMessage(error)}`);
+    } else {
+      await refreshRequirementStatuses(ctx);
+    }
+    throw error;
+  }
 
   const issueRef = await ctx.store.getExternalRefForEntity("work_item", workItem.id, "issue");
 

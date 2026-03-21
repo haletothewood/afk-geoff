@@ -99,6 +99,8 @@ Rules:
 - Run verification commands before marking status "done".
 - Use "blocked" only if a real dependency or ambiguity prevented completion.
 - If you include PR data, keep "pr.body" focused on what changed and put reviewer steps in "pr.manualQa".
+- The output file must be valid JSON. Escape any double quotes inside string values as \\".
+- Prefer plain prose without embedded double quotes inside JSON strings; use single quotes in prose when that is simpler.
 - Do not print the JSON; write it to the file path above.
 
 # Requirement

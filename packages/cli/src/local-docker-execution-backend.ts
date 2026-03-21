@@ -8,6 +8,7 @@ import {
   buildWorkerPrompt,
   createId,
   maybeReadOverride,
+  parseJsonWithRecovery,
   workerResultSchema,
   DEFAULT_DOCKERFILE_PATH
 } from "@afk-geoff/shared";
@@ -168,7 +169,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       throw new Error(`Worker did not produce result.json for ${input.workItem.id}`);
     }
 
-    const result = workerResultSchema.parse(JSON.parse(fs.readFileSync(hostResultPath, "utf8")));
+    const result = workerResultSchema.parse(parseJsonWithRecovery(fs.readFileSync(hostResultPath, "utf8")));
 
     if (result.status === "blocked" || result.status === "failed") {
       await this.store.updateWorkItemStatus(input.workItem.id, result.status);
