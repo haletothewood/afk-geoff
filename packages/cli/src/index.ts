@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { Command } from "commander";
 import { GitHubIssueWorkSource, GitHubMirror, GitHubPullRequestPublisher } from "@afk-geoff/adapter-github";
@@ -48,10 +48,17 @@ interface CliDependencies {
   githubFactory?: (token: string) => IssueMirror & ChangeRequestPublisher;
   githubIssueWorkSourceFactory?: (token: string) => WorkSource<string>;
   githubTokenResolver?: () => Promise<string | undefined>;
+  /** Override the mechanism used to spawn the background worker for --detach runs. */
+  detachLauncher?: (argv: string[], env: NodeJS.ProcessEnv, cwd: string) => { pid: number };
 }
 
 interface RunOutcome {
   prUrl?: string;
+}
+
+interface DetachedRunOptions {
+  verification?: string[];
+  issueUrl?: string;
 }
 
 export async function runCli(argv = process.argv, dependencies: CliDependencies = {}): Promise<void> {
@@ -131,7 +138,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<target>", "Work item id, or 'file' / 'issue'")
     .argument("[value]", "File path when target is 'file', or GitHub issue URL when target is 'issue'")
     .option("--pr", "Require the run to open a pull request")
-    .action(async (target: string, value: string | undefined, options: { pr?: boolean }) => {
+    .option("--detach", "Start the run in the background and return immediately with the run id")
+    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean }) => {
       const ctx = await openContext(process.cwd(), dependencies);
       await autoSync(ctx);
 
@@ -141,20 +149,38 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
       let outcome: RunOutcome;
 
-      if (target === "file") {
-        if (!value) {
-          throw new Error("Usage: pnpm afk run file <path>");
-        }
+      if (options.detach) {
+        if (target === "file") {
+          if (!value) {
+            throw new Error("Usage: pnpm afk run file <path>");
+          }
 
-        outcome = await runExecutionBriefFile(ctx, value, { requirePullRequest: options.pr ?? false });
-      } else if (target === "issue") {
-        if (!value) {
-          throw new Error("Usage: pnpm afk run issue <github-issue-url>");
-        }
+          outcome = await runExecutionBriefFileDetached(ctx, value, dependencies, { requirePullRequest: options.pr ?? false });
+        } else if (target === "issue") {
+          if (!value) {
+            throw new Error("Usage: pnpm afk run issue <github-issue-url>");
+          }
 
-        outcome = await runGitHubIssue(ctx, value, dependencies, { requirePullRequest: options.pr ?? false });
+          outcome = await runGitHubIssueDetached(ctx, value, dependencies, { requirePullRequest: options.pr ?? false });
+        } else {
+          outcome = await runWorkItemDetached(ctx, target, dependencies, { requirePullRequest: options.pr ?? false });
+        }
       } else {
-        outcome = await runWorkItem(ctx, target, { requirePullRequest: options.pr ?? false });
+        if (target === "file") {
+          if (!value) {
+            throw new Error("Usage: pnpm afk run file <path>");
+          }
+
+          outcome = await runExecutionBriefFile(ctx, value, { requirePullRequest: options.pr ?? false });
+        } else if (target === "issue") {
+          if (!value) {
+            throw new Error("Usage: pnpm afk run issue <github-issue-url>");
+          }
+
+          outcome = await runGitHubIssue(ctx, value, dependencies, { requirePullRequest: options.pr ?? false });
+        } else {
+          outcome = await runWorkItem(ctx, target, { requirePullRequest: options.pr ?? false });
+        }
       }
 
       if (outcome.prUrl) {
@@ -526,19 +552,26 @@ async function runTrackedWorkItem(
     throw new Error(`Work item ${workItemId} is not AFK.`);
   }
 
-  if (workItem.status !== "todo" && workItem.status !== "failed") {
+  // Allow in_progress when this process was spawned as a detached worker by a --detach parent that
+  // already set the work item status before spawning this background process.
+  const isDetachedResume = !!process.env.AFK_DETACH_RUN_ID;
+  const detachedOptions = isDetachedResume ? consumeDetachedRunOptionsFromEnv() : {};
+  const isRunnable = workItem.status === "todo" || workItem.status === "failed" || (isDetachedResume && workItem.status === "in_progress");
+
+  if (!isRunnable) {
     throw new Error(`Work item ${workItemId} is not runnable (current status: ${workItem.status}).`);
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
-  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? [])])];
+  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? []), ...(detachedOptions.verification ?? [])])];
+  const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
       requirement,
       workItem,
       verification,
-      ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+      ...(issueUrl ? { issueUrl } : {})
     });
   } catch (error) {
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -627,6 +660,200 @@ async function runTrackedWorkItem(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Detached execution helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a work item run in the background.
+ *
+ * The parent process pre-creates the run record and marks the work item as
+ * in_progress so that `afk status` / `afk runs` show the run immediately.
+ * A background subprocess is spawned (via `detachLauncher`) to do the actual
+ * Docker execution; it picks up the pre-created run ID through AFK_DETACH_RUN_ID.
+ */
+async function runWorkItemDetached(
+  ctx: CliContext,
+  workItemId: string,
+  dependencies: CliDependencies,
+  options: DetachedRunOptions & { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  const workItem = await mustGetWorkItem(ctx, workItemId);
+
+  if (workItem.type !== "afk") {
+    throw new Error(`Work item ${workItemId} is not AFK.`);
+  }
+
+  if (workItem.status !== "todo" && workItem.status !== "failed") {
+    throw new Error(`Work item ${workItemId} is not runnable (current status: ${workItem.status}).`);
+  }
+
+  const runId = createId("run");
+  const branchName = branchNameForWorkItem(workItem.title);
+  const worktreePath = path.join(ctx.paths.worktreesDir, runId);
+  const runDir = path.join(ctx.paths.runsDir, runId);
+  fs.mkdirSync(runDir, { recursive: true });
+
+  await ctx.store.createRun({
+    id: runId,
+    workItemId: workItem.id,
+    mode: "work",
+    status: "running",
+    branchName,
+    worktreePath,
+    runDir,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  await ctx.store.updateWorkItemStatus(workItem.id, "in_progress");
+
+  fs.writeFileSync(
+    path.join(runDir, "progress.json"),
+    JSON.stringify(
+      { phase: "starting", message: "Detached worker starting", iteration: 0, updatedAt: new Date().toISOString() },
+      null,
+      2
+    )
+  );
+
+  const launchEnv: NodeJS.ProcessEnv = { ...process.env, AFK_DETACH_RUN_ID: runId };
+  const detachedOptions = JSON.stringify({
+    verification: options.verification ?? [],
+    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+  });
+  launchEnv.AFK_DETACH_RUN_OPTIONS = detachedOptions;
+  const launchArgv: string[] = [
+    process.execPath,
+    process.argv[1] ?? "afk",
+    "run",
+    workItemId,
+    ...(options.requirePullRequest ? ["--pr"] : [])
+  ];
+
+  const launcher = dependencies.detachLauncher ?? spawnDetachedProcess;
+  let pid = 0;
+  try {
+    ({ pid } = launcher(launchArgv, launchEnv, ctx.repoRoot));
+  } catch (error) {
+    const message = `Detached launch failed: ${formatErrorMessage(error)}`;
+    await ctx.store.updateRun(runId, { status: "failed", summary: message });
+    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
+    await refreshRequirementStatuses(ctx);
+    throw new Error(message);
+  }
+
+  if (pid > 0) {
+    fs.writeFileSync(
+      path.join(runDir, "detach-process.json"),
+      JSON.stringify({ pid, startedAt: new Date().toISOString() }, null, 2)
+    );
+  }
+
+  console.log(`Run ${runId}`);
+  console.log(`  pnpm afk status`);
+  console.log(`  pnpm afk runs`);
+
+  return {};
+}
+
+function spawnDetachedProcess(argv: string[], env: NodeJS.ProcessEnv, cwd: string): { pid: number } {
+  const [cmd, ...args] = argv;
+
+  if (!cmd) {
+    return { pid: 0 };
+  }
+
+  const child = spawn(cmd, args, {
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore"],
+    env,
+    cwd
+  });
+  child.unref();
+  return { pid: child.pid ?? 0 };
+}
+
+async function runExecutionBriefFileDetached(
+  ctx: CliContext,
+  inputPath: string,
+  dependencies: CliDependencies,
+  options: { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  const briefPath = resolveBriefPath(ctx.cwd, inputPath);
+  const brief = await new MarkdownFileWorkSource(ctx.cwd).load(inputPath);
+  const workItem = await importExecutionBrief(ctx, brief, {
+    sourceLabel: `Imported from ${path.basename(briefPath)}`,
+    sourceSummary: `Imported from ${briefPath}`,
+    printedSource: briefPath
+  });
+  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+    ...options,
+    verification: brief.verification,
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+  });
+}
+
+async function runGitHubIssueDetached(
+  ctx: CliContext,
+  issueUrl: string,
+  dependencies: CliDependencies,
+  options: { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  const githubToken = ctx.githubToken ?? await resolveGitHubToken(dependencies);
+
+  if (!githubToken) {
+    throw new Error("GitHub issue execution requires GitHub auth (`GH_TOKEN` or `gh auth login`)");
+  }
+
+  const workSource = dependencies.githubIssueWorkSourceFactory
+    ? dependencies.githubIssueWorkSourceFactory(githubToken)
+    : new GitHubIssueWorkSource(githubToken);
+  const brief = await workSource.load(issueUrl);
+  const workItem = await importExecutionBrief(ctx, brief, {
+    sourceLabel: `Imported from ${issueUrl}`,
+    sourceSummary: `Imported from ${issueUrl}`,
+    printedSource: issueUrl
+  });
+  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+    ...options,
+    verification: brief.verification,
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+  });
+}
+
+// ---------------------------------------------------------------------------
+
+function consumeDetachedRunOptionsFromEnv(): DetachedRunOptions {
+  const source = process.env.AFK_DETACH_RUN_OPTIONS;
+  delete process.env.AFK_DETACH_RUN_OPTIONS;
+
+  if (!source) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(source) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    const maybeVerification = (parsed as { verification?: unknown }).verification;
+    const maybeIssueUrl = (parsed as { issueUrl?: unknown }).issueUrl;
+
+    const verification = Array.isArray(maybeVerification)
+      ? maybeVerification.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+    const issueUrl = typeof maybeIssueUrl === "string" && maybeIssueUrl.trim().length > 0 ? maybeIssueUrl : undefined;
+
+    return {
+      verification,
+      ...(issueUrl ? { issueUrl } : {})
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function runExecutionBriefFile(
   ctx: CliContext,
   inputPath: string,
@@ -667,7 +894,11 @@ async function runGitHubIssue(
   });
 }
 
-async function runImportedExecutionBrief(
+/**
+ * Create the requirement and work item from an execution brief, print the import summary, and
+ * return the created work item. Does not start execution.
+ */
+async function importExecutionBrief(
   ctx: CliContext,
   brief: {
     requirementBody: string;
@@ -681,9 +912,8 @@ async function runImportedExecutionBrief(
     sourceLabel: string;
     sourceSummary: string;
     printedSource: string;
-    requirePullRequest?: boolean;
   }
-): Promise<RunOutcome> {
+): Promise<{ id: string }> {
   const now = new Date().toISOString();
   const requirement: Requirement = {
     id: createId("req"),
@@ -722,6 +952,28 @@ async function runImportedExecutionBrief(
   console.log(`Imported execution brief ${options.printedSource}`);
   console.log(`Requirement ${requirement.id}`);
   console.log(`Work item ${workItem.id}`);
+
+  return workItem;
+}
+
+async function runImportedExecutionBrief(
+  ctx: CliContext,
+  brief: {
+    requirementBody: string;
+    workItemTitle: string;
+    workItemBody: string;
+    acceptanceCriteria: string[];
+    verification: string[];
+    issueUrl?: string;
+  },
+  options: {
+    sourceLabel: string;
+    sourceSummary: string;
+    printedSource: string;
+    requirePullRequest?: boolean;
+  }
+): Promise<RunOutcome> {
+  const workItem = await importExecutionBrief(ctx, brief, options);
 
   const runOptions: { verification?: string[]; issueUrl?: string; requirePullRequest?: boolean } = {
     verification: brief.verification
