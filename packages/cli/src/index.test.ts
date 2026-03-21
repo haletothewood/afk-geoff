@@ -168,6 +168,141 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("Dispatch complete after 2 iteration(s): queue drained");
   });
 
+  it("Given an active run with a progress file, when status is used, then it shows live progress details for that run", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_active");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_active"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Implementing changes", iteration: 3, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["status"]);
+    });
+
+    expect(output).toContain("run_active");
+    expect(output).toContain("[running]");
+    expect(output).toContain("Implementing changes");
+    expect(output).toContain("iteration 3");
+  });
+
+  it("Given an active run with a progress file, when show is used for the work item, then it includes progress details", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_show_active");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_show_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/show-active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_show_active"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Writing tests", iteration: 7, updatedAt: "2026-03-21T12:00:00.000Z" }, null, 2)
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["show", backend!.id]);
+    });
+
+    expect(output).toContain("Active run: run_show_active");
+    expect(output).toContain("[running]");
+    expect(output).toContain("Writing tests");
+    expect(output).toContain("iteration 7");
+  });
+
+  it("Given multiple active runs for the same work item, when show is used, then it prefers the newest active run", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const oldRunDir = path.join(fixture.repoDir, ".afk", "runs", "run_old_active");
+    const newRunDir = path.join(fixture.repoDir, ".afk", "runs", "run_new_active");
+    fs.mkdirSync(oldRunDir, { recursive: true });
+    fs.mkdirSync(newRunDir, { recursive: true });
+
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_old_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/old-active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_old_active"),
+      runDir: oldRunDir,
+      createdAt: "2026-03-21T11:00:00.000Z",
+      updatedAt: "2026-03-21T11:00:00.000Z"
+    });
+    await fixture.store.createRun({
+      id: "run_new_active",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/new-active",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_new_active"),
+      runDir: newRunDir,
+      createdAt: "2026-03-21T12:00:00.000Z",
+      updatedAt: "2026-03-21T12:00:00.000Z"
+    });
+
+    fs.writeFileSync(
+      path.join(oldRunDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Old run", iteration: 1, updatedAt: "2026-03-21T11:05:00.000Z" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(newRunDir, "progress.json"),
+      JSON.stringify({ phase: "verifying", message: "Newest run", iteration: 4, updatedAt: "2026-03-21T12:05:00.000Z" }, null, 2)
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["show", backend!.id]);
+    });
+
+    expect(output).toContain("Active run: run_new_active");
+    expect(output).toContain("Newest run");
+    expect(output).not.toContain("Old run");
+  });
+
   it("Given a stale running work item with a missing run directory, when status is refreshed, then the run and work item are marked failed", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
@@ -262,6 +397,8 @@ describe("afk CLI BDD scenarios", () => {
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
     const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("Write progress updates to this exact path while the run is active:");
+    expect(prompt).toContain("/afk-run/progress.json");
     expect(prompt).toContain("- pnpm typecheck");
     expect(prompt).toContain("- pnpm test -- packages/cli/src/index.test.ts");
     expect(output).toContain("Imported execution brief");
