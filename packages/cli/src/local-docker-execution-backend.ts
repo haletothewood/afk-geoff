@@ -48,7 +48,16 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
   }
 
   public async run(input: ExecutionBackendInput): Promise<ExecutionBackendResult> {
-    const runId = createId("run");
+    // When a --detach parent pre-creates the run record, it passes the run ID via this env var.
+    const detachedRunId = process.env.AFK_DETACH_RUN_ID;
+    const isDetachedResume = !!detachedRunId;
+    const runId = detachedRunId ?? createId("run");
+
+    // Clear before spawning Docker so the container does not inherit it.
+    if (detachedRunId) {
+      delete process.env.AFK_DETACH_RUN_ID;
+    }
+
     const branchName = branchNameForWorkItem(input.workItem.title);
     const worktreePath = path.join(this.paths.worktreesDir, runId);
     const runDir = path.join(this.paths.runsDir, runId);
@@ -61,18 +70,23 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       path: worktreePath
     });
 
-    await this.store.createRun({
-      id: runId,
-      workItemId: input.workItem.id,
-      mode: "work",
-      status: "running",
-      branchName,
-      worktreePath,
-      runDir,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-    await this.store.updateWorkItemStatus(input.workItem.id, "in_progress");
+    if (!isDetachedResume) {
+      // Foreground path: create run record and mark work item as in-progress now.
+      await this.store.createRun({
+        id: runId,
+        workItemId: input.workItem.id,
+        mode: "work",
+        status: "running",
+        branchName,
+        worktreePath,
+        runDir,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      await this.store.updateWorkItemStatus(input.workItem.id, "in_progress");
+    }
+    // Detached-resume path: run record and in-progress status were already written by the
+    // --detach parent before spawning this background process.
 
     const progressContainerPath = "/afk-run/progress.json";
     const resultPath = "/afk-run/result.json";
