@@ -6,7 +6,7 @@ import { Command } from "commander";
 import { GitHubIssueWorkSource, GitHubMirror, GitHubPullRequestPublisher } from "@afk-geoff/adapter-github";
 import { LocalGitCodeHost, branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequestPublisher, type ExecutionBackend, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type ResultPublisher, type WorkItem, type WorkSource } from "@afk-geoff/core";
+import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequestPublisher, type ExecutionBackend, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type ResultPublisher, type RunProgress, type WorkItem, type WorkSource } from "@afk-geoff/core";
 import { ClaudeCliRunner } from "@afk-geoff/runner-claude";
 import { CodexCliRunner } from "@afk-geoff/runner-codex";
 import { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
@@ -355,7 +355,12 @@ async function printStatus(ctx: CliContext): Promise<void> {
   console.log("Active runs / open PRs");
   const activeLines: string[] = [];
   for (const run of runs.filter((record) => record.status === "running" || record.status === "prepared")) {
-    activeLines.push(`- ${run.id}  ${run.workItemId}  ${run.status}`);
+    const progress = readRunProgress(run.runDir);
+    if (progress) {
+      activeLines.push(`- ${run.id}  ${run.workItemId}  ${run.status}  [${progress.phase}] ${progress.message} (iteration ${progress.iteration}, updated ${progress.updatedAt})`);
+    } else {
+      activeLines.push(`- ${run.id}  ${run.workItemId}  ${run.status}`);
+    }
   }
   for (const ref of prRefs) {
     const syncState = await ctx.store.getSyncState(ref.id) as { state?: "open" | "closed"; merged?: boolean } | undefined;
@@ -435,6 +440,19 @@ async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
   if (prRef?.url) {
     console.log(`Mirrored pull request: ${prRef.url}`);
   }
+
+  const runs = await ctx.store.listRuns();
+  const activeRun = runs
+    .filter((run) => run.workItemId === workItem.id && (run.status === "running" || run.status === "prepared"))
+    .at(-1);
+  if (activeRun) {
+    const progress = readRunProgress(activeRun.runDir);
+    if (progress) {
+      console.log(`Active run: ${activeRun.id}`);
+      console.log(`Progress: [${progress.phase}] ${progress.message} (iteration ${progress.iteration}, updated ${progress.updatedAt})`);
+    }
+  }
+
   console.log("");
   printNextActionLines(getWorkItemNextActions(workItem));
 }
@@ -1205,6 +1223,18 @@ function getWorkItemNextActions(item: HydratedWorkItem): string[] {
   }
 
   return ["- No immediate action"];
+}
+
+function readRunProgress(runDir: string): RunProgress | undefined {
+  const progressPath = path.join(runDir, "progress.json");
+  try {
+    if (!fs.existsSync(progressPath)) {
+      return undefined;
+    }
+    return JSON.parse(fs.readFileSync(progressPath, "utf8")) as RunProgress;
+  } catch {
+    return undefined;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
