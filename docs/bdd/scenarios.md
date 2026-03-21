@@ -15,7 +15,7 @@ Terms in this document follow [Ubiquitous Language](/Users/davidneil/Development
 
 | Command | Primary Domain Effect | Important Observable Outcomes |
 |---|---|---|
-| `afk init` | creates project scaffold | `.afk/config.yaml` and `.afk/.gitignore` exist |
+| `afk init` | creates project scaffold | `.afk/config.yaml`, `.afk/.gitignore`, and `.afk/iteration-loop.md` exist |
 | `afk doctor` | validates runtime dependencies | required executables and env vars are present |
 | `afk capture` | creates a `Requirement` | requirement exists in SQLite; requirement may be mirrored |
 | `afk status` | reports queue state after lightweight sync | queue output reflects current work item states |
