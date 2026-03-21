@@ -998,6 +998,7 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toMatch(/Run run_[a-z0-9]+/);
     expect(output).toContain("pnpm afk status");
     expect(output).toContain("pnpm afk runs");
+    expect(output).not.toContain("pnpm afk watch");
 
     // A run record should be pre-created in the ledger.
     const runs = await fixture.store.listRuns();
@@ -1013,6 +1014,29 @@ describe("afk CLI BDD scenarios", () => {
     expect(launchCalls).toHaveLength(1);
     expect(launchCalls[0]?.env.AFK_DETACH_RUN_ID).toBe(detachedRun?.id);
     expect(launchCalls[0]?.argv).toContain(backend!.id);
+  });
+
+  it("Given detached launcher startup fails, when run --detach is used, then the run and work item are marked failed", async () => {
+    const fixture = await createFixture(tempDir, {
+      detachLauncher: () => {
+        throw new Error("simulated launch failure");
+      }
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await expect(fixture.cli(["run", backend!.id, "--detach"])).rejects.toThrow("Detached launch failed");
+
+    const refreshedItems = await fixture.items(requirement.id);
+    expect(refreshedItems.find((item) => item.id === backend!.id)?.status).toBe("failed");
+    const detachedRun = (await fixture.store.listRuns()).find((run) => run.workItemId === backend!.id && run.mode === "work");
+    expect(detachedRun?.status).toBe("failed");
+    expect(detachedRun?.summary).toContain("Detached launch failed");
   });
 
   it("Given a detached run has been started, when status and runs are used, then the detached run appears as active", async () => {
@@ -1081,11 +1105,11 @@ describe("afk CLI BDD scenarios", () => {
     expect(refreshedRun?.summary).toContain("Heartbeat stale");
   });
 
-  it("Given an execution brief file, when run file --detach is used, then it creates tracked state and starts a background worker", async () => {
-    const launchCalls: Array<{ argv: string[] }> = [];
+  it("Given an execution brief file, when run file --detach is used, then it creates tracked state and starts a background worker with brief options", async () => {
+    const launchCalls: Array<{ argv: string[]; env: NodeJS.ProcessEnv }> = [];
     const fixture = await createFixture(tempDir, {
-      detachLauncher: (argv) => {
-        launchCalls.push({ argv });
+      detachLauncher: (argv, env) => {
+        launchCalls.push({ argv, env });
         return { pid: 0 };
       }
     });
@@ -1106,7 +1130,13 @@ describe("afk CLI BDD scenarios", () => {
         "Run a work item in the background from a brief file.",
         "",
         "## Acceptance Criteria",
-        "- The detached run is tracked in the ledger"
+        "- The detached run is tracked in the ledger",
+        "",
+        "## Verification",
+        "- pnpm typecheck",
+        "",
+        "## GitHub Issue",
+        "https://github.com/acme/demo/issues/77"
       ].join("\n")
     );
 
@@ -1121,6 +1151,38 @@ describe("afk CLI BDD scenarios", () => {
     const runs = await fixture.store.listRuns();
     expect(runs.some((run) => run.status === "running")).toBe(true);
     expect(launchCalls).toHaveLength(1);
+    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: string[]; issueUrl?: string };
+    expect(detachedOptions.verification).toEqual(["pnpm typecheck"]);
+    expect(detachedOptions.issueUrl).toBe("https://github.com/acme/demo/issues/77");
+  });
+
+  it("Given an issue work source, when run issue --detach is used, then detached options include issue URL and verification", async () => {
+    const launchCalls: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const fixture = await createFixture(tempDir, {
+      githubIssueWorkSource: {
+        async load() {
+          return {
+            requirementBody: "Ship a narrow internal improvement for the AFK runner.",
+            workItemTitle: "Run from issue in detach mode",
+            workItemBody: "Execute a hand-authored GitHub issue body.",
+            acceptanceCriteria: ["The runner can import a GitHub issue body"],
+            verification: ["pnpm typecheck", "pnpm test -- packages/cli/src/index.test.ts"],
+            issueUrl: "https://github.com/acme/demo/issues/42"
+          };
+        }
+      },
+      detachLauncher: (_argv, env) => {
+        launchCalls.push({ env });
+        return { pid: 0 };
+      }
+    });
+
+    await fixture.cli(["run", "issue", "https://github.com/acme/demo/issues/42", "--detach"]);
+
+    expect(launchCalls).toHaveLength(1);
+    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: string[]; issueUrl?: string };
+    expect(detachedOptions.verification).toEqual(["pnpm typecheck", "pnpm test -- packages/cli/src/index.test.ts"]);
+    expect(detachedOptions.issueUrl).toBe("https://github.com/acme/demo/issues/42");
   });
 
   it("Given a foreground run, when run is used without --detach, then the foreground behavior is unchanged", async () => {
