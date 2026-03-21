@@ -44,6 +44,7 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       ? ["--user", `${process.getuid()}:${process.getgid()}`]
       : [];
 
+    const entrypointScript = buildRuntimeEntrypoint(input.command, input.args);
     const args = [
       "run",
       "--rm",
@@ -64,8 +65,9 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       ...envArgs,
       ...extraEnvArgs,
       input.image,
-      input.command,
-      ...input.args
+      "bash",
+      "-lc",
+      entrypointScript
     ];
 
     return await runProcess(
@@ -84,4 +86,27 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       }
     );
   }
+}
+
+function buildRuntimeEntrypoint(command: string, args: string[]): string {
+  const executable = [command, ...args].map(shellQuote).join(" ");
+  const bootstrap = [
+    "if [ -f package.json ]; then",
+    "  if [ -f pnpm-lock.yaml ]; then",
+    "    corepack enable >/dev/null 2>&1 || true",
+    "    pnpm install --frozen-lockfile",
+    "  elif [ -f package-lock.json ]; then",
+    "    npm ci",
+    "  elif [ -f yarn.lock ]; then",
+    "    corepack enable >/dev/null 2>&1 || true",
+    "    yarn install --frozen-lockfile",
+    "  fi",
+    "fi"
+  ].join("\n");
+
+  return `set -euo pipefail\n${bootstrap}\nexec ${executable}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
