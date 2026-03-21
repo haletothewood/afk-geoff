@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { WorkspaceRuntime } from "@afk-geoff/core";
@@ -30,6 +31,8 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
     stderrPath: string;
   }): Promise<number> {
     fs.mkdirSync(input.runDir, { recursive: true });
+    const runId = path.basename(input.runDir);
+    const containerName = `afk-${runId}`;
     const envArgs = input.envAllowlist.flatMap((name) => {
       const value = process.env[name];
       return value ? ["-e", `${name}=${value}`] : [];
@@ -46,6 +49,8 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       "--rm",
       ...(input.stdin === undefined ? [] : ["-i"]),
       ...userArgs,
+      "--name",
+      containerName,
       "-w",
       input.worktreePath,
       "-v",
@@ -73,7 +78,9 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       {
         stdoutPath: input.stdoutPath,
         stderrPath: input.stderrPath,
-        mirrorToConsole: true
+        mirrorToConsole: true,
+        pidPath: path.join(input.runDir, "worker-process.json"),
+        pidMetadata: { containerName, runtime: "docker" }
       }
     );
   }

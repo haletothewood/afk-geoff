@@ -907,6 +907,7 @@ async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
 
     const runAgeMs = now - new Date(run.createdAt).getTime();
     if (runAgeMs > runTimeoutMs) {
+      await terminateRunWorker(run.runDir);
       const ageSeconds = Math.round(runAgeMs / 1000);
       const limitSeconds = Math.round(runTimeoutMs / 1000);
       await ctx.store.updateRun(run.id, {
@@ -926,6 +927,7 @@ async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
     if (progress) {
       const heartbeatAgeMs = now - new Date(progress.updatedAt).getTime();
       if (heartbeatAgeMs > heartbeatStaleMs) {
+        await terminateRunWorker(run.runDir);
         const ageSeconds = Math.round(heartbeatAgeMs / 1000);
         const limitSeconds = Math.round(heartbeatStaleMs / 1000);
         await ctx.store.updateRun(run.id, {
@@ -940,6 +942,37 @@ async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
 
         continue;
       }
+    }
+  }
+}
+
+interface WorkerProcessInfo {
+  pid: number;
+}
+
+async function terminateRunWorker(runDir: string): Promise<void> {
+  const processInfo = readWorkerProcessInfo(runDir);
+  if (!processInfo) {
+    return;
+  }
+
+  const { pid } = processInfo;
+  if (!processExists(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  await delay(200);
+  if (processExists(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // best-effort cleanup
     }
   }
 }
@@ -1303,6 +1336,37 @@ function readRunProgress(runDir: string): RunProgress | undefined {
   } catch {
     return undefined;
   }
+}
+
+function readWorkerProcessInfo(runDir: string): WorkerProcessInfo | undefined {
+  const processPath = path.join(runDir, "worker-process.json");
+  try {
+    if (!fs.existsSync(processPath)) {
+      return undefined;
+    }
+    const parsed = JSON.parse(fs.readFileSync(processPath, "utf8")) as Partial<WorkerProcessInfo>;
+    if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
+      return undefined;
+    }
+    return { pid: parsed.pid };
+  } catch {
+    return undefined;
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
@@ -420,6 +420,61 @@ describe("afk CLI BDD scenarios", () => {
     const refreshed = await fixture.items(requirement.id);
     expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
     const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_stale_heartbeat");
+    expect(staleRun?.status).toBe("failed");
+    expect(staleRun?.summary).toContain("Heartbeat stale");
+  });
+
+  it("Given a running work item with a tracked worker process and stale heartbeat, when status is refreshed, then AFK terminates the worker process", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_terminate_worker");
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_terminate_worker",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/terminate-worker",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_terminate_worker"),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const sleeper = spawn("sleep", ["30"], { stdio: "ignore" });
+    expect(typeof sleeper.pid).toBe("number");
+    fs.writeFileSync(
+      path.join(runDir, "worker-process.json"),
+      JSON.stringify({ pid: sleeper.pid, command: "docker", args: ["run"], runtime: "docker" }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Stuck", iteration: 2, updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString() }, null, 2)
+    );
+
+    rewriteConfig(fixture.repoDir, { githubEnabled: false, timeouts: { runTimeoutMs: 24 * 60 * 60 * 1000, heartbeatStaleMs: 1 } });
+
+    try {
+      await fixture.cli(["status"]);
+      await waitForProcessExit(sleeper.pid!, 1000);
+      expect(processExistsForTest(sleeper.pid!)).toBe(false);
+    } finally {
+      if (sleeper.pid && processExistsForTest(sleeper.pid)) {
+        process.kill(sleeper.pid, "SIGKILL");
+      }
+    }
+
+    const refreshed = await fixture.items(requirement.id);
+    expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
+    const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_terminate_worker");
     expect(staleRun?.status).toBe("failed");
     expect(staleRun?.summary).toContain("Heartbeat stale");
   });
@@ -1157,6 +1212,10 @@ while (index < args.length) {
     index += 2;
     continue;
   }
+  if (args[index] === "--name") {
+    index += 2;
+    continue;
+  }
   if (args[index] === "-w") {
     workdir = args[index + 1];
     index += 2;
@@ -1232,6 +1291,25 @@ process.exit(result.status ?? 1);
 `
   );
   fs.chmodSync(dockerPath, 0o755);
+}
+
+function processExistsForTest(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!processExistsForTest(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
