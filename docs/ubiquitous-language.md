@@ -19,7 +19,6 @@ A `Requirement` is the top-level statement of work captured from a user prompt o
 Use in scenarios:
 
 - `Given a captured requirement`
-- `When the requirement is planned`
 - `Then the requirement status should be approved`
 
 Do not casually replace this with “issue”, “epic”, or “ticket”. A GitHub issue may mirror a requirement, but it is not the requirement itself.
@@ -87,22 +86,9 @@ BDD phrasing:
 
 Do not call HITL work “blocked”. HITL is a deliberate classification, not a failure state.
 
-### Draft Plan
-
-A draft plan is the set of `draft` work items produced by `plan`.
-
-- Draft work items are local domain objects.
-- They are not yet part of the approved execution queue.
-- They are not yet actionable.
-
-BDD phrasing:
-
-- `When a requirement is planned`
-- `Then draft work items should be created`
-
 ### Approved Queue
 
-The approved queue is the set of non-draft work items after `approve`.
+The approved queue is the set of non-draft work items once actionable work has been created in local state.
 
 After approval:
 
@@ -131,7 +117,6 @@ A `RunRecord` represents a concrete execution or preparation attempt associated 
 
 Run modes:
 
-- `plan`
 - `work`
 - `review`
 
@@ -162,7 +147,7 @@ A review run is a run with `mode = "review"`.
 
 ### Run Artifacts
 
-Run artifacts are files produced under `.ai-workflows/runs/<run-id>/`.
+Run artifacts are files produced under `.afk/runs/<run-id>/`.
 
 Key artifacts include:
 
@@ -179,7 +164,7 @@ Use “run artifacts” for these files, not “logs” as a blanket term.
 
 A worktree is the isolated git checkout used for a run.
 
-- Worktrees live under `.ai-workflows/worktrees/<run-id>/`.
+- Worktrees live under `.afk/worktrees/<run-id>/`.
 - A run may have a branch name associated with its worktree.
 
 ### Result
@@ -270,19 +255,6 @@ That kind of wording is appropriate only in adapter-level tests.
 
 ## Scenario Examples
 
-### Queue approval
-
-```gherkin
-Scenario: Approving a planned requirement creates an actionable queue
-  Given a requirement has three draft work items
-  And one AFK work item depends on another AFK work item
-  And one work item is HITL
-  When the requirement is approved
-  Then the independent AFK work item should be todo
-  And the dependent AFK work item should be blocked
-  And the HITL work item should be hitl_pending
-```
-
 ### Dependency resolution
 
 ```gherkin
@@ -317,8 +289,6 @@ Avoid these substitutions unless you are explicitly discussing an adapter:
 ## Mapping To Commands
 
 - `capture` creates a `Requirement`
-- `plan` creates a draft plan of `WorkItem`s
-- `approve` promotes draft work items into the approved queue
 - `status` reports queue state after lightweight sync
 - `dispatch` starts autonomous execution for runnable AFK work items
 - `run` executes a specific work item directly

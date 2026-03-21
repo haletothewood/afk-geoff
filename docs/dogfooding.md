@@ -7,12 +7,10 @@ This repo is ready for a controlled dogfooding rollout.
 Start with one work item at a time and keep the loop human-reviewed:
 
 1. capture a requirement
-2. plan it
-3. approve it
-4. inspect the queue with `status` and `show`
-5. run one AFK item with `run`
-6. inspect artifacts with `runs` and `logs`
-7. review the worktree and branch before merging anything
+2. create an execution brief with your preferred planning skill
+3. run one AFK item with `run file` or inspect the queue with `status` and `show`
+4. inspect artifacts with `runs` and `logs`
+5. review the worktree and branch before merging anything
 
 Do not start with broad unattended `dispatch` across multiple items until the real GitHub path and failure-path behavior have been exercised in this repo.
 
@@ -22,16 +20,16 @@ If the repo has not been initialized yet:
 
 ```bash
 git init -b main
-pnpm aiwf init
+pnpm afk init
 ```
 
 This creates:
 
-- `.ai-workflows/config.yaml`
-- `.ai-workflows/.gitignore`
-- `.ai-workflows/state.sqlite`
-- `.ai-workflows/runs/`
-- `.ai-workflows/worktrees/`
+- `.afk/config.yaml`
+- `.afk/.gitignore`
+- `.afk/state.sqlite`
+- `.afk/runs/`
+- `.afk/worktrees/`
 
 ## GitHub-Backed Setup
 
@@ -40,7 +38,7 @@ Once the repo has a GitHub remote:
 1. add an `origin` remote
 2. export `GH_TOKEN`
 3. ensure the configured runner auth env vars are set
-4. run `pnpm aiwf doctor`
+4. run `pnpm afk doctor`
 
 The default config enables GitHub mirroring, so `doctor` is the quickest way to verify the repo is ready for a live run.
 
@@ -55,24 +53,22 @@ Use a small internal requirement first. Good examples:
 Suggested command flow:
 
 ```bash
-pnpm aiwf capture "Describe a small internal improvement"
-pnpm aiwf plan <requirement-id>
-pnpm aiwf approve <requirement-id>
-pnpm aiwf status
-pnpm aiwf show <requirement-id>
-pnpm aiwf run <work-item-id>
-pnpm aiwf runs
-pnpm aiwf logs <run-id>
+pnpm afk capture "Describe a small internal improvement"
+pnpm afk run file brief.md --pr
+pnpm afk status
+pnpm afk show <requirement-id>
+pnpm afk runs
+pnpm afk logs <run-id>
 ```
 
 ## Commands Most Useful During Dogfooding
 
-- `pnpm aiwf doctor`
-- `pnpm aiwf status`
-- `pnpm aiwf show <id>`
-- `pnpm aiwf runs`
-- `pnpm aiwf logs <run-id>`
-- `pnpm aiwf review <work-item-id>`
+- `pnpm afk doctor`
+- `pnpm afk status`
+- `pnpm afk show <id>`
+- `pnpm afk runs`
+- `pnpm afk logs <run-id>`
+- `pnpm afk review <work-item-id>`
 
 ## Current Guardrails
 

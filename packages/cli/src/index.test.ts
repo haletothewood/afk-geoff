@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, Requirement, WorkItem } from "@afk-geoff/core";
+import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, Requirement, WorkItem, WorkSource } from "@afk-geoff/core";
 import { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { runCli } from "./index.js";
 
@@ -13,6 +13,8 @@ interface FixtureOptions {
   githubEnabled?: boolean;
   writeWorktreeChange?: boolean;
   githubMirror?: MockGitHubMirror;
+  githubIssueWorkSource?: WorkSource<string>;
+  githubTokenResolver?: () => Promise<string | undefined>;
 }
 
 interface WorkflowFixture {
@@ -21,19 +23,19 @@ interface WorkflowFixture {
   githubMirror: MockGitHubMirror | undefined;
   cli(args: string[]): Promise<void>;
   capture(prompt: string): Promise<Requirement>;
-  planAndApprove(requirementId: string): Promise<void>;
   requirement(): Promise<Requirement>;
   items(requirementId: string): Promise<Awaited<ReturnType<SqliteStateStore["listWorkItemsByRequirement"]>>>;
+  seedQueue(requirementId: string): Promise<Awaited<ReturnType<SqliteStateStore["listWorkItemsByRequirement"]>>>;
 }
 
-describe("aiwf CLI BDD scenarios", () => {
+describe("afk CLI BDD scenarios", () => {
   const originalCwd = process.cwd();
   const originalPath = process.env.PATH ?? "";
   const originalGhToken = process.env.GH_TOKEN;
   let tempDir = "";
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aiwf-"));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "afk-"));
   });
 
   afterEach(() => {
@@ -49,18 +51,84 @@ describe("aiwf CLI BDD scenarios", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("Given a planned requirement, when it is approved, then AFK and HITL items enter the correct queue states", async () => {
+  it("Given a captured requirement with no execution brief yet, when status is used, then it points to external planning plus run file", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
     );
 
-    await fixture.planAndApprove(requirement.id);
+    const output = await captureConsole(async () => {
+      await fixture.cli(["status"]);
+    });
 
-    const items = await fixture.items(requirement.id);
-    expect(items.find((item) => item.planKey === "backend")?.status).toBe("todo");
-    expect(items.find((item) => item.planKey === "frontend")?.status).toBe("blocked");
-    expect(items.find((item) => item.planKey === "review")?.status).toBe("hitl_pending");
+    expect(output).toContain(`- ${requirement.id}`);
+    expect(output).toContain("Use a planning skill to produce an execution brief");
+    expect(output).toContain("pnpm afk run file <path>");
+  });
+
+  it("Given a captured requirement with no work items, when show is used, then it points to external planning plus run file", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["show", requirement.id]);
+    });
+
+    expect(output).toContain(`Requirement ${requirement.id}`);
+    expect(output).toContain("Next");
+    expect(output).toContain("Use a planning skill to create an execution brief");
+  });
+
+  it("Given pending work exists, when status is used, then it prints the next actionable command", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    const items = await fixture.seedQueue(requirement.id);
+    const backend = items.find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["status"]);
+    });
+
+    expect(output).toContain("Runnable AFK items");
+    expect(output).toContain(backend!.id);
+    expect(output).toContain("Next");
+    expect(output).toContain(`pnpm afk run ${backend!.id}`);
+  });
+
+  it("Given local workflow prerequisites are present, when doctor runs, then it reports success", async () => {
+    const fixture = await createFixture(tempDir);
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["doctor"]);
+    });
+
+    expect(output).toContain("OK git: git");
+    expect(output).toContain("OK docker: docker");
+    expect(output).toContain("OK runner: node");
+    expect(output).toContain("Doctor checks passed");
+  });
+
+  it("Given runner env vars are missing, when doctor runs, then it reports all missing requirements before failing", async () => {
+    const fixture = await createFixture(tempDir);
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: false,
+      runnerRequiredEnv: ["OPENAI_API_KEY", "SECOND_REQUIRED_ENV"]
+    });
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.SECOND_REQUIRED_ENV;
+
+    const output = await captureConsole(async () => {
+      await expect(fixture.cli(["doctor"])).rejects.toThrow("Doctor checks failed (2 issues)");
+    });
+
+    expect(output).toContain("FAIL env:OPENAI_API_KEY: Missing required env var OPENAI_API_KEY");
+    expect(output).toContain("FAIL env:SECOND_REQUIRED_ENV: Missing required env var SECOND_REQUIRED_ENV");
   });
 
   it("Given a blocked AFK work item, when its dependency completes and status is refreshed, then it becomes todo", async () => {
@@ -69,7 +137,7 @@ describe("aiwf CLI BDD scenarios", () => {
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
     );
 
-    await fixture.planAndApprove(requirement.id);
+    await fixture.seedQueue(requirement.id);
     await fixture.cli(["dispatch", "--max", "1"]);
 
     let items = await fixture.items(requirement.id);
@@ -80,14 +148,241 @@ describe("aiwf CLI BDD scenarios", () => {
     expect(items.find((item) => item.planKey === "frontend")?.status).toBe("todo");
   });
 
+  it("Given dependent AFK work exists, when dispatch runs with the default loop, then it keeps executing until the queue is drained or the loop limit is hit", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const output = await captureConsole(async () => {
+      await fixture.cli(["dispatch"]);
+    });
+
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.planKey === "backend")?.status).toBe("done");
+    expect(items.find((item) => item.planKey === "frontend")?.status).toBe("done");
+    expect(items.find((item) => item.planKey === "review")?.status).toBe("hitl_pending");
+    expect(output).toContain("Dispatch iteration 1/10");
+    expect(output).toContain("Dispatch iteration 2/10");
+    expect(output).toContain("Dispatch complete after 2 iteration(s): queue drained");
+  });
+
+  it("Given a stale running work item with a missing run directory, when status is refreshed, then the run and work item are marked failed", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: "run_stale",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/stale",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", "run_stale"),
+      runDir: path.join(fixture.repoDir, ".afk", "runs", "run_stale"),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    await fixture.cli(["status"]);
+
+    const refreshed = await fixture.items(requirement.id);
+    expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
+    const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_stale");
+    expect(staleRun?.status).toBe("failed");
+    expect(staleRun?.summary).toContain("Run directory missing");
+  });
+
+  it("Given a failed AFK work item, when run is invoked again, then it is retried", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+    await fixture.store.updateWorkItemStatus(backend!.id, "failed");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const refreshed = await fixture.items(requirement.id);
+    expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("done");
+  });
+
+  it("Given an execution brief file, when run file is used, then it creates tracked state and passes brief verification into the worker prompt", async () => {
+    const fixture = await createFixture(tempDir);
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Add file-backed execution",
+        "",
+        "## Work Item Body",
+        "Implement direct execution from a hand-written brief file.",
+        "",
+        "## Acceptance Criteria",
+        "- The runner can import a local brief file",
+        "- The imported work item is executed and tracked locally",
+        "",
+        "## Verification",
+        "- pnpm typecheck",
+        "- pnpm test -- packages/cli/src/index.test.ts"
+      ].join("\n")
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md"]);
+    });
+
+    const requirements = await fixture.store.listRequirements();
+    expect(requirements).toHaveLength(1);
+
+    const [requirement] = requirements;
+    expect(requirement?.status).toBe("completed");
+
+    const items = await fixture.items(requirement!.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.title).toBe("Add file-backed execution");
+    expect(items[0]?.status).toBe("done");
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("- pnpm typecheck");
+    expect(prompt).toContain("- pnpm test -- packages/cli/src/index.test.ts");
+    expect(output).toContain("Imported execution brief");
+    expect(output).toContain(`Work item ${items[0]!.id}`);
+  });
+
+  it("Given GitHub publishing is enabled, when run file is used with --pr, then it opens a pull request and prints the review URL", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Open a PR from a brief",
+        "",
+        "## Work Item Body",
+        "Implement direct execution from a hand-written brief file and publish a PR.",
+        "",
+        "## Acceptance Criteria",
+        "- The runner can import a local brief file",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    });
+
+    expect(githubMirror.pullRequestRequests).toHaveLength(1);
+    expect(githubMirror.pullRequestRequests[0]?.body).toContain("## What Changed");
+    expect(githubMirror.pullRequestRequests[0]?.body).toContain("## Why");
+    expect(githubMirror.pullRequestRequests[0]?.body).toContain("## Model Used");
+    expect(githubMirror.pullRequestRequests[0]?.body).toContain("## Agent");
+    expect(githubMirror.pullRequestRequests[0]?.body).toContain("This change was completed by Geoff");
+    expect(output).toContain("Opened PR: https://example.com/pull_request/201");
+  });
+
+  it("Given GH_TOKEN is unset but GitHub auth can be resolved, when run file is used with --pr, then publishing still works", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      githubTokenResolver: async () => "resolved-token"
+    });
+    delete process.env.GH_TOKEN;
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Open a PR from resolved auth",
+        "",
+        "## Work Item Body",
+        "Use resolved GitHub auth instead of an exported GH_TOKEN.",
+        "",
+        "## Acceptance Criteria",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    });
+
+    expect(githubMirror.pullRequestRequests).toHaveLength(1);
+    expect(output).toContain("Opened PR: https://example.com/pull_request/201");
+  });
+
+  it("Given a GitHub issue work source, when run issue is used, then it imports the issue as an execution brief and executes it", async () => {
+    const fixture = await createFixture(tempDir, {
+      githubIssueWorkSource: {
+        async load() {
+          return {
+            requirementBody: "Ship a narrow internal improvement for the AFK runner.",
+            workItemTitle: "Run from issue",
+            workItemBody: "Execute a hand-authored GitHub issue body.",
+            acceptanceCriteria: ["The runner can import a GitHub issue body"],
+            verification: ["pnpm typecheck"],
+            issueUrl: "https://github.com/acme/demo/issues/42"
+          };
+        }
+      }
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "issue", "https://github.com/acme/demo/issues/42"]);
+    });
+
+    const [requirement] = await fixture.store.listRequirements();
+    expect(requirement?.status).toBe("completed");
+    const [workItem] = await fixture.items(requirement!.id);
+    expect(workItem?.title).toBe("Run from issue");
+
+    const [run] = await fixture.store.listRuns();
+    const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("https://github.com/acme/demo/issues/42");
+    expect(output).toContain("Imported execution brief https://github.com/acme/demo/issues/42");
+  });
+
   it("Given a HITL work item, when review is prepared, then a review run and review brief are created", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
     );
 
-    await fixture.planAndApprove(requirement.id);
-    const reviewItem = (await fixture.items(requirement.id)).find((item) => item.planKey === "review");
+    const seededItems = await fixture.seedQueue(requirement.id);
+    const reviewItem = seededItems.find((item) => item.planKey === "review");
 
     expect(reviewItem).toBeDefined();
     await fixture.cli(["review", reviewItem!.id]);
@@ -103,7 +398,7 @@ describe("aiwf CLI BDD scenarios", () => {
     expect(reviewBrief).toContain("## Acceptance Criteria");
   });
 
-  it("Given GitHub mirroring is enabled, when work becomes actionable, then only the requirement and actionable work items are mirrored", async () => {
+  it("Given GitHub mirroring is enabled, when actionable queue items exist, then only the requirement and actionable work items are mirrored", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
@@ -117,11 +412,7 @@ describe("aiwf CLI BDD scenarios", () => {
     expect(githubMirror.requirementMirrorIds).toEqual([requirement.id]);
     expect(githubMirror.workItemMirrorIds).toEqual([]);
 
-    await fixture.cli(["plan", requirement.id]);
-    expect(githubMirror.workItemMirrorIds).toEqual([]);
-
-    await fixture.cli(["approve", requirement.id]);
-    let items = await fixture.items(requirement.id);
+    let items = await fixture.seedQueue(requirement.id);
     const backend = items.find((item) => item.planKey === "backend");
     const frontend = items.find((item) => item.planKey === "frontend");
     const review = items.find((item) => item.planKey === "review");
@@ -146,7 +437,7 @@ describe("aiwf CLI BDD scenarios", () => {
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
     );
 
-    await fixture.planAndApprove(requirement.id);
+    await fixture.seedQueue(requirement.id);
     await fixture.cli(["dispatch", "--max", "1"]);
 
     const items = await fixture.items(requirement.id);
@@ -186,6 +477,7 @@ describe("aiwf CLI BDD scenarios", () => {
 async function createFixture(tempDir: string, options: FixtureOptions = {}): Promise<WorkflowFixture> {
   const repoDir = path.join(tempDir, "repo");
   const fakeBinDir = path.join(tempDir, "bin");
+  const remoteDir = path.join(tempDir, "remote.git");
   fs.mkdirSync(repoDir, { recursive: true });
   fs.mkdirSync(fakeBinDir, { recursive: true });
 
@@ -198,16 +490,27 @@ async function createFixture(tempDir: string, options: FixtureOptions = {}): Pro
   execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoDir });
   execFileSync("git", ["add", "-A"], { cwd: repoDir });
   execFileSync("git", ["commit", "-m", "initial"], { cwd: repoDir });
+
+  if (options.githubEnabled) {
+    execFileSync("git", ["init", "--bare", remoteDir]);
+    execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+  }
+
   process.chdir(repoDir);
 
   const dependencies = options.githubMirror
-    ? { githubFactory: () => options.githubMirror as IssueMirror & ChangeRequestPublisher }
+    || options.githubIssueWorkSource
+    ? {
+        ...(options.githubMirror ? { githubFactory: () => options.githubMirror as IssueMirror & ChangeRequestPublisher } : {}),
+        ...(options.githubIssueWorkSource ? { githubIssueWorkSourceFactory: () => options.githubIssueWorkSource as WorkSource<string> } : {}),
+        ...(options.githubTokenResolver ? { githubTokenResolver: options.githubTokenResolver } : {})
+      }
     : undefined;
 
-  await runCli(["node", "aiwf", "init"], dependencies);
+  await runCli(["node", "afk", "init"], dependencies);
   rewriteConfig(repoDir, { githubEnabled: options.githubEnabled ?? false });
 
-  if (options.githubEnabled) {
+  if (options.githubEnabled || options.githubIssueWorkSource) {
     process.env.GH_TOKEN = "test-token";
   }
 
@@ -220,18 +523,31 @@ async function createFixture(tempDir: string, options: FixtureOptions = {}): Pro
     store,
     githubMirror: options.githubMirror,
     cli: async (args: string[]) => {
-      await runCli(["node", "aiwf", ...args], dependencies);
+      await runCli(["node", "afk", ...args], dependencies);
     },
     capture: async (prompt: string) => {
-      await runCli(["node", "aiwf", "capture", prompt], dependencies);
+      await runCli(["node", "afk", "capture", prompt], dependencies);
       return await firstRequirement(store);
     },
-    planAndApprove: async (requirementId: string) => {
-      await runCli(["node", "aiwf", "plan", requirementId], dependencies);
-      await runCli(["node", "aiwf", "approve", requirementId], dependencies);
-    },
     requirement: async () => firstRequirement(store),
-    items: async (requirementId: string) => store.listWorkItemsByRequirement(requirementId)
+    items: async (requirementId: string) => store.listWorkItemsByRequirement(requirementId),
+    seedQueue: async (requirementId: string) => {
+      const seeded = await store.createDraftWorkItems(requirementId, "Seeded queue", createSeedWorkItems());
+      const backend = seeded.find((item) => item.planKey === "backend");
+      const frontend = seeded.find((item) => item.planKey === "frontend");
+      const review = seeded.find((item) => item.planKey === "review");
+
+      if (!backend || !frontend || !review) {
+        throw new Error("Expected seeded queue items to exist");
+      }
+
+      await store.updateRequirementStatus(requirementId, "approved");
+      await store.updateWorkItemStatus(backend.id, "todo");
+      await store.updateWorkItemStatus(frontend.id, "blocked");
+      await store.updateWorkItemStatus(review.id, "hitl_pending");
+      await runCli(["node", "afk", "sync"], dependencies);
+      return await store.listWorkItemsByRequirement(requirementId);
+    }
   };
 }
 
@@ -245,17 +561,53 @@ async function firstRequirement(store: SqliteStateStore): Promise<Requirement> {
   return requirement;
 }
 
-function rewriteConfig(repoDir: string, options: { githubEnabled: boolean }): void {
-  const configPath = path.join(repoDir, ".ai-workflows", "config.yaml");
+function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[] }): void {
+  const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
   config.github.owner = options.githubEnabled ? "acme" : undefined;
   config.github.repo = options.githubEnabled ? "demo" : undefined;
   config.runner.command = ["node", "fake-runner.mjs", "{prompt}"];
-  config.runner.requiredEnv = [];
+  config.runner.requiredEnv = options.runnerRequiredEnv ?? [];
   config.runner.envAllowlist = [];
   config.verification = [];
   fs.writeFileSync(configPath, YAML.stringify(config));
+}
+
+function createSeedWorkItems(): Array<{
+  planKey: string;
+  title: string;
+  body: string;
+  type: "afk" | "hitl";
+  acceptanceCriteria: string[];
+  dependencyPlanKeys: string[];
+}> {
+  return [
+    {
+      planKey: "backend",
+      title: "Implement backend queue",
+      body: "Create the backend processing flow.",
+      type: "afk",
+      acceptanceCriteria: ["Backend queue exists"],
+      dependencyPlanKeys: []
+    },
+    {
+      planKey: "frontend",
+      title: "Wire frontend state",
+      body: "Hook the UI into the backend queue.",
+      type: "afk",
+      acceptanceCriteria: ["UI uses backend queue"],
+      dependencyPlanKeys: ["backend"]
+    },
+    {
+      planKey: "review",
+      title: "Review UX copy",
+      body: "Human must confirm the UX wording.",
+      type: "hitl",
+      acceptanceCriteria: ["Copy decision recorded"],
+      dependencyPlanKeys: []
+    }
+  ];
 }
 
 function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean): void {
@@ -314,7 +666,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
   summary: "Completed work item",
   issueComment: "Finished the AFK work item.",
   pr: {
-    title: "AIWF: complete work item",
+    title: "AFK: complete work item",
     body: "Done"
   }
 }, null, 2));
@@ -336,7 +688,7 @@ const args = process.argv.slice(2);
 if (args[0] === "image" && args[1] === "inspect") {
   process.exit(1);
 }
-if (args[0] === "build") {
+  if (args[0] === "build") {
   process.exit(0);
 }
 if (args[0] !== "run") {
@@ -349,6 +701,10 @@ let index = 1;
 while (index < args.length) {
   if (args[index] === "--rm") {
     index += 1;
+    continue;
+  }
+  if (args[index] === "--user") {
+    index += 2;
     continue;
   }
   if (args[index] === "-w") {
@@ -389,7 +745,7 @@ if (promptArgIndex >= 0) {
   for (const [container, host] of mounts.entries()) {
     prompt = prompt.split(container).join(host);
   }
-  const rewrittenPromptPath = path.join(os.tmpdir(), \`aiwf-prompt-\${process.pid}-\${Date.now()}.md\`);
+  const rewrittenPromptPath = path.join(os.tmpdir(), \`afk-prompt-\${process.pid}-\${Date.now()}.md\`);
   fs.writeFileSync(rewrittenPromptPath, prompt);
   commandArgs[promptArgIndex] = rewrittenPromptPath;
 }

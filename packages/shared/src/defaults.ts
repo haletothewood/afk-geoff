@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProjectConfig } from "./config.js";
 
-export const PROJECT_DIR = ".ai-workflows";
+export const PROJECT_DIR = ".afk";
 export const CONFIG_FILE = "config.yaml";
 export const STATE_DB = "state.sqlite";
 export const RUNS_DIR = "runs";
@@ -26,7 +26,7 @@ export function defaultProjectConfig(): ProjectConfig {
       envAllowlist: ["GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
     },
     docker: {
-      image: "aiwf-worker:latest"
+      image: "afk-worker:latest"
     },
     verification: [],
     paths: {

@@ -1,18 +1,46 @@
-import type { ChangeRequestPublisher, ExternalRef, IssueMirror, ChangeRequest, Requirement, WorkItem } from "@afk-geoff/core";
-import { createId } from "@afk-geoff/shared";
+import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, Requirement, ResultPublisher, WorkItem, WorkSource } from "@afk-geoff/core";
+import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
 export interface OctokitLike {
   issues: {
     create(input: { owner: string; repo: string; title: string; body: string; labels?: string[] }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
     createComment(input: { owner: string; repo: string; issue_number: number; body: string }): Promise<unknown>;
-    get(input: { owner: string; repo: string; issue_number: number }): Promise<{ data: { state: string } }>;
+    get(input: { owner: string; repo: string; issue_number: number }): Promise<{ data: { state: string; title?: string; body?: string; html_url?: string } }>;
     listComments(input: { owner: string; repo: string; issue_number: number; per_page?: number }): Promise<{ data: Array<{ id: number; body?: string; created_at?: string }> }>;
   };
   pulls: {
     create(input: { owner: string; repo: string; title: string; head: string; base: string; body: string }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
     get(input: { owner: string; repo: string; pull_number: number }): Promise<{ data: { state: string; merged: boolean } }>;
   };
+}
+
+export class GitHubIssueWorkSource implements WorkSource<string> {
+  private readonly client: OctokitLike;
+
+  public constructor(token: string, client?: OctokitLike) {
+    this.client = client ?? (new Octokit({ auth: token }) as unknown as OctokitLike);
+  }
+
+  public async load(input: string) {
+    const parsed = parseGitHubIssueUrl(input);
+    const response = await this.client.issues.get({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      issue_number: parsed.issueNumber
+    });
+    const body = response.data.body?.trim();
+
+    if (!body) {
+      throw new Error(`GitHub issue ${input} does not contain an execution brief body.`);
+    }
+
+    const brief = parseExecutionBriefMarkdown(body);
+    return {
+      ...brief,
+      issueUrl: response.data.html_url ?? input
+    };
+  }
 }
 
 export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
@@ -27,14 +55,14 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
       owner: input.owner,
       repo: input.repo,
       title: input.requirement.title,
-      body: `${input.requirement.body}\n\n<!-- aiwf:requirement:${input.requirement.id} -->`,
-      labels: ["aiwf:requirement"]
+      body: `${input.requirement.body}\n\n<!-- afk:requirement:${input.requirement.id} -->`,
+      labels: ["afk:requirement"]
     });
     return this.buildExternalRef("requirement", input.requirement.id, "issue", response.data.id, response.data.number, response.data.html_url);
   }
 
   public async mirrorWorkItem(input: { owner: string; repo: string; workItem: WorkItem; requirement: Requirement }): Promise<ExternalRef> {
-    const labels = ["aiwf:work-item", input.workItem.type === "afk" ? "aiwf:afk" : "aiwf:hitl"];
+    const labels = ["afk:work-item", input.workItem.type === "afk" ? "afk:afk" : "afk:hitl"];
     const response = await this.client.issues.create({
       owner: input.owner,
       repo: input.repo,
@@ -47,7 +75,7 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
         "Acceptance criteria:",
         ...input.workItem.acceptanceCriteria.map((criterion) => `- ${criterion}`),
         "",
-        `<!-- aiwf:work_item:${input.workItem.id} -->`
+        `<!-- afk:work_item:${input.workItem.id} -->`
       ].join("\n"),
       labels
     });
@@ -99,7 +127,7 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
       title: input.changeRequest.title,
       head: input.changeRequest.branchName,
       base: input.changeRequest.baseBranch,
-      body: `${input.changeRequest.body}\n\n<!-- aiwf:work_item:${input.changeRequest.workItemId} -->`
+      body: `${input.changeRequest.body}\n\n<!-- afk:work_item:${input.changeRequest.workItemId} -->`
     });
     return this.buildExternalRef("work_item", input.changeRequest.workItemId, "pull_request", response.data.id, response.data.number, response.data.html_url);
   }
@@ -138,4 +166,108 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
       ...(url ? { url } : {})
     };
   }
+}
+
+export class GitHubPullRequestPublisher implements ResultPublisher {
+  public constructor(
+    private readonly codeHost: CodeHost,
+    private readonly publisher: ChangeRequestPublisher,
+    private readonly remote: { owner: string; repo: string }
+  ) {}
+
+  public async publish(input: {
+    workItem: HydratedWorkItem;
+    branchName: string;
+    worktreePath: string;
+    baseBranch: string;
+    summary: string;
+    agentName: string;
+    modelLabel: string;
+    pullRequest?: {
+      title: string;
+      body: string;
+      manualQa?: string[];
+    };
+  }): Promise<PublicationResult> {
+    await this.codeHost.pushBranch({
+      cwd: input.worktreePath,
+      branchName: input.branchName
+    });
+
+    const ref = await this.publisher.openPullRequest({
+      owner: this.remote.owner,
+      repo: this.remote.repo,
+      changeRequest: {
+        workItemId: input.workItem.id,
+        branchName: input.branchName,
+        baseBranch: input.baseBranch,
+        title: input.pullRequest?.title ?? `AFK: ${input.workItem.title}`,
+        body: buildPullRequestBody(input)
+      }
+    });
+
+    return {
+      externalRef: ref,
+      ...(ref.url ? { url: ref.url } : {})
+    };
+  }
+}
+
+function buildPullRequestBody(input: {
+  workItem: HydratedWorkItem;
+  summary: string;
+  agentName: string;
+  modelLabel: string;
+  pullRequest?: {
+    body: string;
+    manualQa?: string[];
+  };
+}): string {
+  const whatChanged = sanitizeChangeSummary(input.pullRequest?.body ?? input.summary);
+  const manualQa = input.pullRequest?.manualQa?.filter(Boolean) ?? [];
+
+  return [
+    "## What Changed",
+    "",
+    whatChanged,
+    "",
+    "## Why",
+    "",
+    input.workItem.body,
+    "",
+    "## Model Used",
+    "",
+    `- ${input.modelLabel}`,
+    "",
+    "## Manual QA",
+    "",
+    ...(manualQa.length > 0 ? manualQa.map((step) => `- ${step}`) : ["- Not provided by the run"]),
+    "",
+    "## Agent",
+    "",
+    `- This change was completed by ${input.agentName}`
+  ].join("\n");
+}
+
+function sanitizeChangeSummary(source: string): string {
+  const lines = source
+    .split("\n")
+    .filter((line) => !/claude code/i.test(line))
+    .map((line) => line.trimEnd());
+  const sanitized = lines.join("\n").trim();
+  return sanitized || "No structured change summary was provided.";
+}
+
+function parseGitHubIssueUrl(input: string): { owner: string; repo: string; issueNumber: number } {
+  const match = input.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)(?:[/?#].*)?$/);
+
+  if (!match) {
+    throw new Error(`Invalid GitHub issue URL: ${input}`);
+  }
+
+  return {
+    owner: match[1]!,
+    repo: match[2]!,
+    issueNumber: Number(match[3])
+  };
 }

@@ -21,8 +21,10 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
     worktreePath: string;
     runDir: string;
     envAllowlist: string[];
+    extraEnv?: NodeJS.ProcessEnv;
     command: string;
     args: string[];
+    stdin?: string;
     stdoutPath: string;
     stderrPath: string;
   }): Promise<number> {
@@ -31,17 +33,26 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       const value = process.env[name];
       return value ? ["-e", `${name}=${value}`] : [];
     });
+    const extraEnvArgs = Object.entries(input.extraEnv ?? {}).flatMap(([name, value]) => (
+      value === undefined ? [] : ["-e", `${name}=${value}`]
+    ));
+    const userArgs = typeof process.getuid === "function" && typeof process.getgid === "function"
+      ? ["--user", `${process.getuid()}:${process.getgid()}`]
+      : [];
 
     const args = [
       "run",
       "--rm",
+      ...(input.stdin === undefined ? [] : ["-i"]),
+      ...userArgs,
       "-w",
       "/workspace",
       "-v",
       `${input.worktreePath}:/workspace`,
       "-v",
-      `${input.runDir}:/aiwf-run`,
+      `${input.runDir}:/afk-run`,
       ...envArgs,
+      ...extraEnvArgs,
       input.image,
       input.command,
       ...input.args
@@ -51,7 +62,8 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
       {
         command: "docker",
         args,
-        cwd: input.worktreePath
+        cwd: input.worktreePath,
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin })
       },
       {
         stdoutPath: input.stdoutPath,

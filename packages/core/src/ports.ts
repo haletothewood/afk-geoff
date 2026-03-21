@@ -1,4 +1,13 @@
-import type { ChangeRequest, ExternalRef, HydratedWorkItem, Requirement, RunRecord, RunnerKind, WorkItem } from "./domain.js";
+import type { ChangeRequest, ExternalRef, HydratedWorkItem, Requirement, RunRecord, RunnerKind, WorkItem, WorkItemStatus } from "./domain.js";
+
+export interface ExecutionBrief {
+  requirementBody: string;
+  workItemTitle: string;
+  workItemBody: string;
+  acceptanceCriteria: string[];
+  verification: string[];
+  issueUrl?: string;
+}
 
 export interface RequirementRepository {
   createRequirement(requirement: Requirement): Promise<void>;
@@ -29,12 +38,41 @@ export interface AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
-  }): { command: string; args: string[] };
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" };
   buildReviewCommand(input: {
     briefPath: string;
     reviewCommandOverride?: string[];
     commandOverride?: string[];
   }): string[];
+}
+
+export interface WorkSource<TInput = string> {
+  load(input: TInput): Promise<ExecutionBrief>;
+}
+
+export interface ExecutionBackendInput {
+  requirement: Requirement;
+  workItem: HydratedWorkItem;
+  verification: string[];
+  issueUrl?: string;
+}
+
+export interface ExecutionBackendResult {
+  status: Extract<WorkItemStatus, "done" | "blocked" | "failed">;
+  summary: string;
+  issueComment: string;
+  hasDiff: boolean;
+  branchName?: string;
+  worktreePath?: string;
+  pullRequest?: {
+    title: string;
+    body: string;
+    manualQa?: string[];
+  };
+}
+
+export interface ExecutionBackend {
+  run(input: ExecutionBackendInput): Promise<ExecutionBackendResult>;
 }
 
 export interface CodeHost {
@@ -53,8 +91,10 @@ export interface WorkspaceRuntime {
     worktreePath: string;
     runDir: string;
     envAllowlist: string[];
+    extraEnv?: NodeJS.ProcessEnv;
     command: string;
     args: string[];
+    stdin?: string;
     stdoutPath: string;
     stderrPath: string;
   }): Promise<number>;
@@ -70,4 +110,26 @@ export interface IssueMirror {
 export interface ChangeRequestPublisher {
   openPullRequest(input: { owner: string; repo: string; changeRequest: ChangeRequest }): Promise<ExternalRef>;
   syncPullRequests(input: { owner: string; repo: string; refs: ExternalRef[] }): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>>;
+}
+
+export interface PublicationResult {
+  externalRef?: ExternalRef;
+  url?: string;
+}
+
+export interface ResultPublisher {
+  publish(input: {
+    workItem: HydratedWorkItem;
+    branchName: string;
+    worktreePath: string;
+    baseBranch: string;
+    summary: string;
+    agentName: string;
+    modelLabel: string;
+    pullRequest?: {
+      title: string;
+      body: string;
+      manualQa?: string[];
+    };
+  }): Promise<PublicationResult>;
 }

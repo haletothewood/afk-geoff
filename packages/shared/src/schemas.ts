@@ -21,7 +21,8 @@ export const workerResultSchema = z.object({
   pr: z
     .object({
       title: z.string().optional(),
-      body: z.string().optional()
+      body: z.string().optional(),
+      manualQa: z.array(z.string().min(1)).optional()
     })
     .optional()
 });

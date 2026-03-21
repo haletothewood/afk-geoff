@@ -1,4 +1,9 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const workspacePackage = (packageName: string) => path.resolve(rootDir, "packages", packageName, "src", "index.ts");
 
 export default defineConfig({
   test: {
@@ -10,14 +15,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@afk-geoff/shared": "/Users/davidneil/Development/Personal/AI-Workflows/packages/shared/src/index.ts",
-      "@afk-geoff/core": "/Users/davidneil/Development/Personal/AI-Workflows/packages/core/src/index.ts",
-      "@afk-geoff/adapter-sqlite": "/Users/davidneil/Development/Personal/AI-Workflows/packages/adapter-sqlite/src/index.ts",
-      "@afk-geoff/adapter-local-git": "/Users/davidneil/Development/Personal/AI-Workflows/packages/adapter-local-git/src/index.ts",
-      "@afk-geoff/adapter-github": "/Users/davidneil/Development/Personal/AI-Workflows/packages/adapter-github/src/index.ts",
-      "@afk-geoff/runtime-docker": "/Users/davidneil/Development/Personal/AI-Workflows/packages/runtime-docker/src/index.ts",
-      "@afk-geoff/runner-claude": "/Users/davidneil/Development/Personal/AI-Workflows/packages/runner-claude/src/index.ts",
-      "@afk-geoff/runner-codex": "/Users/davidneil/Development/Personal/AI-Workflows/packages/runner-codex/src/index.ts"
+      "@afk-geoff/shared": workspacePackage("shared"),
+      "@afk-geoff/core": workspacePackage("core"),
+      "@afk-geoff/adapter-sqlite": workspacePackage("adapter-sqlite"),
+      "@afk-geoff/adapter-local-git": workspacePackage("adapter-local-git"),
+      "@afk-geoff/adapter-github": workspacePackage("adapter-github"),
+      "@afk-geoff/runtime-docker": workspacePackage("runtime-docker"),
+      "@afk-geoff/runner-claude": workspacePackage("runner-claude"),
+      "@afk-geoff/runner-codex": workspacePackage("runner-codex")
     }
   }
 });

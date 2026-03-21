@@ -73,7 +73,8 @@ The JSON must match this schema:
   "issueComment": "comment to post back to the mirrored issue",
   "pr": {
     "title": "optional PR title",
-    "body": "optional PR body"
+    "body": "optional PR body focused on what changed",
+    "manualQa": ["optional manual QA step"]
   }
 }
 
@@ -83,6 +84,7 @@ Rules:
 - Create a commit if you changed repo files.
 - Run verification commands before marking status "done".
 - Use "blocked" only if a real dependency or ambiguity prevented completion.
+- If you include PR data, keep "pr.body" focused on what changed and put reviewer steps in "pr.manualQa".
 - Do not print the JSON; write it to the file path above.
 
 # Requirement

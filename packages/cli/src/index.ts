@@ -3,17 +3,15 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Command } from "commander";
-import { GitHubMirror } from "@afk-geoff/adapter-github";
+import { GitHubIssueWorkSource, GitHubMirror, GitHubPullRequestPublisher } from "@afk-geoff/adapter-github";
 import { LocalGitCodeHost, branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequest, type ChangeRequestPublisher, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type WorkItem, type WorkItemStatus } from "@afk-geoff/core";
+import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequestPublisher, type ExecutionBackend, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type ResultPublisher, type WorkItem, type WorkSource } from "@afk-geoff/core";
 import { ClaudeCliRunner } from "@afk-geoff/runner-claude";
 import { CodexCliRunner } from "@afk-geoff/runner-codex";
 import { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import {
-  buildPlanPrompt,
   buildReviewBrief as buildRichReviewBrief,
-  buildWorkerPrompt,
   configFilePath,
   createId,
   defaultProjectConfig,
@@ -21,14 +19,12 @@ import {
   ensureProjectLayout,
   loadProjectConfig,
   maybeReadOverride,
-  plannerOutputSchema,
   resolveProjectPaths,
-  runProcess,
   slugify,
-  workerResultSchema,
   writeDefaultProjectFiles,
-  DEFAULT_DOCKERFILE_PATH
 } from "@afk-geoff/shared";
+import { MarkdownFileWorkSource, resolveBriefPath } from "./file-work-source.js";
+import { LocalDockerExecutionBackend } from "./local-docker-execution-backend.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,17 +37,26 @@ interface CliContext {
   git: LocalGitCodeHost;
   runtime: DockerWorkspaceRuntime;
   runner: AgentRunner;
+  githubToken: string | undefined;
   github: (IssueMirror & ChangeRequestPublisher) | undefined;
+  executionBackend: ExecutionBackend;
+  resultPublisher: ResultPublisher | undefined;
   remote: { owner: string; repo: string } | undefined;
 }
 
 interface CliDependencies {
   githubFactory?: (token: string) => IssueMirror & ChangeRequestPublisher;
+  githubIssueWorkSourceFactory?: (token: string) => WorkSource<string>;
+  githubTokenResolver?: () => Promise<string | undefined>;
+}
+
+interface RunOutcome {
+  prUrl?: string;
 }
 
 export async function runCli(argv = process.argv, dependencies: CliDependencies = {}): Promise<void> {
   const program = new Command();
-  program.name("aiwf").description("afk-geoff orchestrator");
+  program.name("afk").description("afk-geoff orchestrator");
 
   program
     .command("init")
@@ -66,7 +71,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       }
 
       writeDefaultProjectFiles(process.cwd(), options.withOverrides ?? false);
-      console.log(`Initialized .ai-workflows in ${process.cwd()}`);
+      console.log(`Initialized .afk in ${process.cwd()}`);
     });
 
   program.command("doctor").action(async () => {
@@ -84,24 +89,6 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     });
 
   program
-    .command("plan")
-    .argument("<requirementId>", "Requirement id")
-    .action(async (requirementId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
-      const items = await planRequirement(ctx, requirementId);
-      console.log(`Created ${items.length} draft work items for ${requirementId}`);
-    });
-
-  program
-    .command("approve")
-    .argument("<requirementId>", "Requirement id")
-    .action(async (requirementId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
-      await autoSync(ctx);
-      const items = await approveRequirement(ctx, requirementId);
-      console.log(`Approved ${items.length} work items for ${requirementId}`);
-    });
-
   program.command("status").action(async () => {
     const ctx = await openContext(process.cwd(), dependencies);
     await autoSync(ctx);
@@ -133,24 +120,46 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
   program
     .command("dispatch")
-    .option("--max <count>", "Maximum number of runnable AFK items", "1")
+    .option("--max <count>", "Maximum number of AFK loop iterations", "10")
     .action(async (options: { max: string }) => {
       const ctx = await openContext(process.cwd(), dependencies);
-      await autoSync(ctx);
-      const items = (await ctx.store.listWorkItems()).filter((item) => item.type === "afk" && item.status === "todo").slice(0, Number(options.max));
-
-      for (const item of items) {
-        await runWorkItem(ctx, item.id);
-      }
+      await dispatchLoop(ctx, Number(options.max));
     });
 
   program
     .command("run")
-    .argument("<workItemId>", "Work item id")
-    .action(async (workItemId: string) => {
+    .argument("<target>", "Work item id, or 'file' / 'issue'")
+    .argument("[value]", "File path when target is 'file', or GitHub issue URL when target is 'issue'")
+    .option("--pr", "Require the run to open a pull request")
+    .action(async (target: string, value: string | undefined, options: { pr?: boolean }) => {
       const ctx = await openContext(process.cwd(), dependencies);
       await autoSync(ctx);
-      await runWorkItem(ctx, workItemId);
+
+      if (options.pr) {
+        assertPullRequestReady(ctx);
+      }
+
+      let outcome: RunOutcome;
+
+      if (target === "file") {
+        if (!value) {
+          throw new Error("Usage: pnpm afk run file <path>");
+        }
+
+        outcome = await runExecutionBriefFile(ctx, value, { requirePullRequest: options.pr ?? false });
+      } else if (target === "issue") {
+        if (!value) {
+          throw new Error("Usage: pnpm afk run issue <github-issue-url>");
+        }
+
+        outcome = await runGitHubIssue(ctx, value, dependencies, { requirePullRequest: options.pr ?? false });
+      } else {
+        outcome = await runWorkItem(ctx, target, { requirePullRequest: options.pr ?? false });
+      }
+
+      if (outcome.prUrl) {
+        console.log(`Opened PR: ${outcome.prUrl}`);
+      }
     });
 
   program
@@ -180,10 +189,24 @@ async function openContext(cwd: string, dependencies: CliDependencies): Promise<
   const runtime = new DockerWorkspaceRuntime();
   const runner = createRunner(config.runner.kind);
   const remote = config.github.enabled ? config.github.owner && config.github.repo ? { owner: config.github.owner, repo: config.github.repo } : await git.getRemoteSlug(repoRoot) : undefined;
-  const github = config.github.enabled && process.env.GH_TOKEN
+  const githubToken = await resolveGitHubToken(dependencies);
+  const github = config.github.enabled && githubToken
     ? dependencies.githubFactory
-      ? dependencies.githubFactory(process.env.GH_TOKEN)
-      : new GitHubMirror(process.env.GH_TOKEN)
+      ? dependencies.githubFactory(githubToken)
+      : new GitHubMirror(githubToken)
+    : undefined;
+  const executionBackend = new LocalDockerExecutionBackend({
+    repoRoot,
+    config,
+    paths,
+    store,
+    git,
+    runtime,
+    runner,
+    ...(githubToken ? { githubToken } : {})
+  });
+  const resultPublisher = github && remote
+    ? new GitHubPullRequestPublisher(git, github, remote)
     : undefined;
 
   return {
@@ -195,13 +218,24 @@ async function openContext(cwd: string, dependencies: CliDependencies): Promise<
     git,
     runtime,
     runner,
+    githubToken,
     github,
+    executionBackend,
+    resultPublisher,
     remote
   };
 }
 
 function createRunner(kind: "claude" | "codex"): AgentRunner {
   return kind === "claude" ? new ClaudeCliRunner() : new CodexCliRunner();
+}
+
+function describeRunnerModel(ctx: CliContext): string {
+  if (ctx.runner.kind === "claude") {
+    return "Claude CLI default (no explicit model configured)";
+  }
+
+  return "Codex CLI default (no explicit model configured)";
 }
 
 function withCommandOverride(commandOverride: string[] | undefined): { commandOverride: string[] } | Record<string, never> {
@@ -221,10 +255,11 @@ function withText<K extends string>(key: K, value: string | undefined): { [P in 
 }
 
 async function runDoctor(ctx: CliContext): Promise<void> {
+  const failures: string[] = [];
   const checks: Array<[string, string]> = [
     ["git", "git"],
     ["docker", "docker"],
-    ["runner", ctx.runner.buildInvocation({ mode: "plan", promptPath: "/tmp/prompt.md", ...withCommandOverride(ctx.config.runner.command) }).command]
+    ["runner", ctx.runner.buildInvocation({ mode: "work", promptPath: "/tmp/prompt.md", ...withCommandOverride(ctx.config.runner.command) }).command]
   ];
 
   if (ctx.config.github.enabled) {
@@ -232,17 +267,38 @@ async function runDoctor(ctx: CliContext): Promise<void> {
   }
 
   for (const [label, executable] of checks) {
-    await assertCommandExists(executable, label);
+    const error = await commandExistsError(executable, label);
+
+    if (error) {
+      failures.push(error);
+      console.log(`FAIL ${label}: ${error}`);
+      continue;
+    }
+
+    console.log(`OK ${label}: ${executable}`);
   }
 
   for (const envVar of ctx.runner.requiredEnvVars(withRequiredEnv(ctx.config.runner.requiredEnv))) {
     if (!process.env[envVar]) {
-      throw new Error(`Missing required env var ${envVar}`);
+      const error = `Missing required env var ${envVar}`;
+      failures.push(error);
+      console.log(`FAIL env:${envVar}: ${error}`);
+      continue;
     }
+
+    console.log(`OK env:${envVar}`);
   }
 
   if (ctx.config.github.enabled && !ctx.remote) {
-    throw new Error("GitHub is enabled but origin remote owner/repo could not be resolved.");
+    const error = "GitHub is enabled but origin remote owner/repo could not be resolved.";
+    failures.push(error);
+    console.log(`FAIL github: ${error}`);
+  } else if (ctx.config.github.enabled && ctx.remote) {
+    console.log(`OK github remote: ${ctx.remote.owner}/${ctx.remote.repo}`);
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Doctor checks failed (${failures.length} issue${failures.length === 1 ? "" : "s"})`);
   }
 
   console.log("Doctor checks passed");
@@ -267,72 +323,6 @@ async function captureRequirement(ctx: CliContext, prompt: string): Promise<Requ
   return requirement;
 }
 
-async function planRequirement(ctx: CliContext, requirementId: string): Promise<HydratedWorkItem[]> {
-  const requirement = await mustGetRequirement(ctx, requirementId);
-  const runDir = path.join(ctx.paths.runsDir, `plan-${Date.now()}`);
-  fs.mkdirSync(runDir, { recursive: true });
-
-  const outputPath = path.join(runDir, "plan.json");
-  const promptPath = path.join(runDir, "prompt.md");
-  const stdoutPath = path.join(runDir, "stdout.log");
-  const stderrPath = path.join(runDir, "stderr.log");
-  const overrideText = maybeReadOverride(ctx.repoRoot, ctx.config.prompts?.plan);
-  const prompt = buildPlanPrompt({ requirement, outputPath, ...withText("overrideText", overrideText) });
-  fs.writeFileSync(promptPath, prompt);
-
-  const invocation = ctx.runner.buildInvocation({
-    mode: "plan",
-    promptPath,
-    ...withCommandOverride(ctx.config.runner.command)
-  });
-  const exitCode = await runProcess(
-    {
-      command: invocation.command,
-      args: invocation.args,
-      cwd: ctx.repoRoot,
-      env: allowedEnv(ctx.runner.requiredEnvVars(withRequiredEnv(ctx.config.runner.requiredEnv)))
-    },
-    { stdoutPath, stderrPath, mirrorToConsole: true }
-  );
-
-  if (exitCode !== 0 && !fs.existsSync(outputPath)) {
-    throw new Error(`Planner command exited with ${exitCode}`);
-  }
-
-  const output = plannerOutputSchema.parse(JSON.parse(fs.readFileSync(outputPath, "utf8")));
-  const items = await ctx.store.createDraftWorkItems(
-    requirement.id,
-    output.summary,
-    output.items.map((item) => ({
-      planKey: item.key,
-      title: item.title,
-      body: item.body,
-      type: item.type,
-      acceptanceCriteria: item.acceptanceCriteria,
-      dependencyPlanKeys: item.dependsOnKeys
-    }))
-  );
-  await ctx.store.updateRequirementStatus(requirement.id, "planned");
-  return items;
-}
-
-async function approveRequirement(ctx: CliContext, requirementId: string): Promise<HydratedWorkItem[]> {
-  const items = await ctx.store.listWorkItemsByRequirement(requirementId);
-  const itemMap = new Map(items.map((item) => [item.id, item]));
-
-  for (const item of items) {
-    const nextStatus = initialApprovedStatus(item, itemMap);
-
-    if (nextStatus !== item.status) {
-      await ctx.store.updateWorkItemStatus(item.id, nextStatus);
-    }
-  }
-
-  await refreshRequirementStatuses(ctx);
-  await mirrorActionableWorkItems(ctx);
-  return await ctx.store.listWorkItemsByRequirement(requirementId);
-}
-
 async function printStatus(ctx: CliContext): Promise<void> {
   const requirements = await ctx.store.listRequirements();
   const workItems = await ctx.store.listWorkItems();
@@ -341,35 +331,31 @@ async function printStatus(ctx: CliContext): Promise<void> {
   const decisions = classifyWorkItems(workItems);
 
   console.log("Requirements");
-  for (const requirement of requirements) {
-    console.log(`- ${requirement.id}  ${requirement.title}  ${requirement.status}`);
-  }
+  printLinesOrNone(requirements.map((requirement) => `- ${requirement.id}  ${requirement.title}  ${requirement.status}`));
   console.log("");
   console.log("Runnable AFK items");
-  for (const item of decisions.runnable) {
-    console.log(`- ${item.id}  ${item.title}`);
-  }
+  printLinesOrNone(decisions.runnable.map((item) => `- ${item.id}  ${item.title}`));
   console.log("");
   console.log("Blocked items");
-  for (const item of decisions.blocked) {
-    console.log(`- ${item.id}  ${item.title}`);
-  }
+  printLinesOrNone(decisions.blocked.map((item) => `- ${item.id}  ${item.title}`));
   console.log("");
   console.log("HITL items");
-  for (const item of decisions.hitl) {
-    console.log(`- ${item.id}  ${item.title}`);
-  }
+  printLinesOrNone(decisions.hitl.map((item) => `- ${item.id}  ${item.title}`));
   console.log("");
   console.log("Active runs / open PRs");
+  const activeLines: string[] = [];
   for (const run of runs.filter((record) => record.status === "running" || record.status === "prepared")) {
-    console.log(`- ${run.id}  ${run.workItemId}  ${run.status}`);
+    activeLines.push(`- ${run.id}  ${run.workItemId}  ${run.status}`);
   }
   for (const ref of prRefs) {
     const workItem = workItems.find((item) => item.id === ref.entityId);
     if (workItem?.status !== "done") {
-      console.log(`- PR #${ref.remoteNumber}  ${workItem?.title ?? ref.entityId}`);
+      activeLines.push(`- PR #${ref.remoteNumber}  ${workItem?.title ?? ref.entityId}`);
     }
   }
+  printLinesOrNone(activeLines);
+  console.log("");
+  printNextActionLines(getGlobalNextActions(requirements, workItems));
 }
 
 async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
@@ -392,6 +378,8 @@ async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
       console.log("");
       console.log(`Mirrored issue: ${issueRef.url}`);
     }
+    console.log("");
+    printNextActionLines(getRequirementNextActions(items));
     return;
   }
 
@@ -433,6 +421,8 @@ async function showEntity(ctx: CliContext, entityId: string): Promise<void> {
   if (prRef?.url) {
     console.log(`Mirrored pull request: ${prRef.url}`);
   }
+  console.log("");
+  printNextActionLines(getWorkItemNextActions(workItem));
 }
 
 async function printRuns(ctx: CliContext): Promise<void> {
@@ -485,107 +475,39 @@ async function printRunLogs(ctx: CliContext, runId: string): Promise<void> {
   }
 }
 
-async function runWorkItem(ctx: CliContext, workItemId: string): Promise<void> {
+async function runWorkItem(
+  ctx: CliContext,
+  workItemId: string,
+  options: { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  return runTrackedWorkItem(ctx, workItemId, options);
+}
+
+async function runTrackedWorkItem(
+  ctx: CliContext,
+  workItemId: string,
+  options: { verification?: string[]; issueUrl?: string; requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
 
   if (workItem.type !== "afk") {
     throw new Error(`Work item ${workItemId} is not AFK.`);
   }
 
-  if (workItem.status !== "todo") {
+  if (workItem.status !== "todo" && workItem.status !== "failed") {
     throw new Error(`Work item ${workItemId} is not runnable (current status: ${workItem.status}).`);
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
-  const runId = createId("run");
-  const branchName = branchNameForWorkItem(workItem.title);
-  const worktreePath = path.join(ctx.paths.worktreesDir, runId);
-  const runDir = path.join(ctx.paths.runsDir, runId);
-  fs.mkdirSync(runDir, { recursive: true });
-  await ctx.git.createWorktree({
-    cwd: ctx.repoRoot,
-    branchName,
-    baseBranch: ctx.config.baseBranch,
-    path: worktreePath
-  });
-
-  const runRecord = {
-    id: runId,
-    workItemId: workItem.id,
-    mode: "work" as const,
-    status: "running" as const,
-    branchName,
-    worktreePath,
-    runDir,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  await ctx.store.createRun(runRecord);
-  await ctx.store.updateWorkItemStatus(workItem.id, "in_progress");
-
-  const resultPath = "/aiwf-run/result.json";
-  const promptPath = path.join(runDir, "prompt.md");
-  const manifestPath = path.join(runDir, "manifest.json");
-  const stdoutPath = path.join(runDir, "stdout.log");
-  const stderrPath = path.join(runDir, "stderr.log");
-  const issueRef = await ctx.store.getExternalRefForEntity("work_item", workItem.id, "issue");
-  const prompt = buildWorkerPrompt({
+  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? [])])];
+  const result = await ctx.executionBackend.run({
     requirement,
     workItem,
-    verification: ctx.config.verification,
-    resultPath,
-    ...withText("issueUrl", issueRef?.url),
-    ...withText("overrideText", maybeReadOverride(ctx.repoRoot, ctx.config.prompts?.worker))
+    verification,
+    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
   });
-  fs.writeFileSync(promptPath, prompt);
-  fs.writeFileSync(
-    manifestPath,
-    JSON.stringify(
-      {
-        runId,
-        workItemId: workItem.id,
-        branchName,
-        worktreePath
-      },
-      null,
-      2
-    )
-  );
 
-  const invocation = ctx.runner.buildInvocation({
-    mode: "work",
-    promptPath: "/aiwf-run/prompt.md",
-    ...withCommandOverride(ctx.config.runner.command)
-  });
-  const dockerfilePath = ctx.config.docker.dockerfilePath
-    ? path.resolve(ctx.repoRoot, ctx.config.docker.dockerfilePath)
-    : DEFAULT_DOCKERFILE_PATH;
-  const buildContext = ctx.config.docker.dockerfilePath ? ctx.repoRoot : path.dirname(DEFAULT_DOCKERFILE_PATH);
-  await ctx.runtime.ensureImage({
-    cwd: ctx.repoRoot,
-    image: ctx.config.docker.image,
-    dockerfilePath,
-    buildContext
-  });
-  const exitCode = await ctx.runtime.runWork({
-    image: ctx.config.docker.image,
-    worktreePath,
-    runDir,
-    envAllowlist: ctx.config.runner.envAllowlist,
-    command: invocation.command,
-    args: invocation.args,
-    stdoutPath,
-    stderrPath
-  });
-  const hostResultPath = path.join(runDir, "result.json");
-
-  if (!fs.existsSync(hostResultPath)) {
-    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
-    await ctx.store.updateRun(runId, { status: "failed", summary: `No result.json found (exit code ${exitCode})` });
-    throw new Error(`Worker did not produce result.json for ${workItem.id}`);
-  }
-
-  const result = workerResultSchema.parse(JSON.parse(fs.readFileSync(hostResultPath, "utf8")));
+  const issueRef = await ctx.store.getExternalRefForEntity("work_item", workItem.id, "issue");
 
   if (ctx.github && ctx.remote && issueRef && result.issueComment.trim()) {
     await ctx.github.commentOnIssue({
@@ -597,49 +519,200 @@ async function runWorkItem(ctx: CliContext, workItemId: string): Promise<void> {
   }
 
   if (result.status === "blocked" || result.status === "failed") {
-    await ctx.store.updateWorkItemStatus(workItem.id, result.status);
-    await ctx.store.updateRun(runId, { status: result.status === "failed" ? "failed" : "completed", summary: result.summary });
-    return;
+    return {};
   }
 
-  await ctx.git.commitAll({
-    cwd: worktreePath,
-    message: `aiwf: ${workItem.title}`
-  });
-
-  const hasDiff = await ctx.git.hasDiffAgainst({
-    cwd: worktreePath,
-    baseBranch: ctx.config.baseBranch
-  });
-
-  if (!hasDiff) {
-    await ctx.store.updateWorkItemStatus(workItem.id, "done");
-    await ctx.store.updateRun(runId, { status: "completed", summary: result.summary });
-    await refreshRequirementStatuses(ctx);
-    return;
-  }
-
-  if (ctx.github && ctx.remote) {
-    await ctx.git.pushBranch({ cwd: worktreePath, branchName });
-    const prRef = await ctx.github.openPullRequest({
-      owner: ctx.remote.owner,
-      repo: ctx.remote.repo,
-      changeRequest: {
-        workItemId: workItem.id,
-        branchName,
-        baseBranch: ctx.config.baseBranch,
-        title: result.pr?.title ?? `AIWF: ${workItem.title}`,
-        body: result.pr?.body ?? result.summary
+  if (!result.hasDiff) {
+    if (options.requirePullRequest) {
+      await ctx.store.updateWorkItemStatus(workItem.id, "failed");
+      const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+      if (latestRun) {
+        await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Run completed without repo changes; no pull request could be opened" });
       }
-    });
-    await ctx.store.saveExternalRef(prRef);
-    await ctx.store.updateRun(runId, { status: "completed", summary: result.summary });
-    return;
+      throw new Error(`Run completed without repo changes; no pull request could be opened for ${workItem.id}`);
+    }
+
+    await refreshRequirementStatuses(ctx);
+    return {};
   }
 
+  if (ctx.resultPublisher && result.branchName && result.worktreePath) {
+    const publication = await ctx.resultPublisher.publish({
+      workItem,
+      branchName: result.branchName,
+      worktreePath: result.worktreePath,
+      baseBranch: ctx.config.baseBranch,
+      summary: result.summary,
+      agentName: "Geoff",
+      modelLabel: describeRunnerModel(ctx),
+      ...(result.pullRequest ? { pullRequest: result.pullRequest } : {})
+    });
+    if (publication.externalRef) {
+      await ctx.store.saveExternalRef(publication.externalRef);
+    }
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    await ctx.store.updateWorkItemStatus(workItem.id, "done");
+    if (latestRun) {
+      await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
+    }
+    await refreshRequirementStatuses(ctx);
+    return {
+      ...(publication.url ? { prUrl: publication.url } : {})
+    };
+  }
+
+  if (options.requirePullRequest) {
+    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    if (latestRun) {
+      await ctx.store.updateRun(latestRun.id, { status: "failed", summary: "Pull request was required but publishing was unavailable" });
+    }
+    throw new Error(`Pull request was required but GitHub publishing was unavailable for ${workItem.id}`);
+  }
+
+  const latestRun = await latestRunForWorkItem(ctx, workItem.id);
   await ctx.store.updateWorkItemStatus(workItem.id, "done");
-  await ctx.store.updateRun(runId, { status: "completed", summary: result.summary });
+  if (latestRun) {
+    await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
+  }
   await refreshRequirementStatuses(ctx);
+  return {};
+}
+
+async function runExecutionBriefFile(
+  ctx: CliContext,
+  inputPath: string,
+  options: { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  const briefPath = resolveBriefPath(ctx.cwd, inputPath);
+  const brief = await new MarkdownFileWorkSource(ctx.cwd).load(inputPath);
+  return await runImportedExecutionBrief(ctx, brief, {
+    sourceLabel: `Imported from ${path.basename(briefPath)}`,
+    sourceSummary: `Imported from ${briefPath}`,
+    printedSource: briefPath,
+    requirePullRequest: options.requirePullRequest ?? false
+  });
+}
+
+async function runGitHubIssue(
+  ctx: CliContext,
+  issueUrl: string,
+  dependencies: CliDependencies,
+  options: { requirePullRequest?: boolean } = {}
+): Promise<RunOutcome> {
+  const githubToken = ctx.githubToken ?? await resolveGitHubToken(dependencies);
+
+  if (!githubToken) {
+    throw new Error("GitHub issue execution requires GitHub auth (`GH_TOKEN` or `gh auth login`)");
+  }
+
+  const workSource = dependencies.githubIssueWorkSourceFactory
+    ? dependencies.githubIssueWorkSourceFactory(githubToken)
+    : new GitHubIssueWorkSource(githubToken);
+  const brief = await workSource.load(issueUrl);
+
+  return await runImportedExecutionBrief(ctx, brief, {
+    sourceLabel: `Imported from ${issueUrl}`,
+    sourceSummary: `Imported from ${issueUrl}`,
+    printedSource: issueUrl,
+    requirePullRequest: options.requirePullRequest ?? false
+  });
+}
+
+async function runImportedExecutionBrief(
+  ctx: CliContext,
+  brief: {
+    requirementBody: string;
+    workItemTitle: string;
+    workItemBody: string;
+    acceptanceCriteria: string[];
+    verification: string[];
+    issueUrl?: string;
+  },
+  options: {
+    sourceLabel: string;
+    sourceSummary: string;
+    printedSource: string;
+    requirePullRequest?: boolean;
+  }
+): Promise<RunOutcome> {
+  const now = new Date().toISOString();
+  const requirement: Requirement = {
+    id: createId("req"),
+    title: deriveTitle(brief.requirementBody),
+    body: brief.requirementBody,
+    status: "captured",
+    createdAt: now,
+    updatedAt: now
+  };
+
+  await ctx.store.createRequirement(requirement);
+  const [workItem] = await ctx.store.createDraftWorkItems(
+    requirement.id,
+    options.sourceLabel,
+    [
+      {
+        planKey: slugify(brief.workItemTitle) || "imported-brief",
+        title: brief.workItemTitle,
+        body: brief.workItemBody,
+        type: "afk",
+        acceptanceCriteria: brief.acceptanceCriteria,
+        executionSummary: options.sourceSummary,
+        dependencyPlanKeys: []
+      }
+    ]
+  );
+
+  if (!workItem) {
+    throw new Error(`Failed to create work item from ${options.printedSource}`);
+  }
+
+  await ctx.store.updateRequirementStatus(requirement.id, "planned");
+  await ctx.store.updateWorkItemStatus(workItem.id, "todo");
+  await ctx.store.updateRequirementStatus(requirement.id, "approved");
+
+  console.log(`Imported execution brief ${options.printedSource}`);
+  console.log(`Requirement ${requirement.id}`);
+  console.log(`Work item ${workItem.id}`);
+
+  const runOptions: { verification?: string[]; issueUrl?: string; requirePullRequest?: boolean } = {
+    verification: brief.verification
+  };
+
+  if (options.requirePullRequest) {
+    runOptions.requirePullRequest = true;
+  }
+
+  if (brief.issueUrl) {
+    runOptions.issueUrl = brief.issueUrl;
+  }
+
+  return await runTrackedWorkItem(ctx, workItem.id, runOptions);
+}
+
+async function dispatchLoop(ctx: CliContext, maxIterations: number): Promise<void> {
+  if (!Number.isInteger(maxIterations) || maxIterations < 1) {
+    throw new Error(`--max must be a positive integer, received: ${maxIterations}`);
+  }
+
+  let iterations = 0;
+
+  while (iterations < maxIterations) {
+    await autoSync(ctx);
+    const nextItem = (await ctx.store.listWorkItems()).find((item) => item.type === "afk" && item.status === "todo");
+
+    if (!nextItem) {
+      const reason = iterations === 0 ? "no runnable AFK items" : "queue drained";
+      console.log(`Dispatch complete after ${iterations} iteration(s): ${reason}`);
+      return;
+    }
+
+    iterations += 1;
+    console.log(`Dispatch iteration ${iterations}/${maxIterations}: ${nextItem.id}  ${nextItem.title}`);
+    await runTrackedWorkItem(ctx, nextItem.id);
+  }
+
+  console.log(`Dispatch complete after ${iterations} iteration(s): reached loop limit`);
 }
 
 async function prepareReview(ctx: CliContext, workItemId: string): Promise<void> {
@@ -743,6 +816,8 @@ async function autoSync(ctx: CliContext): Promise<void> {
     }
   }
 
+  await reconcileLocalRuns(ctx);
+
   const items = await ctx.store.listWorkItems();
   const itemMap = new Map(items.map((item) => [item.id, item]));
 
@@ -756,6 +831,30 @@ async function autoSync(ctx: CliContext): Promise<void> {
 
   await refreshRequirementStatuses(ctx);
   await mirrorActionableWorkItems(ctx);
+}
+
+async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
+  const runs = await ctx.store.listRuns();
+
+  for (const run of runs) {
+    if (run.status !== "running") {
+      continue;
+    }
+
+    if (fs.existsSync(run.runDir)) {
+      continue;
+    }
+
+    await ctx.store.updateRun(run.id, {
+      status: "failed",
+      summary: "Run directory missing; treating interrupted run as failed"
+    });
+
+    const workItem = await ctx.store.getWorkItem(run.workItemId);
+    if (workItem?.status === "in_progress") {
+      await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+    }
+  }
 }
 
 async function refreshRequirementStatuses(ctx: CliContext): Promise<void> {
@@ -845,11 +944,37 @@ async function mustGetWorkItem(ctx: CliContext, workItemId: string): Promise<Hyd
   return item;
 }
 
-async function assertCommandExists(command: string, label: string): Promise<void> {
+async function latestRunForWorkItem(ctx: CliContext, workItemId: string) {
+  const runs = await ctx.store.listRuns();
+  return runs
+    .filter((run) => run.workItemId === workItemId && run.mode === "work")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
+async function resolveGitHubToken(dependencies: CliDependencies): Promise<string | undefined> {
+  if (process.env.GH_TOKEN) {
+    return process.env.GH_TOKEN;
+  }
+
+  if (dependencies.githubTokenResolver) {
+    return await dependencies.githubTokenResolver();
+  }
+
+  try {
+    const { stdout } = await execFileAsync("gh", ["auth", "token"]);
+    const token = stdout.trim();
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function commandExistsError(command: string, label: string): Promise<string | undefined> {
   try {
     await execFileAsync("which", [command]);
+    return undefined;
   } catch {
-    throw new Error(`Missing ${label} executable: ${command}`);
+    return `Missing ${label} executable: ${command}`;
   }
 }
 
@@ -865,17 +990,101 @@ function allowedEnv(envNames: string[]): NodeJS.ProcessEnv {
   return env;
 }
 
-function initialApprovedStatus(item: HydratedWorkItem, itemMap: Map<string, HydratedWorkItem>): WorkItemStatus {
-  if (item.type === "hitl") {
-    return "hitl_pending";
+function assertPullRequestReady(ctx: CliContext): void {
+  if (!ctx.config.github.enabled) {
+    throw new Error("Pull request publishing requires github.enabled: true");
   }
 
-  const blocked = item.dependencyIds.some((dependencyId) => {
-    const dependency = itemMap.get(dependencyId);
-    return dependency?.status !== "done";
-  });
+  if (!ctx.remote) {
+    throw new Error("Pull request publishing requires an origin GitHub remote");
+  }
 
-  return blocked ? "blocked" : "todo";
+  if (!ctx.github) {
+    throw new Error("Pull request publishing requires GitHub auth (`GH_TOKEN` or `gh auth login`)");
+  }
+}
+
+function printLinesOrNone(lines: string[]): void {
+  for (const line of lines.length > 0 ? lines : ["- None"]) {
+    console.log(line);
+  }
+}
+
+function printNextActionLines(lines: string[]): void {
+  console.log("Next");
+  printLinesOrNone(lines);
+}
+
+function getGlobalNextActions(requirements: Requirement[], items: HydratedWorkItem[]): string[] {
+  const runnable = items.find((item) => item.type === "afk" && item.status === "todo");
+  if (runnable) {
+    return [`- pnpm afk run ${runnable.id}`];
+  }
+
+  const hitl = items.find((item) => item.status === "hitl_pending");
+  if (hitl) {
+    return [`- pnpm afk show ${hitl.id}`];
+  }
+
+  if (requirements.length === 0) {
+    return ['- pnpm afk capture "<requirement prompt>"'];
+  }
+
+  if (requirements.some((requirement) => requirement.status === "captured")) {
+    return ["- Use a planning skill to produce an execution brief, then run `pnpm afk run file <path>`"];
+  }
+
+  if (items.length > 0 && items.every((item) => item.status === "done")) {
+    return ["- All work items are complete"];
+  }
+
+  return ["- No immediate action"];
+}
+
+function getRequirementNextActions(items: HydratedWorkItem[]): string[] {
+  if (items.length === 0) {
+    return ["- Use a planning skill to create an execution brief, then run `pnpm afk run file <path>`"];
+  }
+
+  const runnable = items.find((item) => item.type === "afk" && item.status === "todo");
+  if (runnable) {
+    return [`- pnpm afk run ${runnable.id}`];
+  }
+
+  const hitl = items.find((item) => item.status === "hitl_pending");
+  if (hitl) {
+    return [`- pnpm afk show ${hitl.id}`];
+  }
+
+  if (items.every((item) => item.status === "done")) {
+    return ["- Requirement is complete"];
+  }
+
+  return ["- No immediate action"];
+}
+
+function getWorkItemNextActions(item: HydratedWorkItem): string[] {
+  if (item.type === "afk" && item.status === "todo") {
+    return [`- pnpm afk run ${item.id}`];
+  }
+
+  if (item.status === "hitl_pending") {
+    return ["- Human review required"];
+  }
+
+  if (item.status === "blocked") {
+    return ["- Waiting for dependencies to complete"];
+  }
+
+  if (item.status === "draft") {
+    return ["- Legacy draft item; use an external planning skill instead of the removed CLI planner"];
+  }
+
+  if (item.status === "done") {
+    return ["- Work item is complete"];
+  }
+
+  return ["- No immediate action"];
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

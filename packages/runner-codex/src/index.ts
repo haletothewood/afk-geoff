@@ -7,8 +7,13 @@ export class CodexCliRunner implements AgentRunner {
     return input?.requiredEnv ?? ["OPENAI_API_KEY"];
   }
 
-  public buildInvocation(input: { mode: "plan" | "work"; promptPath: string; commandOverride?: string[] }): { command: string; args: string[] } {
-    return resolveCommand(input.commandOverride ?? ["codex", "{prompt}"], input.promptPath);
+  public buildInvocation(input: {
+    mode: "plan" | "work";
+    promptPath: string;
+    commandOverride?: string[];
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
+    const invocation = resolveCommand(input.commandOverride ?? ["codex", "{prompt}"], input.promptPath);
+    return { ...invocation, promptTransport: "arg" };
   }
 
   public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {

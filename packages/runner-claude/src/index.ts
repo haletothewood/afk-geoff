@@ -7,8 +7,25 @@ export class ClaudeCliRunner implements AgentRunner {
     return input?.requiredEnv ?? ["CLAUDE_CODE_OAUTH_TOKEN"];
   }
 
-  public buildInvocation(input: { mode: "plan" | "work"; promptPath: string; commandOverride?: string[] }): { command: string; args: string[] } {
-    return resolveCommand(input.commandOverride ?? ["claude", "--print", "{prompt}"], input.promptPath);
+  public buildInvocation(input: {
+    mode: "plan" | "work";
+    promptPath: string;
+    commandOverride?: string[];
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
+    if (input.commandOverride) {
+      return { ...resolveCommand(input.commandOverride, input.promptPath), promptTransport: "arg" };
+    }
+
+    return {
+      command: "claude",
+      args: [
+        "--print",
+        "--bare",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      promptTransport: "stdin"
+    };
   }
 
   public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {

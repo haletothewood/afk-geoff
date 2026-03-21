@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { GitHubMirror, type OctokitLike } from "./index.js";
+import { describe, expect, it, vi } from "vitest";
+import { GitHubIssueWorkSource, GitHubMirror, GitHubPullRequestPublisher, type OctokitLike } from "./index.js";
 
 interface RecordedIssueCreate {
   owner: string;
@@ -9,11 +9,22 @@ interface RecordedIssueCreate {
   labels?: string[];
 }
 
-function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[] } {
+interface RecordedPullCreate {
+  owner: string;
+  repo: string;
+  title: string;
+  head: string;
+  base: string;
+  body: string;
+}
+
+function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]; pullCreates: RecordedPullCreate[] } {
   const issueCreates: RecordedIssueCreate[] = [];
+  const pullCreates: RecordedPullCreate[] = [];
 
   return {
     issueCreates,
+    pullCreates,
     issues: {
       async create(input) {
         issueCreates.push(input);
@@ -23,7 +34,28 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
         return {};
       },
       async get() {
-        return { data: { state: "open" } };
+        return {
+          data: {
+            state: "open",
+            title: "Execution brief",
+            body: [
+              "# AFK Execution Brief",
+              "",
+              "## Requirement",
+              "Ship a narrow internal improvement.",
+              "",
+              "## Work Item Title",
+              "Run from issue",
+              "",
+              "## Work Item Body",
+              "Use a GitHub issue as the source artifact.",
+              "",
+              "## Acceptance Criteria",
+              "- The issue body can be parsed as an execution brief"
+            ].join("\n"),
+            html_url: "https://github.com/acme/demo/issues/34"
+          }
+        };
       },
       async listComments() {
         return {
@@ -38,7 +70,8 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
       }
     },
     pulls: {
-      async create() {
+      async create(input) {
+        pullCreates.push(input);
         return { data: { id: 44, number: 55, html_url: "https://example.com/pulls/55" } };
       },
       async get() {
@@ -68,8 +101,8 @@ describe("GitHubMirror adapter scenarios", () => {
 
     expect(requirement.remoteType).toBe("issue");
     expect(client.issueCreates).toHaveLength(1);
-    expect(client.issueCreates[0]?.labels).toEqual(["aiwf:requirement"]);
-    expect(client.issueCreates[0]?.body).toContain("<!-- aiwf:requirement:req_1 -->");
+    expect(client.issueCreates[0]?.labels).toEqual(["afk:requirement"]);
+    expect(client.issueCreates[0]?.body).toContain("<!-- afk:requirement:req_1 -->");
   });
 
   it("Given a work item is mirrored, then it becomes a labeled child issue with acceptance criteria and a marker", async () => {
@@ -104,10 +137,10 @@ describe("GitHubMirror adapter scenarios", () => {
 
     expect(workItem.remoteType).toBe("issue");
     expect(client.issueCreates).toHaveLength(1);
-    expect(client.issueCreates[0]?.labels).toEqual(["aiwf:work-item", "aiwf:afk"]);
+    expect(client.issueCreates[0]?.labels).toEqual(["afk:work-item", "afk:afk"]);
     expect(client.issueCreates[0]?.body).toContain("Acceptance criteria:");
     expect(client.issueCreates[0]?.body).toContain("- works");
-    expect(client.issueCreates[0]?.body).toContain("<!-- aiwf:work_item:wi_1 -->");
+    expect(client.issueCreates[0]?.body).toContain("<!-- afk:work_item:wi_1 -->");
   });
 
   it("Given mirrored issues and pull requests exist, when sync runs, then state and comments are imported", async () => {
@@ -153,5 +186,74 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(issueState.open).toBe(true);
     expect(issueState.comments[0]?.body).toBe("hello");
     expect(pullState.merged).toBe(true);
+  });
+
+  it("Given a GitHub issue URL, when the issue body is an execution brief, then it becomes a normalized work source input", async () => {
+    const source = new GitHubIssueWorkSource("token", createMockClient());
+
+    const brief = await source.load("https://github.com/acme/demo/issues/34");
+
+    expect(brief.workItemTitle).toBe("Run from issue");
+    expect(brief.acceptanceCriteria).toEqual(["The issue body can be parsed as an execution brief"]);
+    expect(brief.issueUrl).toBe("https://github.com/acme/demo/issues/34");
+  });
+
+  it("Given GitHub PR publishing is requested, then the branch is pushed and a pull request is opened through the adapter", async () => {
+    const client = createMockClient();
+    const mirror = new GitHubMirror("token", client);
+    const codeHost = {
+      assertRepository: vi.fn(),
+      getRemoteSlug: vi.fn(),
+      createWorktree: vi.fn(),
+      commitAll: vi.fn(),
+      pushBranch: vi.fn(),
+      hasDiffAgainst: vi.fn()
+    };
+    const publisher = new GitHubPullRequestPublisher(codeHost, mirror, {
+      owner: "acme",
+      repo: "demo"
+    });
+
+    const result = await publisher.publish({
+      workItem: {
+        id: "wi_1",
+        requirementId: "req_1",
+        title: "Ship change",
+        body: "Do thing",
+        type: "afk",
+        status: "todo",
+        planKey: "ship-change",
+        executionSummary: "Summary",
+        acceptanceCriteria: ["works"],
+        dependencyIds: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      },
+      branchName: "afk/ship-change-123",
+      worktreePath: "/tmp/worktree",
+      baseBranch: "main",
+      summary: "Done",
+      agentName: "Geoff",
+      modelLabel: "Claude CLI default (no explicit model configured)",
+      pullRequest: {
+        title: "AFK: Ship change",
+        body: "Implemented the requested change.\n\nDone by Claude Code",
+        manualQa: ["Open the page and confirm the new state renders"]
+      }
+    });
+
+    expect(codeHost.pushBranch).toHaveBeenCalledWith({
+      cwd: "/tmp/worktree",
+      branchName: "afk/ship-change-123"
+    });
+    expect(client.pullCreates[0]?.body).toContain("## What Changed");
+    expect(client.pullCreates[0]?.body).toContain("## Why");
+    expect(client.pullCreates[0]?.body).toContain("## Model Used");
+    expect(client.pullCreates[0]?.body).toContain("## Manual QA");
+    expect(client.pullCreates[0]?.body).toContain("## Agent");
+    expect(client.pullCreates[0]?.body).toContain("This change was completed by Geoff");
+    expect(client.pullCreates[0]?.body).toContain("Claude CLI default (no explicit model configured)");
+    expect(client.pullCreates[0]?.body).not.toContain("Claude Code");
+    expect(result.url).toBe("https://example.com/pulls/55");
   });
 });

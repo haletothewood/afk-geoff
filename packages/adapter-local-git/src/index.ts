@@ -65,7 +65,7 @@ export function branchNameForWorkItem(title: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "work-item";
-  return `aiwf/${normalized}-${Date.now()}`;
+  return `afk/${normalized}-${Date.now()}`;
 }
 
 export function worktreePath(root: string, worktreesDir: string, runId: string): string {

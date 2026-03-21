@@ -2,12 +2,18 @@
   "name": "afk-geoff",
   "private": true,
   "type": "module",
+  "bin": {
+    "afk": "./packages/cli/bin/afk.js"
+  },
   "packageManager": "pnpm@10.20.0",
   "scripts": {
-    "aiwf": "node --import tsx ./packages/cli/src/index.ts",
+    "afk": "node --import tsx ./packages/cli/src/index.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "test:developer-workflow": "node --import tsx ./scripts/developer-workflow-smoke.ts"
+  },
+  "dependencies": {
+    "@afk-geoff/cli": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.18.7",

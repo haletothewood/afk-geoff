@@ -9,40 +9,22 @@ Use these scenarios as the source for:
 - adapter-boundary tests
 - future Gherkin or story files
 
-Terms in this document follow [Ubiquitous Language](/Users/davidneil/Development/Personal/AI-Workflows/docs/ubiquitous-language.md).
+Terms in this document follow [Ubiquitous Language](/Users/davidneil/Development/Personal/afk-geoff/docs/ubiquitous-language.md).
 
 ## Command Matrix
 
 | Command | Primary Domain Effect | Important Observable Outcomes |
 |---|---|---|
-| `aiwf init` | creates project scaffold | `.ai-workflows/config.yaml` and `.ai-workflows/.gitignore` exist |
-| `aiwf doctor` | validates runtime dependencies | required executables and env vars are present |
-| `aiwf capture` | creates a `Requirement` | requirement exists in SQLite; requirement may be mirrored |
-| `aiwf plan` | creates a draft plan | draft `WorkItem`s exist with dependency relationships |
-| `aiwf approve` | promotes draft plan into the approved queue | AFK items become `todo` or `blocked`; HITL items become `hitl_pending` |
-| `aiwf status` | reports queue state after lightweight sync | queue output reflects current work item states |
-| `aiwf dispatch` | starts autonomous execution for runnable AFK work | work runs and run artifacts are created |
-| `aiwf run` | executes one specific work item | work item moves through `in_progress` to terminal state |
-| `aiwf review` | prepares a manual HITL review run | review run and `review.md` brief are created |
-| `aiwf sync` | reconciles mirrored remote state into SQLite | mirrored state updates local statuses |
+| `afk init` | creates project scaffold | `.afk/config.yaml` and `.afk/.gitignore` exist |
+| `afk doctor` | validates runtime dependencies | required executables and env vars are present |
+| `afk capture` | creates a `Requirement` | requirement exists in SQLite; requirement may be mirrored |
+| `afk status` | reports queue state after lightweight sync | queue output reflects current work item states |
+| `afk dispatch` | starts autonomous execution for runnable AFK work | work runs and run artifacts are created |
+| `afk run` | executes one specific work item | work item moves through `in_progress` to terminal state |
+| `afk review` | prepares a manual HITL review run | review run and `review.md` brief are created |
+| `afk sync` | reconciles mirrored remote state into SQLite | mirrored state updates local statuses |
 
 ## Core Scenarios
-
-### Scenario: Approving a planned requirement creates an actionable queue
-
-```gherkin
-Given a captured requirement
-When the requirement is planned
-And the requirement is approved
-Then independent AFK work items should become todo
-And dependent AFK work items should become blocked
-And HITL work items should become hitl_pending
-```
-
-Covered by:
-
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/cli/src/index.test.ts)
-- [packages/core/src/usecases.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/core/src/usecases.test.ts)
 
 ### Scenario: Completing a dependency makes blocked work runnable
 
@@ -56,8 +38,8 @@ Then the blocked AFK work item should become todo
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/cli/src/index.test.ts)
-- [packages/core/src/usecases.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/core/src/usecases.test.ts)
+- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
+- [packages/core/src/usecases.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/core/src/usecases.test.ts)
 
 ### Scenario: Preparing review for HITL work creates a review brief
 
@@ -71,8 +53,8 @@ And the review brief should contain the requirement, work item, and acceptance c
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/cli/src/index.test.ts)
-- [packages/core/src/usecases.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/core/src/usecases.ts)
+- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
+- [packages/core/src/usecases.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/core/src/usecases.ts)
 
 ### Scenario: Only actionable work items are mirrored to GitHub
 
@@ -90,8 +72,8 @@ Then that work item should be mirrored
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/cli/src/index.test.ts)
-- [packages/adapter-github/src/index.test.ts](/Users/davidneil/Development/Personal/AI-Workflows/packages/adapter-github/src/index.test.ts)
+- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
+- [packages/adapter-github/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/adapter-github/src/index.test.ts)
 
 ## Adapter-Boundary Scenarios
 
@@ -101,7 +83,7 @@ These scenarios are intentionally adapter-specific and may use GitHub terms dire
 
 ```gherkin
 Given a requirement is mirrored to GitHub
-Then the remote issue should include the aiwf:requirement label
+Then the remote issue should include the afk:requirement label
 And the issue body should include the requirement marker comment
 ```
 
@@ -109,7 +91,7 @@ And the issue body should include the requirement marker comment
 
 ```gherkin
 Given a work item is mirrored to GitHub
-Then the remote issue should include the aiwf:work-item label
+Then the remote issue should include the afk:work-item label
 And the remote issue should include the AFK or HITL label
 And the issue body should include the work item marker comment
 ```

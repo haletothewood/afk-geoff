@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "@afk-geoff/core": "workspace:*",
     "yaml": "^2.8.1",
     "zod": "^4.1.11"
   }

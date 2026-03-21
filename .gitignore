@@ -4,3 +4,7 @@ dist
 coverage
 .pnpm-store
 .vitest
+# Koi PAI files
+.codex/
+scratchpad.md
+.koi/private/
