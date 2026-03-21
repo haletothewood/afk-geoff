@@ -94,7 +94,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const manifestPath = path.join(runDir, "manifest.json");
     const stdoutPath = path.join(runDir, "stdout.log");
     const stderrPath = path.join(runDir, "stderr.log");
-    ensureRunnerHome(this.runner, runDir);
+    ensureRunnerHome(this.runner, this.repoRoot, runDir);
     const issueRef = await this.store.getExternalRefForEntity("work_item", input.workItem.id, "issue");
     const resolvedIssueUrl = input.issueUrl ?? issueRef?.url;
     const overrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.worker);
@@ -248,13 +248,32 @@ function readProgress(progressPath: string): RunProgress {
   return JSON.parse(fs.readFileSync(progressPath, "utf8")) as RunProgress;
 }
 
-function ensureRunnerHome(runner: AgentRunner, runDir: string): string {
+function ensureRunnerHome(runner: AgentRunner, repoRoot: string, runDir: string): string {
   if (runner.kind !== "claude") {
     return runDir;
   }
 
   const runnerHome = path.join(runDir, "runner-home");
-  fs.mkdirSync(path.join(runnerHome, ".claude"), { recursive: true });
+  const runnerClaudeDir = path.join(runnerHome, ".claude");
+  fs.mkdirSync(runnerClaudeDir, { recursive: true });
+
+  const claudeConfigDir = path.join(repoRoot, ".claude");
+  if (fs.existsSync(claudeConfigDir) && fs.statSync(claudeConfigDir).isDirectory()) {
+    fs.cpSync(claudeConfigDir, runnerClaudeDir, { recursive: true, force: true });
+  }
+
+  const preferredClaudeInstructionPaths = [
+    path.join(repoRoot, "CLAUDE.md"),
+    path.join(repoRoot, "claude.md")
+  ];
+  const sourceClaudeInstructions = preferredClaudeInstructionPaths.find((instructionPath) => (
+    fs.existsSync(instructionPath) && fs.statSync(instructionPath).isFile()
+  ));
+
+  if (sourceClaudeInstructions) {
+    fs.copyFileSync(sourceClaudeInstructions, path.join(runnerHome, "CLAUDE.md"));
+  }
+
   return runnerHome;
 }
 

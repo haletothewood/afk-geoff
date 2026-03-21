@@ -98,6 +98,46 @@ export function writeDefaultProjectFiles(cwd: string, withOverrides = false): Re
     path.join(paths.projectDir, ".gitignore"),
     [STATE_DB, `${RUNS_DIR}/`, `${WORKTREES_DIR}/`].join("\n") + "\n"
   );
+  fs.writeFileSync(
+    path.join(paths.projectDir, "iteration-loop.md"),
+    [
+      "# Iteration Loop",
+      "",
+      "Use this before opening a PR to reduce follow-up fix rounds.",
+      "",
+      "## 1. Map all behavior paths",
+      "",
+      "Create a matrix for command target x mode/flags x success/failure.",
+      "",
+      "## 2. Keep behavior parity",
+      "",
+      "If a feature works in one path, ensure it carries the same inputs, outputs, and error handling in every equivalent path.",
+      "",
+      "## 3. Add focused tests",
+      "",
+      "- Add one success-path test for each new path.",
+      "- Add one failure-path test for each new path.",
+      "",
+      "## 4. Validate CLI UX contract",
+      "",
+      "Every follow-up command printed by CLI output must be implemented and usable.",
+      "",
+      "## 5. Run a local gate",
+      "",
+      "Run language-specific checks before PR.",
+      "",
+      "Examples by stack:",
+      "",
+      "- TypeScript/Node: typecheck + targeted tests",
+      "- Python: lint + typecheck + targeted tests",
+      "- Go: go test + go vet",
+      "- Rust: cargo test + cargo clippy -- -D warnings",
+      "- Java/Kotlin: gradle or maven test + static analysis",
+      "",
+      "Record the exact gate command in your repo docs and run it before review.",
+      ""
+    ].join("\n")
+  );
 
   if (withOverrides) {
     fs.mkdirSync(path.join(paths.projectDir, "prompts"), { recursive: true });
