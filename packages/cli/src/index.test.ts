@@ -407,10 +407,57 @@ describe("afk CLI BDD scenarios", () => {
     const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
     expect(prompt).toContain("Write progress updates to this exact path while the run is active:");
     expect(prompt).toContain("/afk-run/progress.json");
+    expect(prompt).toContain('Escape any double quotes inside string values as \\".');
     expect(prompt).toContain("- pnpm typecheck");
     expect(prompt).toContain("- pnpm test -- packages/cli/src/index.test.ts");
     expect(output).toContain("Imported execution brief");
     expect(output).toContain(`Work item ${items[0]!.id}`);
+  });
+
+  it("Given the worker writes malformed JSON with unescaped quotes, when run file is used, then AFK repairs the result and completes the run", async () => {
+    const fixture = await createFixture(tempDir, {
+      runnerScriptSuffix: [
+        "fs.writeFileSync(outputPath, `{",
+        '  "status": "done",',
+        '  "summary": "Recovered malformed JSON worker result",',
+        '  "issueComment": "Preserve the existing "run directory missing" path unchanged",',
+        '  "pr": {',
+        '    "title": "AFK: complete work item",',
+        '    "body": "Done"',
+        "  }",
+        "}`);",
+        "process.exit(0);"
+      ].join("\n")
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Repair malformed worker result JSON",
+        "",
+        "## Work Item Body",
+        "Recover from common LLM JSON escaping mistakes when reading result.json.",
+        "",
+        "## Acceptance Criteria",
+        "- Malformed quoted prose in result.json does not crash the run"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md"]);
+
+    const [requirement] = await fixture.store.listRequirements();
+    const [workItem] = await fixture.items(requirement!.id);
+    const [run] = await fixture.store.listRuns();
+
+    expect(workItem?.status).toBe("done");
+    expect(run?.status).toBe("completed");
+    expect(run?.summary).toBe("Recovered malformed JSON worker result");
   });
 
   it("Given GitHub publishing is enabled, when run file is used with --pr, then it opens a pull request and prints the review URL", async () => {
