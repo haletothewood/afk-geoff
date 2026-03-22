@@ -51,6 +51,7 @@ export interface RunOutcome {
 export interface DetachedRunOptions {
   verification?: string[];
   issueUrl?: string;
+  executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
 }
 
 export interface WorkerProcessInfo {

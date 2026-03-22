@@ -11,6 +11,15 @@ export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
     : [];
   const issueUrl = sections.get("github issue");
 
+  // Optional execution-control fields
+  const executionModeRaw = sections.get("execution mode");
+  const overlaysRaw = sections.get("overlays");
+  const riskRaw = sections.get("risk");
+
+  const executionMode = executionModeRaw ? executionModeRaw.trim() : undefined;
+  const overlays = overlaysRaw ? parseBulletList(overlaysRaw) : undefined;
+  const risk = riskRaw ? riskRaw.trim() : undefined;
+
   if (acceptanceCriteria.length === 0) {
     throw new Error("Execution brief must include at least one acceptance criterion.");
   }
@@ -21,7 +30,10 @@ export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
     workItemBody,
     acceptanceCriteria,
     verification,
-    ...(issueUrl ? { issueUrl } : {})
+    ...(issueUrl ? { issueUrl } : {}),
+    ...(executionMode ? { executionMode } : {}),
+    ...(overlays && overlays.length > 0 ? { overlays } : {}),
+    ...(risk ? { risk } : {})
   };
 }
 
