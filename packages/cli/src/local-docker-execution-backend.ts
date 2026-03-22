@@ -11,9 +11,11 @@ import {
   buildFixWorkerPrompt,
   buildAutonomousReviewPrompt,
   createId,
+  formatExecutionModeResolution,
   maybeReadOverride,
   parseJsonWithRecovery,
   reviewResultSchema,
+  resolveExecutionMode,
   workerResultSchema,
   DEFAULT_DOCKERFILE_PATH,
   type VerificationCommandResult
@@ -116,6 +118,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const runnerLabel = `runner: ${this.runner.kind}`;
     console.log(`[work] ${runnerLabel}${workModel ? `, model: ${workModel}` : ""}`);
     console.log(`[review] ${runnerLabel}${reviewModel ? `, model: ${reviewModel}` : ""}`);
+    const inferenceContent = [
+      input.requirement.title,
+      input.requirement.body,
+      input.workItem.title,
+      input.workItem.body,
+      ...input.workItem.acceptanceCriteria
+    ].join("\n");
+    const resolvedMode = resolveExecutionMode(inferenceContent, input.executionModeConfig);
+    console.log(formatExecutionModeResolution(resolvedMode));
 
     const manifestPath = path.join(runDir, "manifest.json");
     fs.writeFileSync(
@@ -202,7 +213,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           progressPath: progressContainerPath,
           resultPath: resultContainerPath,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
-          ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
+          ...(workerOverrideText ? { overrideText: workerOverrideText } : {}),
+          executionMode: resolvedMode
         });
       } else {
         prompt = buildFixWorkerPrompt({

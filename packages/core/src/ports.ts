@@ -7,6 +7,12 @@ export interface ExecutionBrief {
   acceptanceCriteria: string[];
   verification: string[];
   issueUrl?: string;
+  /** Explicit primary execution mode, "auto" to infer, or undefined (treated as "auto"). */
+  executionMode?: string;
+  /** Explicit overlay list, ["auto"] to infer, or undefined (treated as auto-inferred). */
+  overlays?: string[];
+  /** Explicit risk tolerance, "auto" to infer, or undefined (treated as "auto"). */
+  risk?: string;
 }
 
 export interface RequirementRepository {
@@ -62,6 +68,12 @@ export interface ExecutionBackendInput {
   workItem: HydratedWorkItem;
   verification: string[];
   issueUrl?: string;
+  /** Optional execution mode configuration propagated from the execution brief. */
+  executionModeConfig?: {
+    executionMode?: string;
+    overlays?: string[];
+    risk?: string;
+  };
 }
 
 export interface ExecutionBackendResult {

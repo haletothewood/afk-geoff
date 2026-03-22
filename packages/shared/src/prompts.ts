@@ -1,4 +1,6 @@
 import type { Requirement, WorkItem } from "@afk-geoff/core";
+import type { ResolvedExecutionMode } from "./execution-mode.js";
+import { formatExecutionModeSection } from "./execution-mode.js";
 
 function formatList(values: string[]): string {
   if (values.length === 0) {
@@ -12,8 +14,10 @@ export function buildPlanPrompt(input: {
   requirement: Requirement;
   outputPath: string;
   overrideText?: string;
+  executionMode?: ResolvedExecutionMode;
 }): string {
   const override = input.overrideText ? `\n# Additional project instructions\n${input.overrideText}\n` : "";
+  const modeSection = input.executionMode ? `\n${formatExecutionModeSection(input.executionMode)}\n` : "";
 
   return `You are decomposing a software requirement into implementation work items.
 
@@ -41,7 +45,7 @@ Rules:
 - Keep tasks small and dependency-aware.
 - Use dependsOnKeys only for tasks created in this same plan.
 - Output nothing except the JSON file creation side effect.
-
+${modeSection}
 # Requirement
 ID: ${input.requirement.id}
 Title: ${input.requirement.title}
@@ -58,9 +62,11 @@ export function buildWorkerPrompt(input: {
   resultPath: string;
   issueUrl?: string;
   overrideText?: string;
+  executionMode?: ResolvedExecutionMode;
 }): string {
   const override = input.overrideText ? `\n# Additional project instructions\n${input.overrideText}\n` : "";
   const issue = input.issueUrl ? `\nGitHub issue: ${input.issueUrl}\n` : "\n";
+  const modeSection = input.executionMode ? `\n${formatExecutionModeSection(input.executionMode)}\n` : "";
 
   return `You are executing exactly one work item in a git worktree.
 
@@ -121,7 +127,7 @@ ${formatList(input.workItem.acceptanceCriteria)}
 ${issue}
 Verification commands:
 ${formatList(input.verification)}
-${override}`;
+${modeSection}${override}`;
 }
 
 export interface VerificationCommandResult {
