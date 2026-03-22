@@ -6,7 +6,7 @@ import { Command } from "commander";
 import { GitHubIssueWorkSource, GitHubMirror, GitHubPullRequestPublisher } from "@afk-geoff/adapter-github";
 import { LocalGitCodeHost, branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequestPublisher, type ExecutionBackend, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type ResultPublisher, type RunProgress, type WorkItem, type WorkSource } from "@afk-geoff/core";
+import { classifyWorkItems, createReviewBrief, evaluateNextStatus, summarizeRequirementStatus, type AgentRunner, type ChangeRequestPublisher, type ExecutionBackend, type ExternalRef, type HydratedWorkItem, type IssueMirror, type Requirement, type ResultPublisher, type RunProgress, type SourceUpdatePayload, type SourceUpdater, type WorkItem, type WorkSource } from "@afk-geoff/core";
 import { ClaudeCliRunner } from "@afk-geoff/runner-claude";
 import { CodexCliRunner } from "@afk-geoff/runner-codex";
 import { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
@@ -43,6 +43,7 @@ interface CliContext {
   executionBackend: ExecutionBackend;
   resultPublisher: ResultPublisher | undefined;
   remote: { owner: string; repo: string } | undefined;
+  sourceUpdaterFactory: (issueUrl: string) => SourceUpdater;
 }
 
 interface CliDependencies {
@@ -272,6 +273,20 @@ async function openContext(cwd: string, dependencies: CliDependencies): Promise<
     ? new GitHubPullRequestPublisher(git, github, remote)
     : undefined;
 
+  const sourceUpdaterFactory = (issueUrl: string): SourceUpdater => {
+    const parsed = parseGitHubIssueUrl(issueUrl);
+    if (!parsed) {
+      return new NoOpSourceUpdater();
+    }
+    const issueMirror: IssueMirror | undefined = github
+      ?? (dependencies.githubFactory && githubToken ? dependencies.githubFactory(githubToken) : undefined)
+      ?? (githubToken ? new GitHubMirror(githubToken) : undefined);
+    if (!issueMirror) {
+      return new NoOpSourceUpdater();
+    }
+    return new GitHubSourceUpdater(issueMirror, parsed.owner, parsed.repo, parsed.issueNumber);
+  };
+
   return {
     cwd,
     repoRoot,
@@ -285,7 +300,8 @@ async function openContext(cwd: string, dependencies: CliDependencies): Promise<
     github,
     executionBackend,
     resultPublisher,
-    remote
+    remote,
+    sourceUpdaterFactory
   };
 }
 
@@ -682,6 +698,7 @@ async function runTrackedWorkItem(
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
   const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? []), ...(detachedOptions.verification ?? [])])];
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
+  const sourceUpdater: SourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
@@ -697,21 +714,17 @@ async function runTrackedWorkItem(
     } else {
       await refreshRequirementStatuses(ctx);
     }
+    await tryPostSourceUpdate(sourceUpdater, {
+      status: "failed",
+      summary: `Worker execution failed: ${formatErrorMessage(error)}`,
+      issueComment: `**AFK run failed**\n\nWorker execution failed: ${formatErrorMessage(error)}`
+    });
     throw error;
   }
 
-  const issueRef = await ctx.store.getExternalRefForEntity("work_item", workItem.id, "issue");
-
-  if (ctx.github && ctx.remote && issueRef && result.issueComment.trim()) {
-    await ctx.github.commentOnIssue({
-      owner: ctx.remote.owner,
-      repo: ctx.remote.repo,
-      issueNumber: issueRef.remoteNumber,
-      body: result.issueComment
-    });
-  }
-
   if (result.status === "blocked" || result.status === "failed") {
+    const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: result.status, summary: result.summary });
+    await tryPostSourceUpdate(sourceUpdater, { status: result.status, summary: result.summary, issueComment });
     return {};
   }
 
@@ -726,6 +739,8 @@ async function runTrackedWorkItem(
         throw new Error(`Run completed without repo changes; no pull request could be opened for ${workItem.id}`);
       }
 
+      const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary });
+      await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment });
       await refreshRequirementStatuses(ctx);
       return {};
     }
@@ -750,8 +765,11 @@ async function runTrackedWorkItem(
         await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
       }
       await refreshRequirementStatuses(ctx);
+      const prUrl = publication.url;
+      const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary, ...(prUrl ? { prUrl } : {}) });
+      await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment, ...(prUrl ? { prUrl } : {}) });
       return {
-        ...(publication.url ? { prUrl: publication.url } : {})
+        ...(prUrl ? { prUrl } : {})
       };
     }
 
@@ -770,6 +788,8 @@ async function runTrackedWorkItem(
       await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
     }
     await refreshRequirementStatuses(ctx);
+    const issueCommentNoPr = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary });
+    await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment: issueCommentNoPr });
     return {};
   } catch (error) {
     await markWorkItemRunFailed(ctx, workItem.id, `Post-run publication failed: ${formatErrorMessage(error)}`);
@@ -1832,6 +1852,52 @@ function processExists(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SourceUpdater adapters
+// ---------------------------------------------------------------------------
+
+class GitHubSourceUpdater implements SourceUpdater {
+  public constructor(
+    private readonly mirror: IssueMirror,
+    private readonly owner: string,
+    private readonly repo: string,
+    private readonly issueNumber: number
+  ) {}
+
+  public async update(payload: SourceUpdatePayload): Promise<void> {
+    const body = payload.issueComment.trim();
+    if (!body) return;
+    await this.mirror.commentOnIssue({ owner: this.owner, repo: this.repo, issueNumber: this.issueNumber, body });
+  }
+}
+
+class NoOpSourceUpdater implements SourceUpdater {
+  public async update(_payload: SourceUpdatePayload): Promise<void> {}
+}
+
+function parseGitHubIssueUrl(url: string): { owner: string; repo: string; issueNumber: number } | undefined {
+  const match = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/.exec(url);
+  if (!match) return undefined;
+  return { owner: match[1]!, repo: match[2]!, issueNumber: Number(match[3]) };
+}
+
+function buildFallbackSourceComment(payload: { status: "done" | "blocked" | "failed"; summary: string; prUrl?: string }): string {
+  const statusLabel = payload.status === "done" ? "completed" : payload.status;
+  const lines = [`**AFK run ${statusLabel}**`, "", payload.summary];
+  if (payload.prUrl) {
+    lines.push("", `Pull request: ${payload.prUrl}`);
+  }
+  return lines.join("\n");
+}
+
+async function tryPostSourceUpdate(updater: SourceUpdater, payload: SourceUpdatePayload): Promise<void> {
+  try {
+    await updater.update(payload);
+  } catch {
+    // Source update failures are non-fatal; the run outcome takes precedence.
   }
 }
 
