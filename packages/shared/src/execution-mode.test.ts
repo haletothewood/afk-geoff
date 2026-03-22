@@ -83,6 +83,16 @@ describe("inferPrimaryMode", () => {
     expect(result.mode).not.toBe("incident-responder");
   });
 
+  it("does not infer incident-responder from generic 'production is' phrasing", () => {
+    const result = inferPrimaryMode("Production is configured with feature flags");
+    expect(result.mode).not.toBe("incident-responder");
+  });
+
+  it("does not infer incident-responder from generic 'site is' phrasing", () => {
+    const result = inferPrimaryMode("The site is using staged rollouts");
+    expect(result.mode).not.toBe("incident-responder");
+  });
+
   it("defaults to pragmatic-shipper when no indicators present", () => {
     const result = inferPrimaryMode("Add a user preferences page with name and email fields");
     expect(result.mode).toBe("pragmatic-shipper");
@@ -102,6 +112,11 @@ describe("inferOverlays", () => {
 
   it("infers performance-tuner for performance content", () => {
     const overlays = inferOverlays("Optimise the search query to reduce latency on the listings page");
+    expect(overlays).toContain("performance-tuner");
+  });
+
+  it("infers performance-tuner for profiling content", () => {
+    const overlays = inferOverlays("Collect profiling output for the slow endpoint");
     expect(overlays).toContain("performance-tuner");
   });
 
@@ -229,6 +244,14 @@ describe("resolveExecutionMode — auto inference", () => {
     expect(result.source).toBe("inferred");
   });
 
+  it("treats executionMode Auto case-insensitively as inferred", () => {
+    const result = resolveExecutionMode("investigate intermittent failures", {
+      executionMode: "Auto"
+    });
+    expect(result.primaryMode).toBe("debug-investigator");
+    expect(result.source).toBe("inferred");
+  });
+
   it("infers when no config is provided", () => {
     const result = resolveExecutionMode("Spike: explore the new streaming API");
     expect(result.primaryMode).toBe("experiment-runner");
@@ -242,11 +265,25 @@ describe("resolveExecutionMode — auto inference", () => {
     expect(result.overlays).toContain("security-gatekeeper");
   });
 
+  it("treats overlays ['Auto'] case-insensitively as inferred", () => {
+    const result = resolveExecutionMode("Improve security with better auth and fix CSRF", {
+      overlays: ["Auto"]
+    });
+    expect(result.overlays).toContain("security-gatekeeper");
+  });
+
   it("infers risk when risk is auto", () => {
     const result = resolveExecutionMode("Refactor the module", {
       risk: "auto"
     });
     expect(result.risk).toBe("low"); // refactoring-surgeon -> low
+  });
+
+  it("treats risk Auto case-insensitively as inferred", () => {
+    const result = resolveExecutionMode("Refactor the module", {
+      risk: "Auto"
+    });
+    expect(result.risk).toBe("low");
   });
 });
 
