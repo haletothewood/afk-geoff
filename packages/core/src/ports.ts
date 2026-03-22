@@ -38,11 +38,13 @@ export interface AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" };
   buildReviewCommand(input: {
     briefPath: string;
     reviewCommandOverride?: string[];
     commandOverride?: string[];
+    model?: string;
   }): string[];
 }
 

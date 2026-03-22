@@ -1,19 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import {
   buildWorkerPrompt,
+  buildSelfReviewPrompt,
+  buildFixPrompt,
   createId,
   maybeReadOverride,
   parseJsonWithRecovery,
   workerResultSchema,
+  reviewResultSchema,
   DEFAULT_DOCKERFILE_PATH
 } from "@afk-geoff/shared";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
+
+const execFileAsync = promisify(execFile);
 
 interface LocalDockerExecutionBackendDeps {
   repoRoot: string;
@@ -89,7 +96,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     // --detach parent before spawning this background process.
 
     const progressContainerPath = "/afk-run/progress.json";
-    const resultPath = "/afk-run/result.json";
+    const resultContainerPath = "/afk-run/result.json";
     const promptPath = path.join(runDir, "prompt.md");
     const manifestPath = path.join(runDir, "manifest.json");
     const stdoutPath = path.join(runDir, "stdout.log");
@@ -103,7 +110,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       workItem: input.workItem,
       verification: input.verification,
       progressPath: progressContainerPath,
-      resultPath,
+      resultPath: resultContainerPath,
       ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
       ...(overrideText ? { overrideText } : {})
     });
@@ -122,10 +129,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       )
     );
 
-    const invocation = this.runner.buildInvocation({
+    const workModel = this.config.runner.model;
+    const reviewModel = this.config.runner.review?.model ?? this.config.runner.model;
+    const commandOverride = this.config.runner.command;
+
+    const workInvocation = this.runner.buildInvocation({
       mode: "work",
       promptPath: "/afk-run/prompt.md",
-      ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {})
+      ...(commandOverride ? { commandOverride } : {}),
+      ...(workModel ? { model: workModel } : {})
     });
     const dockerfilePath = this.config.docker.dockerfilePath
       ? path.resolve(this.repoRoot, this.config.docker.dockerfilePath)
@@ -139,7 +151,6 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       buildContext
     });
 
-    const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
     const extraEnv = {
       ...runnerProcessEnv(this.runner, "/afk-run/runner-home"),
       ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
@@ -156,6 +167,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }
     }, 10_000);
 
+    // ── Work phase ──────────────────────────────────────────────────────────
+    console.log(`[afk] work phase [${this.runner.kind}${workModel ? `, model: ${workModel}` : ""}]`);
+    const workerStdin = workInvocation.promptTransport === "stdin" ? prompt : undefined;
     let exitCode: number;
     try {
       exitCode = await this.runtime.runWork({
@@ -165,8 +179,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         runDir,
         envAllowlist: this.config.runner.envAllowlist,
         extraEnv,
-        command: invocation.command,
-        args: invocation.args,
+        command: workInvocation.command,
+        args: workInvocation.args,
         ...(workerStdin === undefined ? {} : { stdin: workerStdin }),
         stdoutPath,
         stderrPath
@@ -199,10 +213,127 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       };
     }
 
+    // Commit work-phase changes before review so the diff is clean.
     await this.git.commitAll({
       cwd: worktreePath,
       message: `afk: ${input.workItem.title}`
     });
+
+    // ── Verify phase (post-work) ────────────────────────────────────────────
+    console.log("[afk] verify phase");
+    const postWorkVerification = await runVerificationCommands(input.verification, worktreePath);
+
+    // ── Review phase ────────────────────────────────────────────────────────
+    console.log(`[afk] review phase [${this.runner.kind}${reviewModel ? `, model: ${reviewModel}` : ""}]`);
+    const gitDiff = await getGitDiff(worktreePath, this.config.baseBranch);
+    const reviewOverrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.review);
+    const reviewResultContainerPath = "/afk-run/review-result.json";
+    const reviewPromptPath = path.join(runDir, "review-prompt.md");
+    const reviewPrompt = buildSelfReviewPrompt({
+      requirement: input.requirement,
+      workItem: input.workItem,
+      gitDiff,
+      verificationSummary: formatVerificationSummary(postWorkVerification),
+      resultPath: reviewResultContainerPath,
+      ...(reviewOverrideText ? { overrideText: reviewOverrideText } : {})
+    });
+    fs.writeFileSync(reviewPromptPath, reviewPrompt);
+
+    const reviewInvocation = this.runner.buildInvocation({
+      mode: "work",
+      promptPath: "/afk-run/review-prompt.md",
+      ...(commandOverride ? { commandOverride } : {}),
+      ...(reviewModel ? { model: reviewModel } : {})
+    });
+    const reviewStdin = reviewInvocation.promptTransport === "stdin" ? reviewPrompt : undefined;
+    const reviewStdoutPath = path.join(runDir, "review-stdout.log");
+    const reviewStderrPath = path.join(runDir, "review-stderr.log");
+
+    await this.runtime.runWork({
+      image: this.config.docker.image,
+      repoGitDir: path.join(this.repoRoot, ".git"),
+      worktreePath,
+      runDir,
+      envAllowlist: this.config.runner.envAllowlist,
+      extraEnv,
+      command: reviewInvocation.command,
+      args: reviewInvocation.args,
+      ...(reviewStdin === undefined ? {} : { stdin: reviewStdin }),
+      stdoutPath: reviewStdoutPath,
+      stderrPath: reviewStderrPath
+    });
+
+    const hostReviewResultPath = path.join(runDir, "review-result.json");
+    let reviewIssues: string[] = [];
+
+    if (fs.existsSync(hostReviewResultPath)) {
+      try {
+        const reviewResult = reviewResultSchema.parse(
+          parseJsonWithRecovery(fs.readFileSync(hostReviewResultPath, "utf8"))
+        );
+        if (reviewResult.result === "ISSUES" && reviewResult.issues && reviewResult.issues.length > 0) {
+          reviewIssues = reviewResult.issues;
+        }
+      } catch {
+        // If review result is unparseable, treat as PASS to avoid blocking the run.
+        console.warn("[afk] review result could not be parsed; treating as PASS");
+      }
+    } else {
+      // No review result produced; treat as PASS.
+      console.warn("[afk] review agent did not produce review-result.json; treating as PASS");
+    }
+
+    // ── Fix phase (only if review found issues) ────────────────────────────
+    if (reviewIssues.length > 0) {
+      console.log(`[afk] fix phase [${this.runner.kind}${workModel ? `, model: ${workModel}` : ""}] (${reviewIssues.length} issue(s))`);
+      const fixResultContainerPath = "/afk-run/fix-result.json";
+      const fixProgressContainerPath = "/afk-run/fix-progress.json";
+      const fixPromptPath = path.join(runDir, "fix-prompt.md");
+      const fixPrompt = buildFixPrompt({
+        requirement: input.requirement,
+        workItem: input.workItem,
+        issues: reviewIssues,
+        verification: input.verification,
+        progressPath: fixProgressContainerPath,
+        resultPath: fixResultContainerPath,
+        ...(overrideText ? { overrideText } : {})
+      });
+      fs.writeFileSync(fixPromptPath, fixPrompt);
+
+      const fixInvocation = this.runner.buildInvocation({
+        mode: "work",
+        promptPath: "/afk-run/fix-prompt.md",
+        ...(commandOverride ? { commandOverride } : {}),
+        ...(workModel ? { model: workModel } : {})
+      });
+      const fixStdin = fixInvocation.promptTransport === "stdin" ? fixPrompt : undefined;
+      const fixStdoutPath = path.join(runDir, "fix-stdout.log");
+      const fixStderrPath = path.join(runDir, "fix-stderr.log");
+
+      await this.runtime.runWork({
+        image: this.config.docker.image,
+        repoGitDir: path.join(this.repoRoot, ".git"),
+        worktreePath,
+        runDir,
+        envAllowlist: this.config.runner.envAllowlist,
+        extraEnv,
+        command: fixInvocation.command,
+        args: fixInvocation.args,
+        ...(fixStdin === undefined ? {} : { stdin: fixStdin }),
+        stdoutPath: fixStdoutPath,
+        stderrPath: fixStderrPath
+      });
+
+      // Commit any fix-phase changes.
+      await this.git.commitAll({
+        cwd: worktreePath,
+        message: `afk: fix review issues for ${input.workItem.title}`
+      });
+
+      // ── Verify phase (post-fix) ──────────────────────────────────────────
+      console.log("[afk] verify phase (post-fix)");
+      await runVerificationCommands(input.verification, worktreePath);
+    }
 
     const hasDiff = await this.git.hasDiffAgainst({
       cwd: worktreePath,
@@ -275,6 +406,52 @@ function ensureRunnerHome(runner: AgentRunner, repoRoot: string, runDir: string)
   }
 
   return runnerHome;
+}
+
+interface VerificationCommandResult {
+  command: string;
+  passed: boolean;
+  output: string;
+}
+
+async function runVerificationCommands(verification: string[], cwd: string): Promise<VerificationCommandResult[]> {
+  const results: VerificationCommandResult[] = [];
+
+  for (const cmd of verification) {
+    try {
+      const { stdout, stderr } = await execFileAsync("sh", ["-c", cmd], { cwd });
+      results.push({ command: cmd, passed: true, output: (stdout + stderr).trim() });
+    } catch (error) {
+      const errWithOutput = error as { stdout?: string; stderr?: string };
+      const output = ((errWithOutput.stdout ?? "") + (errWithOutput.stderr ?? "")).trim();
+      results.push({ command: cmd, passed: false, output });
+    }
+  }
+
+  return results;
+}
+
+function formatVerificationSummary(results: VerificationCommandResult[]): string {
+  if (results.length === 0) {
+    return "No verification commands configured.";
+  }
+
+  return results
+    .map((r) => {
+      const status = r.passed ? "PASSED" : "FAILED";
+      const outputSection = r.output ? `\n${r.output}` : "";
+      return `[${status}] ${r.command}${outputSection}`;
+    })
+    .join("\n\n");
+}
+
+async function getGitDiff(worktreePath: string, baseBranch: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", ["diff", baseBranch, "HEAD"], { cwd: worktreePath });
+    return stdout.trim();
+  } catch {
+    return "";
+  }
 }
 
 function runnerProcessEnv(runner: AgentRunner, homeDir: string): NodeJS.ProcessEnv {

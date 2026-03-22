@@ -45,12 +45,21 @@ export function withText<K extends string>(key: K, value: string | undefined): {
   return value ? { [key]: value } as { [P in K]: string } : {};
 }
 
+export function resolveWorkModel(ctx: CliContext): string | undefined {
+  return ctx.config.runner.model;
+}
+
+export function resolveReviewModel(ctx: CliContext): string | undefined {
+  return ctx.config.runner.review?.model ?? ctx.config.runner.model;
+}
+
 export function describeRunnerModel(ctx: CliContext): string {
+  const model = ctx.config.runner.model;
   if (ctx.runner.kind === "claude") {
-    return "Claude CLI default (no explicit model configured)";
+    return model ? `Claude (model: ${model})` : "Claude CLI default (no explicit model configured)";
   }
 
-  return "Codex CLI default (no explicit model configured)";
+  return model ? `Codex (model: ${model})` : "Codex CLI default (no explicit model configured)";
 }
 
 export function printLinesOrNone(lines: string[]): void {

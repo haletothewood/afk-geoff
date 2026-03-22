@@ -11,8 +11,12 @@ export class ClaudeCliRunner implements AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
     if (input.commandOverride) {
+      if (input.model) {
+        console.warn("runner.command override is set; runner.model is ignored for this invocation");
+      }
       return { ...resolveCommand(input.commandOverride, input.promptPath), promptTransport: "arg" };
     }
 
@@ -22,13 +26,14 @@ export class ClaudeCliRunner implements AgentRunner {
         "--print",
         "--bare",
         "--permission-mode",
-        "bypassPermissions"
+        "bypassPermissions",
+        ...(input.model ? ["--model", input.model] : [])
       ],
       promptTransport: "stdin"
     };
   }
 
-  public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {
+  public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[]; model?: string }): string[] {
     return resolveCommandParts(input.reviewCommandOverride ?? input.commandOverride ?? ["claude", "{prompt}"], input.briefPath);
   }
 }

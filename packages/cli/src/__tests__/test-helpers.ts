@@ -26,6 +26,10 @@ export interface FixtureOptions {
   gitRemoteChecker?: (repoRoot: string) => Promise<void>;
   /** Override GitHub auth verification for preflight. Defaults to no-op (tests use mock GitHub). */
   githubAuthVerifier?: (token: string, remote: { owner: string; repo: string }) => Promise<void>;
+  /** Control the fake review agent outcome. Defaults to "PASS". */
+  reviewOutcome?: "PASS" | "ISSUES";
+  /** Issues list returned when reviewOutcome is "ISSUES". */
+  reviewIssues?: string[];
 }
 
 export interface WorkflowFixture {
@@ -47,7 +51,7 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
   fs.mkdirSync(fakeBinDir, { recursive: true });
 
   writeFakeDocker(fakeBinDir);
-  writeRepoFiles(repoDir, options.writeWorktreeChange ?? true, options.runnerScriptSuffix);
+  writeRepoFiles(repoDir, options.writeWorktreeChange ?? true, options.runnerScriptSuffix, options.reviewOutcome ?? "PASS", options.reviewIssues ?? []);
   process.env.PATH = `${fakeBinDir}:${process.env.PATH ?? ""}`;
 
   execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
@@ -183,9 +187,10 @@ export function createSeedWorkItems(): Array<{
   ];
 }
 
-export function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean, runnerScriptSuffix?: string): void {
+export function writeRepoFiles(repoDir: string, writeWorktreeChange: boolean, runnerScriptSuffix?: string, reviewOutcome: "PASS" | "ISSUES" = "PASS", reviewIssues: string[] = []): void {
   fs.writeFileSync(path.join(repoDir, "package.json"), JSON.stringify({ name: "fixture", private: true }, null, 2));
   fs.writeFileSync(path.join(repoDir, "README.md"), "# Fixture\n");
+  const reviewIssuesJson = JSON.stringify(reviewIssues);
   fs.writeFileSync(
     path.join(repoDir, "fake-runner.mjs"),
     `#!/usr/bin/env node
@@ -195,13 +200,12 @@ import { execFileSync } from "node:child_process";
 
 const promptPath = process.argv.at(-1);
 const prompt = fs.readFileSync(promptPath, "utf8");
-const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
-if (!match) {
-  throw new Error("Missing output marker");
-}
-const outputPath = match[1].trim();
 
+// Detect plan prompts by their output path marker for items JSON
 if (prompt.includes('"items": [')) {
+  const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
+  if (!match) { throw new Error("Missing output marker"); }
+  const outputPath = match[1].trim();
   fs.writeFileSync(outputPath, JSON.stringify({
     summary: "Planned work items",
     items: [
@@ -233,6 +237,41 @@ if (prompt.includes('"items": [')) {
   }, null, 2));
   process.exit(0);
 }
+
+// Detect review prompts by the distinctive preamble
+if (prompt.includes('You are reviewing the implementation of a work item.')) {
+  const match = prompt.match(/Write your structured review result to this exact path:\\n([^\\n]+)/);
+  if (!match) { throw new Error("Missing review output marker"); }
+  const outputPath = match[1].trim();
+  const outcome = ${JSON.stringify(reviewOutcome)};
+  const issues = ${reviewIssuesJson};
+  if (outcome === "ISSUES" && issues.length > 0) {
+    fs.writeFileSync(outputPath, JSON.stringify({ result: "ISSUES", issues }, null, 2));
+  } else {
+    fs.writeFileSync(outputPath, JSON.stringify({ result: "PASS" }, null, 2));
+  }
+  process.exit(0);
+}
+
+// Detect fix prompts by the distinctive preamble
+if (prompt.includes('You are fixing issues found during review of a work item implementation.')) {
+  const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
+  if (!match) { throw new Error("Missing fix output marker"); }
+  const outputPath = match[1].trim();
+  fs.writeFileSync(outputPath, JSON.stringify({
+    status: "done",
+    summary: "Fixed review issues",
+    issueComment: "Fixed issues found during review."
+  }, null, 2));
+  process.exit(0);
+}
+
+// Worker prompt
+const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
+if (!match) {
+  throw new Error("Missing output marker");
+}
+const outputPath = match[1].trim();
 
 ${writeWorktreeChange ? 'fs.writeFileSync(path.join(process.cwd(), "implemented.txt"), "done\\\\n");' : ""}
 ${runnerScriptSuffix ?? ""}

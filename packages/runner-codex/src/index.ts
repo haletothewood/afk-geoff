@@ -11,12 +11,16 @@ export class CodexCliRunner implements AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
+    if (input.commandOverride && input.model) {
+      console.warn("runner.command override is set; runner.model is ignored for this invocation");
+    }
     const invocation = resolveCommand(input.commandOverride ?? ["codex", "{prompt}"], input.promptPath);
     return { ...invocation, promptTransport: "arg" };
   }
 
-  public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {
+  public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[]; model?: string }): string[] {
     return resolveCommandParts(input.reviewCommandOverride ?? input.commandOverride ?? ["codex", "{prompt}"], input.briefPath);
   }
 }

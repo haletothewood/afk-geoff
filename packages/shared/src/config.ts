@@ -21,7 +21,13 @@ export const projectConfigSchema = z.object({
     command: z.array(z.string().min(1)).optional(),
     reviewCommand: z.array(z.string().min(1)).optional(),
     requiredEnv: z.array(z.string().min(1)).optional(),
-    envAllowlist: z.array(z.string().min(1)).default([])
+    envAllowlist: z.array(z.string().min(1)).default([]),
+    model: z.string().optional(),
+    review: z
+      .object({
+        model: z.string().optional()
+      })
+      .optional()
   }),
   docker: z.object({
     image: z.string().min(1),

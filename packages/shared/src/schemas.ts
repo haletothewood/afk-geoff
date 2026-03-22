@@ -39,5 +39,11 @@ export const workerResultSchema = z.object({
     .optional()
 });
 
+export const reviewResultSchema = z.object({
+  result: z.enum(["PASS", "ISSUES"]),
+  issues: z.array(z.string()).optional()
+});
+
 export type PlannerOutput = z.infer<typeof plannerOutputSchema>;
 export type WorkerResult = z.infer<typeof workerResultSchema>;
+export type ReviewResult = z.infer<typeof reviewResultSchema>;
