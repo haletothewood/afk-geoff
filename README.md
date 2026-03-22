@@ -2,6 +2,50 @@
 
 AFK orchestration CLI for turning captured requirements into tracked work runs with local artifacts and optional GitHub mirroring.
 
+## Product Direction
+
+AFK is intended to be reused across many repositories, not just this one.
+The operating model is:
+
+- human-guided planning up front
+- autonomous implementation runs from an execution brief
+- pull-request-centric review loops
+
+Now:
+- one work item at a time from a brief or mirrored issue
+- optional PR publishing (`run file <path> --pr`)
+- explicit execution mode resolution before work starts
+
+Next:
+- configurable runner/model selection (including separate implementation vs review defaults)
+- PR review follow-up pass that can run on the existing PR branch
+
+Later:
+- remote execution backends and broader source/publisher adapters
+
+## Execution Modes
+
+Execution modes are AFK's formal operator profiles for run posture.
+
+- `brownfield-moderniser` / `refactoring-surgeon`: craftsmanship-oriented modernization and careful structural change
+- `incident-responder`: urgent production stabilization
+- `debug-investigator`: bug-squashing and root-cause analysis
+- `pragmatic-shipper`: delivery-first default when no stronger signal exists
+
+Overlays (`security-gatekeeper`, `performance-tuner`, `accessibility-advocate`) add additional posture constraints without replacing the primary mode.
+
+## Target Workflow
+
+```mermaid
+flowchart LR
+  A["Human explores and plans"] --> B["Create execution brief"]
+  B --> C["AFK run file brief.md --pr"]
+  C --> D["AFK opens PR with artifacts"]
+  D --> E["Human reviews PR"]
+  E --> F["AFK review/follow-up pass on same PR (planned; runner/model may differ)"]
+  F --> G["Merge and cleanup"]
+```
+
 ## Quick Start
 
 ```bash
