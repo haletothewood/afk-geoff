@@ -158,12 +158,32 @@ function contains(text: string, terms: string[]): boolean {
   return terms.some((term) => containsTerm(n, term));
 }
 
+function isAutoValue(value: string | undefined): boolean {
+  return (value ?? "").trim().toLowerCase() === "auto";
+}
+
 /**
  * Infer a primary execution mode from free-text content.
  * Returns the mode and a concise rationale.
  */
 export function inferPrimaryMode(content: string): { mode: PrimaryExecutionMode; rationale: string } {
-  if (contains(content, ["incident", "outage", "down", "p0", "p1", "emergency", "production is", "site is", "service is down", "rollback"])) {
+  if (
+    contains(content, [
+      "incident",
+      "outage",
+      "down",
+      "p0",
+      "p1",
+      "emergency",
+      "production down",
+      "site down",
+      "service down",
+      "production is down",
+      "site is down",
+      "service is down",
+      "rollback"
+    ])
+  ) {
     return {
       mode: "incident-responder",
       rationale: "Content contains incident or outage indicators suggesting an urgent production issue."
@@ -228,7 +248,25 @@ export function inferOverlays(content: string): ExecutionOverlay[] {
     overlays.push("security-gatekeeper");
   }
 
-  if (contains(content, ["performance", "optimise", "optimize", "optimisation", "optimization", "latency", "throughput", "profil", "benchmark", "cache", "bottleneck", "slow", "fast", "speed"])) {
+  if (
+    contains(content, [
+      "performance",
+      "optimise",
+      "optimize",
+      "optimisation",
+      "optimization",
+      "latency",
+      "throughput",
+      "profile",
+      "profiling",
+      "benchmark",
+      "cache",
+      "bottleneck",
+      "slow",
+      "fast",
+      "speed"
+    ])
+  ) {
     overlays.push("performance-tuner");
   }
 
@@ -297,7 +335,7 @@ export function resolveExecutionMode(content: string, config?: ExecutionModeConf
   let modeSource: "explicit" | "inferred" = "inferred";
   let modeRationale: string = inferredMode.rationale;
 
-  if (config?.executionMode && config.executionMode !== "auto") {
+  if (config?.executionMode && !isAutoValue(config.executionMode)) {
     const parsed = parsePrimaryMode(config.executionMode);
     if (parsed) {
       primaryMode = parsed;
@@ -314,7 +352,7 @@ export function resolveExecutionMode(content: string, config?: ExecutionModeConf
   // Resolve overlays
   let overlays: ExecutionOverlay[];
 
-  if (config?.overlays && !(config.overlays.length === 1 && config.overlays[0] === "auto")) {
+  if (config?.overlays && !(config.overlays.length === 1 && isAutoValue(config.overlays[0]))) {
     // Explicit overlay list — parse valid ones, discard unknowns
     const parsed = config.overlays.flatMap((o) => {
       const p = parseOverlay(o);
@@ -331,7 +369,7 @@ export function resolveExecutionMode(content: string, config?: ExecutionModeConf
   // Resolve risk
   let risk: RiskTolerance;
 
-  if (config?.risk && config.risk !== "auto") {
+  if (config?.risk && !isAutoValue(config.risk)) {
     const parsed = parseRisk(config.risk);
     risk = parsed ?? inferRisk(primaryMode, overlays);
   } else {
