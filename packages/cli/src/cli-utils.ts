@@ -46,11 +46,12 @@ export function withText<K extends string>(key: K, value: string | undefined): {
 }
 
 export function describeRunnerModel(ctx: CliContext): string {
+  const modelLabel = ctx.config.runner.model;
   if (ctx.runner.kind === "claude") {
-    return "Claude CLI default (no explicit model configured)";
+    return modelLabel ? `Claude CLI (model: ${modelLabel})` : "Claude CLI default (no explicit model configured)";
   }
 
-  return "Codex CLI default (no explicit model configured)";
+  return modelLabel ? `Codex CLI (model: ${modelLabel})` : "Codex CLI default (no explicit model configured)";
 }
 
 export function printLinesOrNone(lines: string[]): void {

@@ -11,18 +11,21 @@ export class ClaudeCliRunner implements AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
     if (input.commandOverride) {
       return { ...resolveCommand(input.commandOverride, input.promptPath), promptTransport: "arg" };
     }
 
+    const modelArgs = input.model ? ["--model", input.model] : [];
     return {
       command: "claude",
       args: [
         "--print",
         "--bare",
         "--permission-mode",
-        "bypassPermissions"
+        "bypassPermissions",
+        ...modelArgs
       ],
       promptTransport: "stdin"
     };
@@ -30,6 +33,31 @@ export class ClaudeCliRunner implements AgentRunner {
 
   public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {
     return resolveCommandParts(input.reviewCommandOverride ?? input.commandOverride ?? ["claude", "{prompt}"], input.briefPath);
+  }
+
+  public buildReviewInvocation(input: {
+    reviewPromptPath: string;
+    reviewCommandOverride?: string[];
+    commandOverride?: string[];
+    model?: string;
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
+    const effectiveOverride = input.reviewCommandOverride ?? input.commandOverride;
+    if (effectiveOverride) {
+      return { ...resolveCommand(effectiveOverride, input.reviewPromptPath), promptTransport: "arg" };
+    }
+
+    const modelArgs = input.model ? ["--model", input.model] : [];
+    return {
+      command: "claude",
+      args: [
+        "--print",
+        "--bare",
+        "--permission-mode",
+        "bypassPermissions",
+        ...modelArgs
+      ],
+      promptTransport: "stdin"
+    };
   }
 }
 
