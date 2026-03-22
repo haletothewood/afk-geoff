@@ -273,4 +273,70 @@ describe("afk CLI — cleanup command", () => {
     }
     expect(branchExists).toBe(true);
   });
+
+  it("deletes a terminal run branch after removing that run's worktree", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture("Test requirement for branch cleanup with real worktree");
+    await fixture.seedQueue(requirement.id);
+    await fixture.cli(["dispatch", "--max", "1"]);
+
+    const runs = await fixture.store.listRuns();
+    const completedRun = runs.find((r) => r.status === "completed");
+    expect(completedRun).toBeDefined();
+    expect(completedRun!.branchName).toBeDefined();
+    expect(completedRun!.worktreePath).toBeDefined();
+    expect(fs.existsSync(completedRun!.worktreePath!)).toBe(true);
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["cleanup", "--execute"]);
+    });
+
+    expect(output).toContain(`removed: worktree ${completedRun!.worktreePath}`);
+    expect(output).toContain(`removed: branch ${completedRun!.branchName}`);
+    expect(fs.existsSync(completedRun!.worktreePath!)).toBe(false);
+
+    let branchExists = true;
+    try {
+      execFileSync("git", ["rev-parse", "--verify", `refs/heads/${completedRun!.branchName}`], { cwd: fixture.repoDir, stdio: "pipe" });
+    } catch {
+      branchExists = false;
+    }
+    expect(branchExists).toBe(false);
+  });
+
+  it("does not delete run/worktree paths outside managed AFK artifact roots", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture("Test requirement for cleanup path safety");
+    await fixture.seedQueue(requirement.id);
+    const items = await fixture.items(requirement.id);
+    const backend = items.find((i) => i.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const outsideRunDir = path.join(fixture.repoDir, "outside-run-dir");
+    const outsideWorktreeDir = path.join(fixture.repoDir, "outside-worktree-dir");
+    fs.mkdirSync(outsideRunDir, { recursive: true });
+    fs.mkdirSync(outsideWorktreeDir, { recursive: true });
+
+    await fixture.store.updateWorkItemStatus(backend!.id, "done");
+    await fixture.store.createRun({
+      id: "run_outside_paths",
+      workItemId: backend!.id,
+      mode: "work",
+      status: "completed",
+      runDir: outsideRunDir,
+      worktreePath: outsideWorktreeDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["cleanup", "--execute"]);
+    });
+
+    expect(output).toContain(`skipped: run dir ${outsideRunDir}`);
+    expect(output).toContain(`skipped: worktree ${outsideWorktreeDir}`);
+    expect(output).toContain("outside managed AFK artifact roots");
+    expect(fs.existsSync(outsideRunDir)).toBe(true);
+    expect(fs.existsSync(outsideWorktreeDir)).toBe(true);
+  });
 });
