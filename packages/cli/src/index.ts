@@ -21,6 +21,7 @@ import {
 import { dispatchLoop } from "./commands/dispatch.js";
 import { prepareReview } from "./commands/review.js";
 import { undoWorkItem } from "./commands/undo.js";
+import { cleanupArtifacts } from "./commands/cleanup.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import type { CliDependencies } from "./types.js";
@@ -152,6 +153,18 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       const ctx = await openContext(process.cwd(), dependencies);
       await autoSync(ctx);
       await undoWorkItem(ctx, workItemId, { deleteBranch: !(options.keepBranch ?? false) });
+    });
+
+  program
+    .command("cleanup")
+    .option("--execute", "Perform actual deletions (default is dry-run)")
+    .option("--include-orphans", "Also delete orphaned directories with no matching run record")
+    .action(async (options: { execute?: boolean; includeOrphans?: boolean }) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      await cleanupArtifacts(ctx, {
+        execute: options.execute ?? false,
+        includeOrphans: options.includeOrphans ?? false
+      });
     });
 
   program.command("sync").action(async () => {
