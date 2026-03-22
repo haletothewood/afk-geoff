@@ -23,7 +23,6 @@ export async function cleanupArtifacts(ctx: CliContext, options: CleanupOptions)
 
   const runs = await ctx.store.listRuns();
   const knownRunIds = new Set(runs.map((r) => r.id));
-  const checkedOutBranches = await getCheckedOutBranches(ctx.repoRoot);
 
   for (const run of runs) {
     const isActive = run.status === "prepared" || run.status === "running";
@@ -35,83 +34,119 @@ export async function cleanupArtifacts(ctx: CliContext, options: CleanupOptions)
     }
 
     if (isTerminal) {
-      await processTerminalRun(ctx, run, checkedOutBranches, dryRun);
+      await processTerminalRun(ctx, run, dryRun);
     }
   }
 
   await detectOrphans(ctx, knownRunIds, includeOrphans, dryRun);
 }
 
-async function getCheckedOutBranches(repoRoot: string): Promise<Set<string>> {
-  const branches = new Set<string>();
-  try {
-    const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
-    for (const line of stdout.split("\n")) {
-      const match = line.match(/^branch refs\/heads\/(.+)$/);
-      if (match && match[1]) {
-        branches.add(match[1]);
-      }
-    }
-  } catch {
-    // Ignore errors — if git fails, assume no branches are checked out in worktrees
-  }
-  return branches;
-}
-
-async function processTerminalRun(
-  ctx: CliContext,
-  run: RunRecord,
-  checkedOutBranches: Set<string>,
-  dryRun: boolean
-): Promise<void> {
+async function processTerminalRun(ctx: CliContext, run: RunRecord, dryRun: boolean): Promise<void> {
   const tag = `run ${run.id}`;
+  const safeRunDir = resolveManagedArtifactPath(run.runDir, ctx.paths.runsDir, run.id);
+  const safeWorktreePath = resolveManagedArtifactPath(run.worktreePath, ctx.paths.worktreesDir, run.id);
+  let runWorktreeWouldBeRemoved = false;
 
   // Remove run directory
-  if (run.runDir && fs.existsSync(run.runDir)) {
+  if (run.runDir && !safeRunDir) {
+    console.log(`skipped: run dir ${run.runDir} (${tag}) — path is outside managed AFK artifact roots`);
+  } else if (safeRunDir && fs.existsSync(safeRunDir)) {
     if (dryRun) {
-      console.log(`removed: run dir ${run.runDir} (${tag}) [dry-run]`);
+      console.log(`removed: run dir ${safeRunDir} (${tag}) [dry-run]`);
     } else {
-      fs.rmSync(run.runDir, { recursive: true, force: true });
-      console.log(`removed: run dir ${run.runDir} (${tag})`);
+      fs.rmSync(safeRunDir, { recursive: true, force: true });
+      console.log(`removed: run dir ${safeRunDir} (${tag})`);
     }
   }
 
   // Remove worktree
-  if (run.worktreePath) {
-    if (fs.existsSync(run.worktreePath)) {
-      if (dryRun) {
-        console.log(`removed: worktree ${run.worktreePath} (${tag}) [dry-run]`);
+  if (run.worktreePath && !safeWorktreePath) {
+    console.log(`skipped: worktree ${run.worktreePath} (${tag}) — path is outside managed AFK artifact roots`);
+  } else if (safeWorktreePath && fs.existsSync(safeWorktreePath)) {
+    runWorktreeWouldBeRemoved = true;
+    if (dryRun) {
+      console.log(`removed: worktree ${safeWorktreePath} (${tag}) [dry-run]`);
+    } else {
+      const removed = await tryRemoveWorktree(ctx, safeWorktreePath);
+      if (removed) {
+        console.log(`removed: worktree ${safeWorktreePath} (${tag})`);
       } else {
-        const removed = await tryRemoveWorktree(ctx, run.worktreePath);
-        if (removed) {
-          console.log(`removed: worktree ${run.worktreePath} (${tag})`);
-        } else {
-          console.log(`skipped: worktree ${run.worktreePath} (${tag}) — could not remove`);
-        }
+        runWorktreeWouldBeRemoved = false;
+        console.log(`skipped: worktree ${safeWorktreePath} (${tag}) — could not remove`);
       }
     }
   }
 
   // Delete local branch
   if (run.branchName) {
-    if (checkedOutBranches.has(run.branchName)) {
+    const exists = await localBranchExists(ctx.repoRoot, run.branchName);
+    if (!exists) {
+      return;
+    }
+
+    const checkedOutPaths = await getCheckedOutWorktreePathsForBranch(ctx.repoRoot, run.branchName);
+    if (dryRun && runWorktreeWouldBeRemoved && safeWorktreePath) {
+      checkedOutPaths.delete(path.resolve(safeWorktreePath));
+    }
+
+    if (checkedOutPaths.size > 0) {
       console.log(`skipped: branch ${run.branchName} (${tag}) — currently checked out in a worktree`);
+    } else if (dryRun) {
+      console.log(`removed: branch ${run.branchName} (${tag}) [dry-run]`);
     } else {
-      const exists = await localBranchExists(ctx.repoRoot, run.branchName);
-      if (exists) {
-        if (dryRun) {
-          console.log(`removed: branch ${run.branchName} (${tag}) [dry-run]`);
-        } else {
-          try {
-            await ctx.git.deleteLocalBranch({ cwd: ctx.repoRoot, branchName: run.branchName });
-            console.log(`removed: branch ${run.branchName} (${tag})`);
-          } catch {
-            console.log(`skipped: branch ${run.branchName} (${tag}) — could not delete`);
-          }
-        }
+      try {
+        await ctx.git.deleteLocalBranch({ cwd: ctx.repoRoot, branchName: run.branchName });
+        console.log(`removed: branch ${run.branchName} (${tag})`);
+      } catch {
+        console.log(`skipped: branch ${run.branchName} (${tag}) — could not delete`);
       }
     }
   }
+}
+
+function resolveManagedArtifactPath(artifactPath: string | undefined, managedRoot: string, runId: string): string | undefined {
+  if (!artifactPath) {
+    return undefined;
+  }
+
+  const resolvedTarget = toCanonicalPath(artifactPath);
+  const expectedPath = toCanonicalPath(path.join(managedRoot, runId));
+  return resolvedTarget === expectedPath ? resolvedTarget : undefined;
+}
+
+function toCanonicalPath(inputPath: string): string {
+  const resolved = path.resolve(inputPath);
+  const parentDir = path.dirname(resolved);
+  const leafName = path.basename(resolved);
+
+  try {
+    const canonicalParent = fs.realpathSync(parentDir);
+    return path.join(canonicalParent, leafName);
+  } catch {
+    return resolved;
+  }
+}
+
+async function getCheckedOutWorktreePathsForBranch(repoRoot: string, branchName: string): Promise<Set<string>> {
+  const paths = new Set<string>();
+  try {
+    const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
+    let currentWorktreePath: string | undefined;
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        currentWorktreePath = path.resolve(line.slice("worktree ".length).trim());
+        continue;
+      }
+
+      const match = line.match(/^branch refs\/heads\/(.+)$/);
+      if (match?.[1] === branchName && currentWorktreePath) {
+        paths.add(currentWorktreePath);
+      }
+    }
+  } catch {
+    // Ignore errors — if git inspection fails, fall back to best-effort branch deletion below.
+  }
+  return paths;
 }
 
 async function tryRemoveWorktree(ctx: CliContext, worktreePath: string): Promise<boolean> {
