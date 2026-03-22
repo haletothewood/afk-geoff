@@ -7,6 +7,7 @@ import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import {
   buildWorkerPrompt,
   createId,
+  formatExecutionModeResolution,
   maybeReadOverride,
   parseJsonWithRecovery,
   resolveExecutionMode,
@@ -108,6 +109,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       ...input.workItem.acceptanceCriteria
     ].join("\n");
     const resolvedMode = resolveExecutionMode(inferenceContent, input.executionModeConfig);
+    console.log(formatExecutionModeResolution(resolvedMode));
     const prompt = buildWorkerPrompt({
       requirement: input.requirement,
       workItem: input.workItem,
