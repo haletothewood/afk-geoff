@@ -1,19 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import {
   buildWorkerPrompt,
+  buildFixWorkerPrompt,
+  buildAutonomousReviewPrompt,
   createId,
   maybeReadOverride,
   parseJsonWithRecovery,
+  reviewResultSchema,
   workerResultSchema,
-  DEFAULT_DOCKERFILE_PATH
+  DEFAULT_DOCKERFILE_PATH,
+  type VerificationCommandResult
 } from "@afk-geoff/shared";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
+
+const execFileAsync = promisify(execFile);
+
+/** Hard cap on total agent iterations (1 work + up to MAX_ITERATIONS-1 fix rounds). */
+const MAX_ITERATIONS = 4;
 
 interface LocalDockerExecutionBackendDeps {
   repoRoot: string;
@@ -88,26 +99,25 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     // Detached-resume path: run record and in-progress status were already written by the
     // --detach parent before spawning this background process.
 
-    const progressContainerPath = "/afk-run/progress.json";
-    const resultPath = "/afk-run/result.json";
-    const promptPath = path.join(runDir, "prompt.md");
+    // Resolve models for each phase.
+    const workModel = this.config.runner.command ? undefined : this.config.runner.model;
+    const reviewModel = this.config.runner.reviewCommand ? undefined
+      : this.config.runner.command ? undefined
+      : (this.config.runner.review?.model ?? this.config.runner.model);
+
+    // Warn when runner.model is configured but ignored due to command override.
+    if (this.config.runner.model && this.config.runner.command) {
+      console.warn(
+        `[AFK] Warning: runner.model (${this.config.runner.model}) is ignored because runner.command override is set`
+      );
+    }
+
+    // Surface resolved runner/model to operator output.
+    const runnerLabel = `runner: ${this.runner.kind}`;
+    console.log(`[work] ${runnerLabel}${workModel ? `, model: ${workModel}` : ""}`);
+    console.log(`[review] ${runnerLabel}${reviewModel ? `, model: ${reviewModel}` : ""}`);
+
     const manifestPath = path.join(runDir, "manifest.json");
-    const stdoutPath = path.join(runDir, "stdout.log");
-    const stderrPath = path.join(runDir, "stderr.log");
-    ensureRunnerHome(this.runner, this.repoRoot, runDir);
-    const issueRef = await this.store.getExternalRefForEntity("work_item", input.workItem.id, "issue");
-    const resolvedIssueUrl = input.issueUrl ?? issueRef?.url;
-    const overrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.worker);
-    const prompt = buildWorkerPrompt({
-      requirement: input.requirement,
-      workItem: input.workItem,
-      verification: input.verification,
-      progressPath: progressContainerPath,
-      resultPath,
-      ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
-      ...(overrideText ? { overrideText } : {})
-    });
-    fs.writeFileSync(promptPath, prompt);
     fs.writeFileSync(
       manifestPath,
       JSON.stringify(
@@ -122,11 +132,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       )
     );
 
-    const invocation = this.runner.buildInvocation({
-      mode: "work",
-      promptPath: "/afk-run/prompt.md",
-      ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {})
-    });
+    ensureRunnerHome(this.runner, this.repoRoot, runDir);
+
     const dockerfilePath = this.config.docker.dockerfilePath
       ? path.resolve(this.repoRoot, this.config.docker.dockerfilePath)
       : DEFAULT_DOCKERFILE_PATH;
@@ -139,70 +146,293 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       buildContext
     });
 
-    const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
+    const issueRef = await this.store.getExternalRefForEntity("work_item", input.workItem.id, "issue");
+    const resolvedIssueUrl = input.issueUrl ?? issueRef?.url;
+    const workerOverrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.worker);
+    const reviewOverrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.review);
+
+    const progressContainerPath = "/afk-run/progress.json";
+    const resultContainerPath = "/afk-run/result.json";
+    const hostResultPath = path.join(runDir, "result.json");
+    const progressPath = path.join(runDir, "progress.json");
+
     const extraEnv = {
       ...runnerProcessEnv(this.runner, "/afk-run/runner-home"),
       ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
     };
 
-    const progressPath = path.join(runDir, "progress.json");
     writeProgress(progressPath, { phase: "starting", message: "Worker started", iteration: 0, updatedAt: new Date().toISOString() });
-    const heartbeatInterval = setInterval(() => {
-      try {
-        const current = readProgress(progressPath);
-        writeProgress(progressPath, { ...current, updatedAt: new Date().toISOString() });
-      } catch {
-        // ignore heartbeat errors
+
+    let lastWorkerResult: import("@afk-geoff/shared").WorkerResult | undefined;
+    let reviewIssues: string[] = [];
+
+    // -------------------------------------------------------------------------
+    // Bounded autonomous gate loop: work → verify → review → fix → verify → ...
+    // -------------------------------------------------------------------------
+    for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+      const isFirstIteration = iteration === 1;
+      const phase = isFirstIteration ? "work" : "fix";
+
+      if (!isFirstIteration) {
+        console.log(`[fix-${iteration - 1}] ${runnerLabel}${workModel ? `, model: ${workModel}` : ""}`);
       }
-    }, 10_000);
 
-    let exitCode: number;
-    try {
-      exitCode = await this.runtime.runWork({
-        image: this.config.docker.image,
-        repoGitDir: path.join(this.repoRoot, ".git"),
-        worktreePath,
-        runDir,
-        envAllowlist: this.config.runner.envAllowlist,
-        extraEnv,
-        command: invocation.command,
-        args: invocation.args,
-        ...(workerStdin === undefined ? {} : { stdin: workerStdin }),
-        stdoutPath,
-        stderrPath
+      writeProgress(progressPath, {
+        phase,
+        message: isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
+        iteration,
+        updatedAt: new Date().toISOString()
       });
-    } finally {
-      clearInterval(heartbeatInterval);
-    }
 
-    const hostResultPath = path.join(runDir, "result.json");
+      // Build the appropriate prompt for this phase.
+      const promptFilename = isFirstIteration ? "prompt.md" : `fix-prompt-${iteration}.md`;
+      const promptPath = path.join(runDir, promptFilename);
 
-    if (!fs.existsSync(hostResultPath)) {
-      await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-      await this.store.updateRun(runId, { status: "failed", summary: `No result.json found (exit code ${exitCode})` });
-      throw new Error(`Worker did not produce result.json for ${input.workItem.id}`);
-    }
+      let prompt: string;
+      if (isFirstIteration) {
+        prompt = buildWorkerPrompt({
+          requirement: input.requirement,
+          workItem: input.workItem,
+          verification: input.verification,
+          progressPath: progressContainerPath,
+          resultPath: resultContainerPath,
+          ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
+          ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
+        });
+      } else {
+        prompt = buildFixWorkerPrompt({
+          requirement: input.requirement,
+          workItem: input.workItem,
+          verification: input.verification,
+          progressPath: progressContainerPath,
+          resultPath: resultContainerPath,
+          reviewIssues,
+          ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
+          ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
+        });
+      }
 
-    const result = workerResultSchema.parse(parseJsonWithRecovery(fs.readFileSync(hostResultPath, "utf8")));
+      fs.writeFileSync(promptPath, prompt);
 
-    if (result.status === "blocked" || result.status === "failed") {
-      await this.store.updateWorkItemStatus(input.workItem.id, result.status);
-      await this.store.updateRun(runId, {
-        status: result.status === "failed" ? "failed" : "completed",
-        summary: result.summary
+      const invocation = this.runner.buildInvocation({
+        mode: "work",
+        promptPath: `/afk-run/${promptFilename}`,
+        ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {}),
+        ...(workModel ? { model: workModel } : {})
       });
-      return {
-        status: result.status,
-        summary: result.summary,
-        issueComment: result.issueComment,
-        hasDiff: false
-      };
+
+      const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
+      const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
+      const stderrPath = path.join(runDir, `${phase}-stderr-${iteration}.log`);
+
+      const heartbeatInterval = setInterval(() => {
+        try {
+          const current = readProgress(progressPath);
+          writeProgress(progressPath, { ...current, updatedAt: new Date().toISOString() });
+        } catch {
+          // ignore heartbeat errors
+        }
+      }, 10_000);
+
+      let exitCode: number;
+      try {
+        exitCode = await this.runtime.runWork({
+          image: this.config.docker.image,
+          repoGitDir: path.join(this.repoRoot, ".git"),
+          worktreePath,
+          runDir,
+          envAllowlist: this.config.runner.envAllowlist,
+          extraEnv,
+          command: invocation.command,
+          args: invocation.args,
+          ...(workerStdin === undefined ? {} : { stdin: workerStdin }),
+          stdoutPath,
+          stderrPath
+        });
+      } finally {
+        clearInterval(heartbeatInterval);
+      }
+
+      if (!fs.existsSync(hostResultPath)) {
+        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+        await this.store.updateRun(runId, {
+          status: "failed",
+          summary: `No result.json found (exit code ${exitCode}, iteration ${iteration})`
+        });
+        throw new Error(`Worker did not produce result.json for ${input.workItem.id} (iteration ${iteration})`);
+      }
+
+      let agentResult: import("@afk-geoff/shared").WorkerResult;
+      try {
+        agentResult = workerResultSchema.parse(parseJsonWithRecovery(fs.readFileSync(hostResultPath, "utf8")));
+      } catch (err) {
+        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+        await this.store.updateRun(runId, {
+          status: "failed",
+          summary: `Agent produced malformed result.json (iteration ${iteration})`
+        });
+        throw new Error(`Agent produced malformed result.json for ${input.workItem.id} (iteration ${iteration}): ${String(err)}`);
+      }
+
+      if (agentResult.status === "blocked" || agentResult.status === "failed") {
+        await this.store.updateWorkItemStatus(input.workItem.id, agentResult.status);
+        await this.store.updateRun(runId, {
+          status: agentResult.status === "failed" ? "failed" : "completed",
+          summary: agentResult.summary
+        });
+        return {
+          status: agentResult.status,
+          summary: agentResult.summary,
+          issueComment: agentResult.issueComment,
+          hasDiff: false
+        };
+      }
+
+      lastWorkerResult = agentResult;
+
+      // Commit changes from this iteration before running verification and review.
+      await this.git.commitAll({
+        cwd: worktreePath,
+        message: iteration === 1
+          ? `afk: ${input.workItem.title}`
+          : `afk: ${input.workItem.title} (fix ${iteration - 1})`
+      });
+
+      // ------------------------------------------------------------------
+      // Verification
+      // ------------------------------------------------------------------
+      writeProgress(progressPath, {
+        phase: "verify",
+        message: `Running verification (iteration ${iteration})`,
+        iteration,
+        updatedAt: new Date().toISOString()
+      });
+
+      const verificationResults = await runVerificationCommands(input.verification, worktreePath);
+
+      // ------------------------------------------------------------------
+      // Review
+      // ------------------------------------------------------------------
+      writeProgress(progressPath, {
+        phase: "review",
+        message: `Review agent running (iteration ${iteration})`,
+        iteration,
+        updatedAt: new Date().toISOString()
+      });
+
+      const gitDiff = await getGitDiff(worktreePath, this.config.baseBranch);
+      const reviewResultPath = path.join(runDir, `review-result-${iteration}.json`);
+      const reviewPromptPath = path.join(runDir, `review-prompt-${iteration}.md`);
+
+      const reviewPrompt = buildAutonomousReviewPrompt({
+        requirement: input.requirement,
+        workItem: input.workItem,
+        gitDiff,
+        verificationResults,
+        resultPath: reviewResultPath,
+        ...(reviewOverrideText ? { overrideText: reviewOverrideText } : {})
+      });
+      fs.writeFileSync(reviewPromptPath, reviewPrompt);
+
+      const reviewInvocation = this.runner.buildReviewInvocation({
+        reviewPromptPath,
+        ...(this.config.runner.reviewCommand ? { reviewCommandOverride: this.config.runner.reviewCommand } : {}),
+        ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {}),
+        ...(reviewModel ? { model: reviewModel } : {})
+      });
+
+      const reviewStdin = reviewInvocation.promptTransport === "stdin" ? reviewPrompt : undefined;
+      const reviewStdoutPath = path.join(runDir, `review-stdout-${iteration}.log`);
+      const reviewStderrPath = path.join(runDir, `review-stderr-${iteration}.log`);
+
+      let reviewExitCode: number;
+      try {
+        reviewExitCode = await spawnReviewProcess(
+          reviewInvocation,
+          reviewStdin,
+          worktreePath,
+          reviewStdoutPath,
+          reviewStderrPath
+        );
+      } catch (err) {
+        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+        await this.store.updateRun(runId, {
+          status: "failed",
+          summary: `Review agent process failed to start (iteration ${iteration}): ${String(err)}`
+        });
+        return {
+          status: "failed",
+          summary: `Review agent process failed (iteration ${iteration})`,
+          issueComment: `Review agent process failed (iteration ${iteration}): ${String(err)}`,
+          hasDiff: false
+        };
+      }
+
+      if (!fs.existsSync(reviewResultPath)) {
+        const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})`;
+        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+        await this.store.updateRun(runId, { status: "failed", summary });
+        return {
+          status: "failed",
+          summary,
+          issueComment: `**AFK run failed**\n\n${summary}`,
+          hasDiff: false
+        };
+      }
+
+      let reviewResult: import("@afk-geoff/shared").ReviewResult;
+      try {
+        reviewResult = reviewResultSchema.parse(
+          parseJsonWithRecovery(fs.readFileSync(reviewResultPath, "utf8"))
+        );
+      } catch {
+        const summary = `Review agent produced malformed output (iteration ${iteration})`;
+        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+        await this.store.updateRun(runId, { status: "failed", summary });
+        return {
+          status: "failed",
+          summary,
+          issueComment: `**AFK run failed**\n\n${summary}`,
+          hasDiff: false
+        };
+      }
+
+      if (reviewResult.verdict === "PASS") {
+        // Quality gate passed — proceed to publish.
+        break;
+      }
+
+      if (reviewResult.verdict === "BLOCKED") {
+        const reason = reviewResult.blockerReason ?? "Review agent returned BLOCKED without a reason";
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary: reason });
+        return {
+          status: "blocked",
+          summary: reason,
+          issueComment: `**AFK run blocked**\n\n${reason}`,
+          hasDiff: false
+        };
+      }
+
+      // verdict === "ISSUES" — prepare for a fix iteration.
+      reviewIssues = reviewResult.issues?.length ? reviewResult.issues : ["Unspecified issues found by review"];
+
+      if (iteration >= MAX_ITERATIONS) {
+        const capSummary = `Iteration cap (${MAX_ITERATIONS}) reached without passing review`;
+        const issueList = reviewIssues.map((i) => `- ${i}`).join("\n");
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary: capSummary });
+        return {
+          status: "blocked",
+          summary: capSummary,
+          issueComment: `**AFK run blocked**\n\n${capSummary}\n\nPending issues:\n${issueList}`,
+          hasDiff: false
+        };
+      }
     }
 
-    await this.git.commitAll({
-      cwd: worktreePath,
-      message: `afk: ${input.workItem.title}`
-    });
+    // The loop completed with a PASS verdict.
+    const finalResult = lastWorkerResult!;
 
     const hasDiff = await this.git.hasDiffAgainst({
       cwd: worktreePath,
@@ -211,27 +441,30 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
     if (!hasDiff) {
       await this.store.updateWorkItemStatus(input.workItem.id, "done");
-      await this.store.updateRun(runId, { status: "completed", summary: result.summary });
+      await this.store.updateRun(runId, { status: "completed", summary: finalResult.summary });
       return {
         status: "done",
-        summary: result.summary,
-        issueComment: result.issueComment,
+        summary: finalResult.summary,
+        issueComment: finalResult.issueComment,
         hasDiff: false
       };
     }
 
-    const pullRequest = result.pr?.title && result.pr?.body
-      ? {
-          title: result.pr.title,
-          body: result.pr.body,
-          ...(result.pr.manualQa && result.pr.manualQa.length > 0 ? { manualQa: result.pr.manualQa } : {})
-        }
-      : undefined;
+    const pullRequest =
+      finalResult.pr?.title && finalResult.pr?.body
+        ? {
+            title: finalResult.pr.title,
+            body: finalResult.pr.body,
+            ...(finalResult.pr.manualQa && finalResult.pr.manualQa.length > 0
+              ? { manualQa: finalResult.pr.manualQa }
+              : {})
+          }
+        : undefined;
 
     return {
       status: "done",
-      summary: result.summary,
-      issueComment: result.issueComment,
+      summary: finalResult.summary,
+      issueComment: finalResult.issueComment,
       hasDiff: true,
       branchName,
       worktreePath,
@@ -239,6 +472,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function writeProgress(progressPath: string, progress: RunProgress): void {
   fs.writeFileSync(progressPath, JSON.stringify(progress, null, 2));
@@ -266,9 +503,9 @@ function ensureRunnerHome(runner: AgentRunner, repoRoot: string, runDir: string)
     path.join(repoRoot, "CLAUDE.md"),
     path.join(repoRoot, "claude.md")
   ];
-  const sourceClaudeInstructions = preferredClaudeInstructionPaths.find((instructionPath) => (
-    fs.existsSync(instructionPath) && fs.statSync(instructionPath).isFile()
-  ));
+  const sourceClaudeInstructions = preferredClaudeInstructionPaths.find(
+    (instructionPath) => fs.existsSync(instructionPath) && fs.statSync(instructionPath).isFile()
+  );
 
   if (sourceClaudeInstructions) {
     fs.copyFileSync(sourceClaudeInstructions, path.join(runnerHome, "CLAUDE.md"));
@@ -285,4 +522,97 @@ function runnerProcessEnv(runner: AgentRunner, homeDir: string): NodeJS.ProcessE
   return {
     HOME: homeDir
   };
+}
+
+async function getGitDiff(worktreePath: string, baseBranch: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", ["diff", `${baseBranch}..HEAD`], {
+      cwd: worktreePath,
+      maxBuffer: 10 * 1024 * 1024
+    });
+    if (!stdout.trim()) {
+      return "(no changes relative to base branch)";
+    }
+    const maxLen = 100_000;
+    return stdout.length > maxLen ? `${stdout.slice(0, maxLen)}\n...(diff truncated)` : stdout;
+  } catch {
+    return "(diff unavailable)";
+  }
+}
+
+async function runVerificationCommands(commands: string[], cwd: string): Promise<VerificationCommandResult[]> {
+  const results: VerificationCommandResult[] = [];
+
+  for (const cmd of commands) {
+    const parts = cmd.trim().split(/\s+/);
+    const [command, ...args] = parts;
+
+    if (!command) {
+      continue;
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync(command, args, {
+        cwd,
+        timeout: 5 * 60 * 1000
+      });
+      results.push({ command: cmd, exitCode: 0, stdout, stderr, passed: true });
+    } catch (error) {
+      const execError = error as { code?: number; stdout?: string; stderr?: string };
+      results.push({
+        command: cmd,
+        exitCode: typeof execError.code === "number" ? execError.code : 1,
+        stdout: execError.stdout ?? "",
+        stderr: execError.stderr ?? "",
+        passed: false
+      });
+    }
+  }
+
+  return results;
+}
+
+function spawnReviewProcess(
+  invocation: { command: string; args: string[]; promptTransport: "arg" | "stdin" },
+  prompt: string | undefined,
+  cwd: string,
+  stdoutPath: string,
+  stderrPath: string
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const stdoutFd = fs.openSync(stdoutPath, "w");
+    const stderrFd = fs.openSync(stderrPath, "w");
+
+    const child = spawn(invocation.command, invocation.args, {
+      cwd,
+      stdio: ["pipe", stdoutFd, stderrFd]
+    });
+
+    child.on("error", (err) => {
+      try {
+        fs.closeSync(stdoutFd);
+        fs.closeSync(stderrFd);
+      } catch {
+        // ignore
+      }
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      try {
+        fs.closeSync(stdoutFd);
+        fs.closeSync(stderrFd);
+      } catch {
+        // ignore
+      }
+      resolve(code ?? 1);
+    });
+
+    if (child.stdin) {
+      if (invocation.promptTransport === "stdin" && prompt !== undefined) {
+        child.stdin.write(prompt);
+      }
+      child.stdin.end();
+    }
+  });
 }

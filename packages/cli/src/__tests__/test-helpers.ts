@@ -131,7 +131,7 @@ export async function firstRequirement(store: SqliteStateStore): Promise<Require
   return requirement;
 }
 
-export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
+export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; runnerModel?: string; runnerReviewModel?: string; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
   const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
@@ -140,6 +140,12 @@ export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean
   config.runner.command = options.runnerCommand ?? ["node", "fake-runner.mjs", "{prompt}"];
   config.runner.requiredEnv = options.runnerRequiredEnv ?? [];
   config.runner.envAllowlist = [];
+  if (options.runnerModel !== undefined) {
+    config.runner.model = options.runnerModel;
+  }
+  if (options.runnerReviewModel !== undefined) {
+    config.runner.review = { model: options.runnerReviewModel };
+  }
   config.verification = [];
   if (options.timeouts) {
     config.timeouts = options.timeouts;
@@ -195,6 +201,47 @@ import { execFileSync } from "node:child_process";
 
 const promptPath = process.argv.at(-1);
 const prompt = fs.readFileSync(promptPath, "utf8");
+
+// Handle autonomous review prompts: the review prompt uses a distinct marker.
+const reviewMatch = prompt.match(/Write your review verdict JSON to this exact path:\\n([^\\n]+)/);
+if (reviewMatch) {
+  const reviewOutputPath = reviewMatch[1].trim();
+  // Read per-test review control file for verdicts queue.
+  // Use the env var path first (set by writeReviewVerdicts), fallback to cwd.
+  const controlFilePath = process.env.AFK_TEST_REVIEW_VERDICTS_PATH ?? path.join(process.cwd(), ".afk-test-review-verdicts");
+  let verdict = "PASS";
+  let issues = [];
+  let blockerReason = undefined;
+  if (fs.existsSync(controlFilePath)) {
+    try {
+      const rawContent = fs.readFileSync(controlFilePath, "utf8").trim();
+      const verdicts = rawContent ? JSON.parse(rawContent) : [];
+      if (Array.isArray(verdicts) && verdicts.length > 0) {
+        const nextVerdict = verdicts[0];
+        if (typeof nextVerdict === "string") {
+          verdict = nextVerdict;
+        } else if (nextVerdict && typeof nextVerdict === "object") {
+          verdict = nextVerdict.verdict ?? "PASS";
+          issues = nextVerdict.issues ?? [];
+          blockerReason = nextVerdict.blockerReason;
+        }
+        // Advance the queue.
+        fs.writeFileSync(controlFilePath, JSON.stringify(verdicts.slice(1)));
+      }
+    } catch {
+      // ignore control file errors; default to PASS
+    }
+  }
+  // Special sentinel: produce deliberately malformed JSON so the backend fails gracefully.
+  if (verdict === "__MALFORMED__") {
+    fs.writeFileSync(reviewOutputPath, "{ verdict: PASS "); // missing closing brace + unquoted key
+    process.exit(0);
+  }
+  const result = { verdict, ...(issues.length > 0 ? { issues } : {}), ...(blockerReason ? { blockerReason } : {}) };
+  fs.writeFileSync(reviewOutputPath, JSON.stringify(result, null, 2));
+  process.exit(0);
+}
+
 const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
 if (!match) {
   throw new Error("Missing output marker");
@@ -490,4 +537,23 @@ export async function captureConsole(action: () => Promise<void>): Promise<strin
 
 export function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "afk-"));
+}
+
+/**
+ * Write a queue of review verdicts that the fake runner will consume in order.
+ * Each entry can be a string ("PASS", "ISSUES", "BLOCKED") or an object with
+ * { verdict, issues?, blockerReason? }.
+ * After all verdicts are consumed, the fake runner defaults to "PASS".
+ *
+ * Also sets AFK_TEST_REVIEW_VERDICTS_PATH so the fake runner can find the file
+ * regardless of cwd (review agents run directly with cwd=worktreePath which is
+ * a separate git worktree, not the repoDir).
+ */
+export function writeReviewVerdicts(
+  repoDir: string,
+  verdicts: Array<string | { verdict: string; issues?: string[]; blockerReason?: string }>
+): void {
+  const controlFilePath = path.join(repoDir, ".afk-test-review-verdicts");
+  fs.writeFileSync(controlFilePath, JSON.stringify(verdicts));
+  process.env.AFK_TEST_REVIEW_VERDICTS_PATH = controlFilePath;
 }

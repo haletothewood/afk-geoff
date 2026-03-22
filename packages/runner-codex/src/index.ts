@@ -11,13 +11,36 @@ export class CodexCliRunner implements AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
-    const invocation = resolveCommand(input.commandOverride ?? ["codex", "{prompt}"], input.promptPath);
+    if (input.commandOverride) {
+      const invocation = resolveCommand(input.commandOverride, input.promptPath);
+      return { ...invocation, promptTransport: "arg" };
+    }
+
+    const modelArgs = input.model ? ["--model", input.model] : [];
+    const invocation = resolveCommand(["codex", ...modelArgs, "{prompt}"], input.promptPath);
     return { ...invocation, promptTransport: "arg" };
   }
 
   public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {
     return resolveCommandParts(input.reviewCommandOverride ?? input.commandOverride ?? ["codex", "{prompt}"], input.briefPath);
+  }
+
+  public buildReviewInvocation(input: {
+    reviewPromptPath: string;
+    reviewCommandOverride?: string[];
+    commandOverride?: string[];
+    model?: string;
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" } {
+    const effectiveOverride = input.reviewCommandOverride ?? input.commandOverride;
+    if (effectiveOverride) {
+      return { ...resolveCommand(effectiveOverride, input.reviewPromptPath), promptTransport: "arg" };
+    }
+
+    const modelArgs = input.model ? ["--model", input.model] : [];
+    const invocation = resolveCommand(["codex", ...modelArgs, "{prompt}"], input.reviewPromptPath);
+    return { ...invocation, promptTransport: "arg" };
   }
 }
 

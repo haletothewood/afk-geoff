@@ -18,8 +18,14 @@ export const projectConfigSchema = z.object({
     .default({ enabled: true }),
   runner: z.object({
     kind: runnerKindSchema.default("claude"),
+    model: z.string().min(1).optional(),
     command: z.array(z.string().min(1)).optional(),
     reviewCommand: z.array(z.string().min(1)).optional(),
+    review: z
+      .object({
+        model: z.string().min(1).optional()
+      })
+      .optional(),
     requiredEnv: z.array(z.string().min(1)).optional(),
     envAllowlist: z.array(z.string().min(1)).default([])
   }),
