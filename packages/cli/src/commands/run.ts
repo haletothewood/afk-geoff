@@ -22,7 +22,12 @@ export async function runWorkItem(
 export async function runTrackedWorkItem(
   ctx: CliContext,
   workItemId: string,
-  options: { verification?: string[]; issueUrl?: string; requirePullRequest?: boolean } = {}
+  options: {
+    verification?: string[];
+    issueUrl?: string;
+    requirePullRequest?: boolean;
+    executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
+  } = {}
 ): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
 
@@ -44,13 +49,15 @@ export async function runTrackedWorkItem(
   const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? []), ...(detachedOptions.verification ?? [])])];
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   const sourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
+  const executionModeConfig = options.executionModeConfig ?? detachedOptions.executionModeConfig;
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
       requirement,
       workItem,
       verification,
-      ...(issueUrl ? { issueUrl } : {})
+      ...(issueUrl ? { issueUrl } : {}),
+      ...(executionModeConfig ? { executionModeConfig } : {})
     });
   } catch (error) {
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -253,6 +260,9 @@ async function runImportedExecutionBrief(
     acceptanceCriteria: string[];
     verification: string[];
     issueUrl?: string;
+    executionMode?: string;
+    overlays?: string[];
+    risk?: string;
   },
   options: {
     sourceLabel: string;
@@ -263,7 +273,21 @@ async function runImportedExecutionBrief(
 ): Promise<RunOutcome> {
   const workItem = await importExecutionBrief(ctx, brief, options);
 
-  const runOptions: { verification?: string[]; issueUrl?: string; requirePullRequest?: boolean } = {
+  const hasExplicitMode = brief.executionMode || brief.overlays || brief.risk;
+  const executionModeConfig = hasExplicitMode
+    ? {
+        ...(brief.executionMode ? { executionMode: brief.executionMode } : {}),
+        ...(brief.overlays ? { overlays: brief.overlays } : {}),
+        ...(brief.risk ? { risk: brief.risk } : {})
+      }
+    : undefined;
+
+  const runOptions: {
+    verification?: string[];
+    issueUrl?: string;
+    requirePullRequest?: boolean;
+    executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
+  } = {
     verification: brief.verification
   };
 
@@ -273,6 +297,10 @@ async function runImportedExecutionBrief(
 
   if (brief.issueUrl) {
     runOptions.issueUrl = brief.issueUrl;
+  }
+
+  if (executionModeConfig) {
+    runOptions.executionModeConfig = executionModeConfig;
   }
 
   return await runTrackedWorkItem(ctx, workItem.id, runOptions);
@@ -337,7 +365,8 @@ export async function runWorkItemDetached(
   const launchEnv: NodeJS.ProcessEnv = { ...process.env, AFK_DETACH_RUN_ID: runId };
   const detachedOptions = JSON.stringify({
     verification: options.verification ?? [],
-    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {})
+    ...(options.issueUrl ? { issueUrl: options.issueUrl } : {}),
+    ...(options.executionModeConfig ? { executionModeConfig: options.executionModeConfig } : {})
   });
   launchEnv.AFK_DETACH_RUN_OPTIONS = detachedOptions;
   const launchArgv: string[] = [
@@ -387,10 +416,19 @@ export async function runExecutionBriefFileDetached(
     sourceSummary: `Imported from ${briefPath}`,
     printedSource: briefPath
   });
+  const briefModeConfig =
+    brief.executionMode || brief.overlays || brief.risk
+      ? {
+          ...(brief.executionMode ? { executionMode: brief.executionMode } : {}),
+          ...(brief.overlays ? { overlays: brief.overlays } : {}),
+          ...(brief.risk ? { risk: brief.risk } : {})
+        }
+      : undefined;
   return runWorkItemDetached(ctx, workItem.id, dependencies, {
     ...options,
     verification: brief.verification,
-    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {}),
+    ...(briefModeConfig ? { executionModeConfig: briefModeConfig } : {})
   });
 }
 
@@ -415,10 +453,19 @@ export async function runGitHubIssueDetached(
     sourceSummary: `Imported from ${issueUrl}`,
     printedSource: issueUrl
   });
+  const issueModeConfig =
+    brief.executionMode || brief.overlays || brief.risk
+      ? {
+          ...(brief.executionMode ? { executionMode: brief.executionMode } : {}),
+          ...(brief.overlays ? { overlays: brief.overlays } : {}),
+          ...(brief.risk ? { risk: brief.risk } : {})
+        }
+      : undefined;
   return runWorkItemDetached(ctx, workItem.id, dependencies, {
     ...options,
     verification: brief.verification,
-    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {})
+    ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {}),
+    ...(issueModeConfig ? { executionModeConfig: issueModeConfig } : {})
   });
 }
 
@@ -440,15 +487,21 @@ function consumeDetachedRunOptionsFromEnv(): DetachedRunOptions {
 
     const maybeVerification = (parsed as { verification?: unknown }).verification;
     const maybeIssueUrl = (parsed as { issueUrl?: unknown }).issueUrl;
+    const maybeModeConfig = (parsed as { executionModeConfig?: unknown }).executionModeConfig;
 
     const verification = Array.isArray(maybeVerification)
       ? maybeVerification.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
       : [];
     const issueUrl = typeof maybeIssueUrl === "string" && maybeIssueUrl.trim().length > 0 ? maybeIssueUrl : undefined;
+    const executionModeConfig =
+      maybeModeConfig && typeof maybeModeConfig === "object"
+        ? (maybeModeConfig as { executionMode?: string; overlays?: string[]; risk?: string })
+        : undefined;
 
     return {
       verification,
-      ...(issueUrl ? { issueUrl } : {})
+      ...(issueUrl ? { issueUrl } : {}),
+      ...(executionModeConfig ? { executionModeConfig } : {})
     };
   } catch {
     return {};
