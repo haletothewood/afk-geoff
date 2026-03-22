@@ -117,6 +117,17 @@ export interface ChangeRequestPublisher {
   syncPullRequests(input: { owner: string; repo: string; refs: ExternalRef[] }): Promise<Array<{ refId: string; state: "open" | "closed"; merged: boolean }>>;
 }
 
+export interface SourceUpdatePayload {
+  status: "done" | "blocked" | "failed";
+  summary: string;
+  issueComment: string;
+  prUrl?: string;
+}
+
+export interface SourceUpdater {
+  update(payload: SourceUpdatePayload): Promise<void>;
+}
+
 export interface PublicationResult {
   externalRef?: ExternalRef;
   url?: string;
