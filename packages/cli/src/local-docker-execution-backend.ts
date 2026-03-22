@@ -173,6 +173,11 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const isFirstIteration = iteration === 1;
       const phase = isFirstIteration ? "work" : "fix";
 
+      // Ensure each iteration must produce a fresh result file.
+      if (fs.existsSync(hostResultPath)) {
+        fs.rmSync(hostResultPath);
+      }
+
       if (!isFirstIteration) {
         console.log(`[fix-${iteration - 1}] ${runnerLabel}${workModel ? `, model: ${workModel}` : ""}`);
       }
@@ -544,15 +549,13 @@ async function runVerificationCommands(commands: string[], cwd: string): Promise
   const results: VerificationCommandResult[] = [];
 
   for (const cmd of commands) {
-    const parts = cmd.trim().split(/\s+/);
-    const [command, ...args] = parts;
-
-    if (!command) {
+    const trimmed = cmd.trim();
+    if (!trimmed) {
       continue;
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, args, {
+      const { stdout, stderr } = await execFileAsync("bash", ["-lc", trimmed], {
         cwd,
         timeout: 5 * 60 * 1000
       });

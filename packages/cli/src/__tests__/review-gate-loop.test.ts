@@ -170,6 +170,68 @@ if (prompt.includes("# Issues to fix")) {
   });
 
   // -----------------------------------------------------------------------
+  // Missing fix output must fail (no stale result reuse)
+  // -----------------------------------------------------------------------
+  it("missing fix output: when a fix iteration exits without writing result.json, the run fails", async () => {
+    const fixture = await createFixture(tempDir, {
+      runnerScriptSuffix: `
+// On fix iterations, exit successfully but do not write a result file.
+if (prompt.includes("# Issues to fix")) {
+  process.exit(0);
+}
+`
+    });
+
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Missing error handling"] }
+    ]);
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow(
+      "did not produce result.json"
+    );
+
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.id === backend!.id)?.status).toBe("failed");
+
+    const [run] = await fixture.store.listRuns();
+    expect(run?.status).toBe("failed");
+    expect(run?.summary).toContain("No result.json found");
+    expect(run?.summary).toContain("iteration 2");
+  });
+
+  // -----------------------------------------------------------------------
+  // Verification command shell semantics
+  // -----------------------------------------------------------------------
+  it("verification shell semantics: quoted shell command executes correctly and is marked passed", async () => {
+    const fixture = await createFixture(tempDir);
+    const verificationCommand = `node -e "console.log('quoted command works')" && node -e "process.exit(0)"`;
+
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = [verificationCommand];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+
+    const reviewPromptPath = path.join(run!.runDir, "review-prompt-1.md");
+    const reviewPrompt = fs.readFileSync(reviewPromptPath, "utf8");
+    expect(reviewPrompt).toContain(`## ${verificationCommand} [PASSED]`);
+  });
+
+  // -----------------------------------------------------------------------
   // Verification failure is not ignored
   // -----------------------------------------------------------------------
   it("verification failure: failed verification results are passed to the review agent as context", async () => {
@@ -177,7 +239,7 @@ if (prompt.includes("# Issues to fix")) {
     // Add a failing verification command to the config after fixture setup.
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
     const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-    // "node -e process.exit(1)" will fail when split and executed by runVerificationCommands.
+    // This command fails intentionally and should be surfaced to the review agent.
     (config as { verification: string[] }).verification = ["node -e process.exit(1)"];
     fs.writeFileSync(configPath, YAML.stringify(config));
 
