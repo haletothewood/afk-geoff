@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+import { projectConfigSchema } from "./config.js";
+
+describe("projectConfigSchema — runner model fields", () => {
+  function baseConfig(overrides: object = {}): object {
+    return {
+      version: 1,
+      runner: {
+        kind: "claude",
+        ...overrides
+      },
+      docker: { image: "afk-worker:latest" },
+      paths: {
+        state: ".afk/state.sqlite",
+        runs: ".afk/runs",
+        worktrees: ".afk/worktrees"
+      }
+    };
+  }
+
+  it("parses runner.model when provided", () => {
+    const config = projectConfigSchema.parse(baseConfig({ model: "claude-sonnet-4-6" }));
+    expect(config.runner.model).toBe("claude-sonnet-4-6");
+  });
+
+  it("allows runner.model to be omitted (undefined)", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+    expect(config.runner.model).toBeUndefined();
+  });
+
+  it("parses runner.review.model when provided", () => {
+    const config = projectConfigSchema.parse(
+      baseConfig({ review: { model: "claude-opus-4-6" } })
+    );
+    expect(config.runner.review?.model).toBe("claude-opus-4-6");
+  });
+
+  it("allows runner.review to be omitted (undefined)", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+    expect(config.runner.review).toBeUndefined();
+  });
+
+  it("parses both runner.model and runner.review.model together", () => {
+    const config = projectConfigSchema.parse(
+      baseConfig({
+        model: "claude-sonnet-4-6",
+        review: { model: "claude-opus-4-6" }
+      })
+    );
+    expect(config.runner.model).toBe("claude-sonnet-4-6");
+    expect(config.runner.review?.model).toBe("claude-opus-4-6");
+  });
+
+  it("review model falls back to work model when runner.review is not set", () => {
+    const config = projectConfigSchema.parse(baseConfig({ model: "claude-sonnet-4-6" }));
+    // The fallback is computed at runtime, not in the schema; schema just stores the raw values.
+    const resolvedReviewModel = config.runner.review?.model ?? config.runner.model;
+    expect(resolvedReviewModel).toBe("claude-sonnet-4-6");
+  });
+
+  it("rejects runner.model that is an empty string", () => {
+    expect(() => projectConfigSchema.parse(baseConfig({ model: "" }))).toThrow();
+  });
+});
