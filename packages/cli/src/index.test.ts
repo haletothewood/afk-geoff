@@ -1429,6 +1429,19 @@ describe("afk CLI BDD scenarios", () => {
   // Preflight hardening tests
   // ---------------------------------------------------------------------------
 
+  it("Given run file is missing a path, when preflight would fail, then usage validation runs first", async () => {
+    const fixture = await createFixture(tempDir);
+
+    // If preflight ran first this would fail with a runner preflight error instead.
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: false,
+      runnerCommand: ["__afk_nonexistent_runner__", "{prompt}"]
+    });
+
+    await expect(fixture.cli(["run", "file"])).rejects.toThrow("Usage: pnpm afk run file <path>");
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+  });
+
   it("Given the runner executable is not on PATH, when run is used, then it fails with a runner preflight error before creating any run records", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(

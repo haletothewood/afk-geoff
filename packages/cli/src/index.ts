@@ -27,6 +27,7 @@ import { MarkdownFileWorkSource, resolveBriefPath } from "./file-work-source.js"
 import { LocalDockerExecutionBackend } from "./local-docker-execution-backend.js";
 
 const execFileAsync = promisify(execFile);
+const GITHUB_AUTH_PREFLIGHT_TIMEOUT_MS = 8_000;
 
 interface CliContext {
   cwd: string;
@@ -168,6 +169,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       if (options.pr) {
         assertPullRequestReady(ctx);
       }
+
+      assertRunTargetArguments(target, value);
 
       await runPreflight(ctx, { requirePullRequest: options.pr ?? false }, dependencies);
 
@@ -1609,6 +1612,16 @@ function assertPullRequestReady(ctx: CliContext): void {
   }
 }
 
+function assertRunTargetArguments(target: string, value: string | undefined): void {
+  if (target === "file" && !value) {
+    throw new Error("Usage: pnpm afk run file <path>");
+  }
+
+  if (target === "issue" && !value) {
+    throw new Error("Usage: pnpm afk run issue <github-issue-url>");
+  }
+}
+
 /**
  * Run dynamic preflight checks before any run state is created.
  *
@@ -1663,26 +1676,42 @@ async function runPreflight(
 
 async function defaultGitRemoteChecker(repoRoot: string): Promise<void> {
   try {
-    await execFileAsync("git", ["ls-remote", "--heads", "origin"], { cwd: repoRoot });
+    await execFileAsync("git", ["ls-remote", "--heads", "origin"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0"
+      }
+    });
   } catch (error) {
     throw new Error(`Preflight failed (git): origin remote is not accessible: ${formatErrorMessage(error)}`);
   }
 }
 
 async function defaultGitHubAuthVerifier(token: string, _remote: { owner: string; repo: string }): Promise<void> {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), GITHUB_AUTH_PREFLIGHT_TIMEOUT_MS);
+
   try {
     const response = await fetch("https://api.github.com/user", {
       headers: {
         Authorization: `token ${token}`,
         Accept: "application/vnd.github+json",
         "User-Agent": "afk-geoff/preflight"
-      }
+      },
+      signal: abortController.signal
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Preflight failed (github): GitHub auth check timed out after ${GITHUB_AUTH_PREFLIGHT_TIMEOUT_MS}ms`);
+    }
+
     throw new Error(`Preflight failed (github): GitHub token is invalid or unauthenticated: ${formatErrorMessage(error)}`);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
