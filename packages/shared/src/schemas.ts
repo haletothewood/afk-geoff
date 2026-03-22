@@ -14,8 +14,20 @@ export const plannerOutputSchema = z.object({
   )
 });
 
+const workerStatusSchema = z
+  .string()
+  .transform((value) => value.trim().toLowerCase())
+  .transform((value) => {
+    if (value === "completed" || value === "complete" || value === "success" || value === "succeeded") {
+      return "done";
+    }
+
+    return value;
+  })
+  .pipe(z.enum(["done", "blocked", "failed"]));
+
 export const workerResultSchema = z.object({
-  status: z.enum(["done", "blocked", "failed"]),
+  status: workerStatusSchema,
   summary: z.string().min(1),
   issueComment: z.string().default(""),
   pr: z

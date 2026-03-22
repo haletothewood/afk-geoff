@@ -1642,6 +1642,43 @@ describe("afk CLI BDD scenarios", () => {
     expect(sourceComments[0]?.body).toContain("Finished the AFK work item.");
   });
 
+  it("Given a worker result uses status completed, when run issue is used, then AFK treats it as done", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubMirror,
+      githubIssueWorkSource: {
+        async load() {
+          return {
+            requirementBody: "Ship a narrow internal improvement for the AFK runner.",
+            workItemTitle: "Normalize completed status",
+            workItemBody: "Treat completed as done for worker result compatibility.",
+            acceptanceCriteria: ["completed maps to done"],
+            verification: [],
+            issueUrl: "https://github.com/acme/demo/issues/66"
+          };
+        }
+      },
+      runnerScriptSuffix: [
+        "fs.writeFileSync(outputPath, JSON.stringify({",
+        '  status: "completed",',
+        '  summary: "Work completed with legacy status",',
+        '  issueComment: "Legacy completed status still succeeded."',
+        "}, null, 2));",
+        "process.exit(0);"
+      ].join("\n")
+    });
+
+    await fixture.cli(["run", "issue", "https://github.com/acme/demo/issues/66"]);
+
+    const [requirement] = await fixture.store.listRequirements();
+    const [workItem] = await fixture.items(requirement!.id);
+    expect(workItem?.status).toBe("done");
+
+    const sourceComments = githubMirror.issueComments.filter((c) => c.issueNumber === 66);
+    expect(sourceComments).toHaveLength(1);
+    expect(sourceComments[0]?.body).toContain("Legacy completed status still succeeded.");
+  });
+
   it("Given a run started from a GitHub issue URL, when the run fails, then a failure update is posted to the source issue", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
