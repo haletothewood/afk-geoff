@@ -129,9 +129,33 @@ function normalise(text: string): string {
   return text.toLowerCase();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function containsTerm(normalisedText: string, term: string): boolean {
+  const needle = term.trim().toLowerCase();
+  if (!needle) {
+    return false;
+  }
+
+  // For multi-word phrases, literal matching is adequate and predictable.
+  if (needle.includes(" ")) {
+    return normalisedText.includes(needle);
+  }
+
+  // For single-token terms, require whole-word boundaries to avoid false positives
+  // (for example, "down" should not match "markdown" or "dropdown").
+  if (/^[a-z0-9]+$/i.test(needle)) {
+    return new RegExp(`\\b${escapeRegExp(needle)}\\b`).test(normalisedText);
+  }
+
+  return normalisedText.includes(needle);
+}
+
 function contains(text: string, terms: string[]): boolean {
   const n = normalise(text);
-  return terms.some((term) => n.includes(term));
+  return terms.some((term) => containsTerm(n, term));
 }
 
 /**

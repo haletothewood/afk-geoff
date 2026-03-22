@@ -73,6 +73,16 @@ describe("inferPrimaryMode", () => {
     expect(result.mode).toBe("production-hardener");
   });
 
+  it("does not infer incident-responder from markdown text containing 'down' as a substring", () => {
+    const result = inferPrimaryMode("Update markdown rendering in docs");
+    expect(result.mode).not.toBe("incident-responder");
+  });
+
+  it("does not infer incident-responder from dropdown text containing 'down' as a substring", () => {
+    const result = inferPrimaryMode("Improve dropdown keyboard navigation");
+    expect(result.mode).not.toBe("incident-responder");
+  });
+
   it("defaults to pragmatic-shipper when no indicators present", () => {
     const result = inferPrimaryMode("Add a user preferences page with name and email fields");
     expect(result.mode).toBe("pragmatic-shipper");
