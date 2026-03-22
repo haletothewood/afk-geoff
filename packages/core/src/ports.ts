@@ -38,12 +38,19 @@ export interface AgentRunner {
     mode: "plan" | "work";
     promptPath: string;
     commandOverride?: string[];
+    model?: string;
   }): { command: string; args: string[]; promptTransport: "arg" | "stdin" };
   buildReviewCommand(input: {
     briefPath: string;
     reviewCommandOverride?: string[];
     commandOverride?: string[];
   }): string[];
+  buildReviewInvocation(input: {
+    reviewPromptPath: string;
+    reviewCommandOverride?: string[];
+    commandOverride?: string[];
+    model?: string;
+  }): { command: string; args: string[]; promptTransport: "arg" | "stdin" };
 }
 
 export interface WorkSource<TInput = string> {

@@ -41,3 +41,16 @@ export const workerResultSchema = z.object({
 
 export type PlannerOutput = z.infer<typeof plannerOutputSchema>;
 export type WorkerResult = z.infer<typeof workerResultSchema>;
+
+const reviewVerdictSchema = z
+  .string()
+  .transform((v) => v.trim().toUpperCase())
+  .pipe(z.enum(["PASS", "ISSUES", "BLOCKED"]));
+
+export const reviewResultSchema = z.object({
+  verdict: reviewVerdictSchema,
+  issues: z.array(z.string()).optional(),
+  blockerReason: z.string().optional()
+});
+
+export type ReviewResult = z.infer<typeof reviewResultSchema>;
