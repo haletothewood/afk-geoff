@@ -456,4 +456,116 @@ describe("afk CLI — run command", () => {
     const items = await fixture.items(requirement.id);
     expect(items.find((item) => item.id === backend!.id)?.status).toBe("done");
   });
+
+  it("Given an execution brief without mode fields, when run file is used, then the worker prompt includes an inferred execution mode section", async () => {
+    const fixture = await createFixture(tempDir);
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Add inferred mode support",
+        "",
+        "## Work Item Body",
+        "Ensure AFK infers the execution mode from the brief content.",
+        "",
+        "## Acceptance Criteria",
+        "- Execution mode is inferred and present in the worker prompt"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md"]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("# Execution Mode");
+    expect(prompt).toContain("**Mode:**");
+    expect(prompt).toContain("**Risk Tolerance:**");
+    expect(prompt).toContain("**Rationale:**");
+    expect(prompt).toContain("## Posture for this mode");
+  });
+
+  it("Given an execution brief with an explicit Execution Mode, when run file is used, then the worker prompt reflects that mode", async () => {
+    const fixture = await createFixture(tempDir);
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Add explicit mode support",
+        "",
+        "## Work Item Body",
+        "Ensure AFK respects an explicit execution mode from the brief.",
+        "",
+        "## Acceptance Criteria",
+        "- Explicit execution mode is reflected in the worker prompt",
+        "",
+        "## Execution Mode",
+        "incident-responder"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md"]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("# Execution Mode");
+    expect(prompt).toContain("Incident Responder");
+    expect(prompt).toContain("Restore service first");
+  });
+
+  it("Given an execution brief with Execution Mode, Overlays, and Risk, when run file is used, then the worker prompt includes all three", async () => {
+    const fixture = await createFixture(tempDir);
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Add full mode config support",
+        "",
+        "## Work Item Body",
+        "Verify all execution control fields flow through to the worker prompt.",
+        "",
+        "## Acceptance Criteria",
+        "- All execution control fields appear in the worker prompt",
+        "",
+        "## Execution Mode",
+        "production-hardener",
+        "",
+        "## Overlays",
+        "- security-gatekeeper",
+        "",
+        "## Risk",
+        "low"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md"]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(prompt).toContain("Production Hardener");
+    expect(prompt).toContain("Security Gatekeeper");
+    expect(prompt).toContain("Low");
+    expect(prompt).toContain("## Active overlays");
+    expect(prompt).toContain("security review");
+  });
 });

@@ -9,6 +9,7 @@ import {
   createId,
   maybeReadOverride,
   parseJsonWithRecovery,
+  resolveExecutionMode,
   workerResultSchema,
   DEFAULT_DOCKERFILE_PATH
 } from "@afk-geoff/shared";
@@ -98,6 +99,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const issueRef = await this.store.getExternalRefForEntity("work_item", input.workItem.id, "issue");
     const resolvedIssueUrl = input.issueUrl ?? issueRef?.url;
     const overrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.worker);
+    // Resolve execution mode from brief config (if any) or infer from content
+    const inferenceContent = [
+      input.requirement.title,
+      input.requirement.body,
+      input.workItem.title,
+      input.workItem.body,
+      ...input.workItem.acceptanceCriteria
+    ].join("\n");
+    const resolvedMode = resolveExecutionMode(inferenceContent, input.executionModeConfig);
     const prompt = buildWorkerPrompt({
       requirement: input.requirement,
       workItem: input.workItem,
@@ -105,7 +115,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       progressPath: progressContainerPath,
       resultPath,
       ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
-      ...(overrideText ? { overrideText } : {})
+      ...(overrideText ? { overrideText } : {}),
+      executionMode: resolvedMode
     });
     fs.writeFileSync(promptPath, prompt);
     fs.writeFileSync(
