@@ -22,6 +22,10 @@ interface FixtureOptions {
   watchPollIntervalMs?: number;
   /** Hook called after each watch poll iteration to let tests mutate state. */
   onAfterPoll?: () => Promise<void>;
+  /** Override git remote reachability check for preflight. Defaults to no-op (local bare remote is always accessible in tests). */
+  gitRemoteChecker?: (repoRoot: string) => Promise<void>;
+  /** Override GitHub auth verification for preflight. Defaults to no-op (tests use mock GitHub). */
+  githubAuthVerifier?: (token: string, remote: { owner: string; repo: string }) => Promise<void>;
 }
 
 interface WorkflowFixture {
@@ -1420,6 +1424,175 @@ describe("afk CLI BDD scenarios", () => {
     expect(output).toContain("Warning: heartbeat stale");
     expect(output).toContain("run_watch_stale completed");
   });
+
+  // ---------------------------------------------------------------------------
+  // Preflight hardening tests
+  // ---------------------------------------------------------------------------
+
+  it("Given the runner executable is not on PATH, when run is used, then it fails with a runner preflight error before creating any run records", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: false,
+      runnerCommand: ["__afk_nonexistent_runner__", "{prompt}"]
+    });
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("Preflight failed (runner):");
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("__afk_nonexistent_runner__");
+
+    // No run record should have been created.
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+    // Work item status must not have changed.
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.id === backend!.id)?.status).toBe("todo");
+  });
+
+  it("Given a required runner env var is missing, when run is used, then it fails with a runner preflight error before creating any run records", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: false,
+      runnerRequiredEnv: ["AFK_TEST_PREFLIGHT_MISSING_VAR"]
+    });
+    delete process.env.AFK_TEST_PREFLIGHT_MISSING_VAR;
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("Preflight failed (runner):");
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("AFK_TEST_PREFLIGHT_MISSING_VAR");
+
+    // No run record should have been created.
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.id === backend!.id)?.status).toBe("todo");
+  });
+
+  it("Given the git origin remote is not accessible, when run --pr is used, then it fails with a git preflight error before creating any run records", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      gitRemoteChecker: async () => {
+        throw new Error("Preflight failed (git): origin remote is not accessible: could not connect");
+      }
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement.",
+        "",
+        "## Work Item Title",
+        "Git remote preflight check",
+        "",
+        "## Work Item Body",
+        "Verify git push readiness up front.",
+        "",
+        "## Acceptance Criteria",
+        "- Git remote is accessible before run starts"
+      ].join("\n")
+    );
+
+    await expect(fixture.cli(["run", "file", "brief.md", "--pr"])).rejects.toThrow("Preflight failed (git):");
+
+    // No run record should have been created.
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+    expect(githubMirror.pullRequestRequests).toHaveLength(0);
+  });
+
+  it("Given GitHub auth is invalid, when run --pr is used, then it fails with a github preflight error before creating any run records", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      githubAuthVerifier: async () => {
+        throw new Error("Preflight failed (github): GitHub token is invalid or unauthenticated: HTTP 401");
+      }
+    });
+    const briefPath = path.join(fixture.repoDir, "brief.md");
+    fs.writeFileSync(
+      briefPath,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement.",
+        "",
+        "## Work Item Title",
+        "GitHub auth preflight check",
+        "",
+        "## Work Item Body",
+        "Verify GitHub token validity up front.",
+        "",
+        "## Acceptance Criteria",
+        "- GitHub auth is valid before run starts"
+      ].join("\n")
+    );
+
+    await expect(fixture.cli(["run", "file", "brief.md", "--pr"])).rejects.toThrow("Preflight failed (github):");
+
+    // No run record should have been created.
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+    expect(githubMirror.pullRequestRequests).toHaveLength(0);
+  });
+
+  it("Given all preflight checks pass, when run is used, then the run proceeds normally", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.id === backend!.id)?.status).toBe("done");
+    expect(await fixture.store.listRuns()).toHaveLength(1);
+  });
+
+  it("Given runner preflight fails, when run --detach is used, then it fails before creating any run records", async () => {
+    const launchCalls: Array<unknown> = [];
+    const fixture = await createFixture(tempDir, {
+      detachLauncher: (argv, env, cwd) => {
+        launchCalls.push({ argv, env, cwd });
+        return { pid: 0 };
+      }
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: false,
+      runnerCommand: ["__afk_nonexistent_detach_runner__", "{prompt}"]
+    });
+
+    await expect(fixture.cli(["run", backend!.id, "--detach"])).rejects.toThrow("Preflight failed (runner):");
+
+    // Detached launcher must not have been called and no run record must exist.
+    expect(launchCalls).toHaveLength(0);
+    expect(await fixture.store.listRuns()).toHaveLength(0);
+    const items = await fixture.items(requirement.id);
+    expect(items.find((item) => item.id === backend!.id)?.status).toBe("todo");
+  });
 });
 
 async function createFixture(tempDir: string, options: FixtureOptions = {}): Promise<WorkflowFixture> {
@@ -1446,21 +1619,19 @@ async function createFixture(tempDir: string, options: FixtureOptions = {}): Pro
 
   process.chdir(repoDir);
 
-  const dependencies = options.githubMirror
-    || options.githubIssueWorkSource
-    || options.githubTokenResolver
-    || options.detachLauncher
-    || options.watchPollIntervalMs !== undefined
-    || options.onAfterPoll
-    ? {
-        ...(options.githubMirror ? { githubFactory: () => options.githubMirror as IssueMirror & ChangeRequestPublisher } : {}),
-        ...(options.githubIssueWorkSource ? { githubIssueWorkSourceFactory: () => options.githubIssueWorkSource as WorkSource<string> } : {}),
-        ...(options.githubTokenResolver ? { githubTokenResolver: options.githubTokenResolver } : {}),
-        ...(options.detachLauncher ? { detachLauncher: options.detachLauncher } : {}),
-        ...(options.watchPollIntervalMs !== undefined ? { watchPollIntervalMs: options.watchPollIntervalMs } : {}),
-        ...(options.onAfterPoll ? { onAfterPoll: options.onAfterPoll } : {})
-      }
-    : undefined;
+  // Always inject a no-op GitHub auth verifier so tests never make real API calls.
+  // When a specific verifier is provided in options it overrides this default.
+  const dependencies = {
+    ...(options.githubMirror ? { githubFactory: () => options.githubMirror as IssueMirror & ChangeRequestPublisher } : {}),
+    ...(options.githubIssueWorkSource ? { githubIssueWorkSourceFactory: () => options.githubIssueWorkSource as WorkSource<string> } : {}),
+    ...(options.githubTokenResolver ? { githubTokenResolver: options.githubTokenResolver } : {}),
+    ...(options.detachLauncher ? { detachLauncher: options.detachLauncher } : {}),
+    ...(options.watchPollIntervalMs !== undefined ? { watchPollIntervalMs: options.watchPollIntervalMs } : {}),
+    ...(options.onAfterPoll ? { onAfterPoll: options.onAfterPoll } : {}),
+    ...(options.gitRemoteChecker !== undefined ? { gitRemoteChecker: options.gitRemoteChecker } : {}),
+    // Default: no-op so tests never make real GitHub API calls; override explicitly for auth-failure tests.
+    githubAuthVerifier: options.githubAuthVerifier ?? (async () => {})
+  };
 
   await runCli(["node", "afk", "init"], dependencies);
   rewriteConfig(repoDir, { githubEnabled: options.githubEnabled ?? false });
@@ -1516,13 +1687,13 @@ async function firstRequirement(store: SqliteStateStore): Promise<Requirement> {
   return requirement;
 }
 
-function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
+function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
   const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
   config.github.owner = options.githubEnabled ? "acme" : undefined;
   config.github.repo = options.githubEnabled ? "demo" : undefined;
-  config.runner.command = ["node", "fake-runner.mjs", "{prompt}"];
+  config.runner.command = options.runnerCommand ?? ["node", "fake-runner.mjs", "{prompt}"];
   config.runner.requiredEnv = options.runnerRequiredEnv ?? [];
   config.runner.envAllowlist = [];
   config.verification = [];
