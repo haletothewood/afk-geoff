@@ -385,3 +385,15 @@ export function formatExecutionModeSection(mode: ResolvedExecutionMode): string 
 
   return lines.join("\n");
 }
+
+/**
+ * Format a short, single-line execution mode summary for CLI output.
+ */
+export function formatExecutionModeResolution(mode: ResolvedExecutionMode): string {
+  const label = MODE_LABELS[mode.primaryMode];
+  const sourceLabel = mode.source === "explicit" ? "explicit" : "inferred";
+  const overlayLabels = mode.overlays.map((overlay) => OVERLAY_LABELS[overlay]);
+  const overlaysSummary = overlayLabels.length > 0 ? overlayLabels.join(", ") : "none";
+
+  return `Mode resolution: ${label} (${sourceLabel}); overlays: ${overlaysSummary}; risk: ${mode.risk}`;
+}

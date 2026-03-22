@@ -479,11 +479,15 @@ describe("afk CLI — run command", () => {
       ].join("\n")
     );
 
-    await fixture.cli(["run", "file", "brief.md"]);
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md"]);
+    });
 
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
     const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(output).toContain("Mode resolution:");
+    expect(output).toContain("(inferred)");
     expect(prompt).toContain("# Execution Mode");
     expect(prompt).toContain("**Mode:**");
     expect(prompt).toContain("**Risk Tolerance:**");
@@ -516,11 +520,15 @@ describe("afk CLI — run command", () => {
       ].join("\n")
     );
 
-    await fixture.cli(["run", "file", "brief.md"]);
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md"]);
+    });
 
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
     const prompt = fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8");
+    expect(output).toContain("Mode resolution:");
+    expect(output).toContain("Incident Responder (explicit)");
     expect(prompt).toContain("# Execution Mode");
     expect(prompt).toContain("Incident Responder");
     expect(prompt).toContain("Restore service first");
