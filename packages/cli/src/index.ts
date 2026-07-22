@@ -40,6 +40,7 @@ export type { CliDependencies };
 
 export async function runCli(argv = process.argv, dependencies: CliDependencies = {}): Promise<void> {
   const program = new Command();
+  const commandCwd = process.env.AFK_CWD ?? process.cwd();
   program.name("afk").description("afk-geoff orchestrator");
 
   program
@@ -49,31 +50,31 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--force-github-actions", "Overwrite an existing AFK GitHub Actions workflow")
     .action(async (options: { withOverrides?: boolean; withGithubActions?: boolean; forceGithubActions?: boolean }) => {
       const git = new LocalGitCodeHost();
-      await git.assertRepository(process.cwd());
-      const configPath = configFilePath(process.cwd());
+      await git.assertRepository(commandCwd);
+      const configPath = configFilePath(commandCwd);
 
       if (fs.existsSync(configPath)) {
         if (!options.withGithubActions) {
           throw new Error(`Config already exists at ${configPath}`);
         }
 
-        const workflowPath = writeGitHubActionsWorkflow(process.cwd(), { overwrite: options.forceGithubActions ?? false });
+        const workflowPath = writeGitHubActionsWorkflow(commandCwd, { overwrite: options.forceGithubActions ?? false });
         console.log(`Created GitHub Actions workflow at ${workflowPath}`);
         return;
       }
 
-      writeDefaultProjectFiles(process.cwd(), {
+      writeDefaultProjectFiles(commandCwd, {
         withOverrides: options.withOverrides ?? false,
         withGitHubActions: options.withGithubActions ?? false,
         overwriteGitHubActions: options.forceGithubActions ?? false
       });
-      console.log(`Initialized .afk in ${process.cwd()}`);
+      console.log(`Initialized .afk in ${commandCwd}`);
     });
 
   program.command("doctor")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { json?: boolean }) => {
-    const ctx = await openContext(process.cwd(), dependencies);
+    const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
       const report = await runForJson(async () => await getDoctorReport(ctx));
       printJson({ command: "doctor", backend: ctx.executionBackendKind, ...report });
@@ -89,7 +90,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("capture")
     .argument("<prompt>", "Requirement prompt")
     .action(async (prompt: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       const requirement = await captureRequirement(ctx, prompt);
       console.log(`Created requirement ${requirement.id}`);
     });
@@ -98,7 +99,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("[workItemId]", "Optional work item id to focus JSON status output")
     .option("--json", "Print machine-readable JSON")
     .action(async (workItemId: string | undefined, options: { json?: boolean }) => {
-    const ctx = await openContext(process.cwd(), dependencies);
+    const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
       const snapshot = await runForJson(async () => {
         await autoSync(ctx);
@@ -121,7 +122,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("show")
     .argument("<entityId>", "Requirement id or work item id")
     .action(async (entityId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await autoSync(ctx);
       await showEntity(ctx, entityId);
     });
@@ -129,7 +130,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program.command("runs")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { json?: boolean }) => {
-    const ctx = await openContext(process.cwd(), dependencies);
+    const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
       const runs = await runForJson(async () => {
         await autoSync(ctx);
@@ -146,7 +147,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("logs")
     .argument("<runId>", "Run id")
     .action(async (runId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await printRunLogs(ctx, runId);
     });
 
@@ -154,7 +155,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("watch")
     .argument("<runId>", "Run id")
     .action(async (runId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await watchRun(ctx, runId, dependencies);
     });
 
@@ -162,7 +163,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("dispatch")
     .option("--max <count>", "Maximum number of AFK loop iterations", "10")
     .action(async (options: { max: string }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await dispatchLoop(ctx, Number(options.max));
     });
 
@@ -172,7 +173,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--limit <count>", "Maximum number of workflow runs to list", "10")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { workflow: string; limit: string; json?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       const limit = Number(options.limit);
       if (!Number.isInteger(limit) || limit <= 0) {
         throw new Error("--limit must be a positive integer");
@@ -197,7 +198,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--limit <count>", "Maximum number of artifacts to list", "10")
     .option("--json", "Print machine-readable JSON")
     .action(async (runId: string, options: { limit: string; json?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       const limit = Number(options.limit);
       if (!Number.isInteger(limit) || limit <= 0) {
         throw new Error("--limit must be a positive integer");
@@ -225,7 +226,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--output <path>", "Path for the downloaded artifact ZIP")
     .option("--json", "Print machine-readable JSON")
     .action(async (artifactId: string, options: { output?: string; json?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       if (!/^\d+$/.test(artifactId)) {
         throw new Error("artifactId must be a GitHub Actions numeric artifact id");
       }
@@ -255,7 +256,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Remote execution backend").choices([...submitBackendChoices]).default("github-actions"))
     .action(async (target: string, value: string, options: { pr?: boolean; afkRepository: string; afkRef: string; json?: boolean; backend: typeof submitBackendChoices[number] }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       const submitAction = async () => {
         if (target !== "issue") {
           throw new Error("Usage: pnpm afk submit issue <github-issue-url> [--backend github-actions] [--afk-repository owner/repo] [--afk-ref ref] [--json]");
@@ -290,7 +291,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
     .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean; backend: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(process.cwd(), { ...dependencies, backendOverride: options.backend });
+      const ctx = await openContext(commandCwd, { ...dependencies, backendOverride: options.backend });
       const runAction = async () => {
         await autoSync(ctx);
         if (options.pr) assertPullRequestReady(ctx);
@@ -333,7 +334,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("review")
     .argument("<workItemId>", "HITL work item id")
     .action(async (workItemId: string) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await autoSync(ctx);
       await prepareReview(ctx, workItemId);
     });
@@ -344,7 +345,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
     .action(async (workItemId: string, options: { json?: boolean; backend: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(process.cwd(), { ...dependencies, backendOverride: options.backend });
+      const ctx = await openContext(commandCwd, { ...dependencies, backendOverride: options.backend });
       const followUpAction = async () => {
         await autoSync(ctx);
         return await runPullRequestFollowUp(ctx, workItemId);
@@ -367,7 +368,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
     .option("--keep-branch", "Close the pull request but keep the branch and worktree")
     .action(async (workItemId: string, options: { keepBranch?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await autoSync(ctx);
       await undoWorkItem(ctx, workItemId, { deleteBranch: !(options.keepBranch ?? false) });
     });
@@ -377,7 +378,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--execute", "Perform actual deletions (default is dry-run)")
     .option("--include-orphans", "Also delete orphaned directories with no matching run record")
     .action(async (options: { execute?: boolean; includeOrphans?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+      const ctx = await openContext(commandCwd, dependencies);
       await cleanupArtifacts(ctx, {
         execute: options.execute ?? false,
         includeOrphans: options.includeOrphans ?? false
@@ -385,7 +386,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     });
 
   program.command("sync").action(async () => {
-    const ctx = await openContext(process.cwd(), dependencies);
+    const ctx = await openContext(commandCwd, dependencies);
     await autoSync(ctx);
     console.log("Sync complete");
   });
