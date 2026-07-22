@@ -101,7 +101,7 @@ Priority command contracts:
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`
 
-Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture ids, statuses, branch names, worktree paths, and PR URLs directly.
+Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. `run` and `follow-up` payloads include `ok: true` on success and `ok: false` with `error.message` before exiting nonzero on failure.
 
 Execution backend selection is explicit on run commands:
 

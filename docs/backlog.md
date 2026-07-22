@@ -86,6 +86,7 @@ Why:
 Scope:
 - harden the first `--json` output for the core orchestration commands
 - include stable work item ids, run ids, PR URLs, branch names, terminal statuses, worktree paths, and failure reasons
+- include `ok` and structured `error.message` fields for failing run/follow-up commands
 - keep human-readable output as the default
 - cover errors and detached/background runs with the same structured contract
 

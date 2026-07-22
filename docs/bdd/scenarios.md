@@ -101,6 +101,7 @@ When a supported command is run with --json
 Then stdout should contain one parseable JSON payload
 And the payload should include stable work item ids, run ids, statuses, branches, worktree paths, and pull request URLs when available
 And normal human-readable progress output should not be mixed into stdout
+And failing run commands should include `ok: false` with a structured error message before exiting nonzero
 ```
 
 Covered by:

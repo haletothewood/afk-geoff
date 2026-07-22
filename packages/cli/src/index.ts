@@ -27,6 +27,7 @@ import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
+import { formatErrorMessage } from "./cli-utils.js";
 import type { CliDependencies } from "./types.js";
 
 const executionBackendChoices = ["local-docker"] as const;
@@ -79,6 +80,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       });
       printJson({
         command: "status",
+        backend: ctx.executionBackendKind,
         ...(workItemId ? { workItemId } : {}),
         ...snapshot,
         ...(workItemId ? { focusedWorkItem: snapshot.workItems.find((item) => item.id === workItemId) } : {})
@@ -170,11 +172,19 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         return outcome;
       };
 
-      const outcome = options.json ? await runForJson(runAction) : await runAction();
       if (options.json) {
-        printJson({ command: "run", target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
-      } else if (outcome.prUrl) {
-        console.log(`Opened PR: ${outcome.prUrl}`);
+        try {
+          const outcome = await runForJson(runAction);
+          printJson({ command: "run", ok: true, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
+        } catch (error) {
+          printJson({ command: "run", ok: false, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        const outcome = await runAction();
+        if (outcome.prUrl) {
+          console.log(`Opened PR: ${outcome.prUrl}`);
+        }
       }
     });
 
@@ -198,9 +208,16 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         await autoSync(ctx);
         return await runPullRequestFollowUp(ctx, workItemId);
       };
-      const outcome = options.json ? await runForJson(followUpAction) : await followUpAction();
       if (options.json) {
-        printJson({ command: "follow-up", workItemId, backend: ctx.executionBackendKind, ...outcome });
+        try {
+          const outcome = await runForJson(followUpAction);
+          printJson({ command: "follow-up", ok: true, workItemId, backend: ctx.executionBackendKind, ...outcome });
+        } catch (error) {
+          printJson({ command: "follow-up", ok: false, workItemId, backend: ctx.executionBackendKind, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        await followUpAction();
       }
     });
 
