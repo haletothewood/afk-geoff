@@ -1,7 +1,6 @@
-import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
+import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater, WorkspaceRuntime, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
-import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import type { ChangeRequestPublisher } from "@afk-geoff/core";
 
@@ -14,7 +13,7 @@ export interface CliContext {
   paths: ReturnType<typeof resolveProjectPaths>;
   store: SqliteStateStore;
   git: LocalGitCodeHost;
-  runtime: DockerWorkspaceRuntime;
+  runtime: WorkspaceRuntime;
   runner: AgentRunner;
   executionBackendKind: ExecutionBackendKind;
   githubToken: string | undefined;

@@ -9,6 +9,7 @@ import { CodexCliRunner } from "@afk-geoff/runner-codex";
 import { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import { ensureProjectLayout, loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { LocalDockerExecutionBackend } from "./local-docker-execution-backend.js";
+import { LocalProcessWorkspaceRuntime } from "./local-process-runtime.js";
 import { GitHubSourceUpdater, NoOpSourceUpdater, parseGitHubIssueUrl } from "./source-updater.js";
 import type { CliContext, CliDependencies } from "./types.js";
 
@@ -21,7 +22,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
   const executionBackendKind = dependencies.backendOverride ?? config.execution.backend;
   const paths = ensureProjectLayout(repoRoot, config);
   const store = new SqliteStateStore(paths.statePath);
-  const runtime = new DockerWorkspaceRuntime();
+  const runtime = executionBackendKind === "local-process" ? new LocalProcessWorkspaceRuntime() : new DockerWorkspaceRuntime();
   const runner = createRunner(config.runner.kind);
   const remote = config.github.enabled ? config.github.owner && config.github.repo ? { owner: config.github.owner, repo: config.github.repo } : await git.getRemoteSlug(repoRoot) : undefined;
   const githubToken = await resolveGitHubToken(dependencies);
@@ -81,7 +82,7 @@ function createExecutionBackend(
   kind: CliDependencies["backendOverride"],
   deps: ConstructorParameters<typeof LocalDockerExecutionBackend>[0]
 ) {
-  if (kind === "local-docker") {
+  if (kind === "local-docker" || kind === "local-process") {
     return new LocalDockerExecutionBackend(deps);
   }
 

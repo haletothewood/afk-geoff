@@ -86,6 +86,16 @@ describe("projectConfigSchema — runner model fields", () => {
     })).toThrow();
   });
 
+  it("parses local-process execution backend", () => {
+    const config = projectConfigSchema.parse({
+      ...baseConfig(),
+      execution: {
+        backend: "local-process"
+      }
+    });
+    expect(config.execution.backend).toBe("local-process");
+  });
+
   it("configures smoke profile with a no-key command runner", () => {
     const config = projectConfigSchema.parse(baseConfig());
     const profiled = applyRunnerProfile(config, "smoke");
@@ -95,6 +105,7 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(profiled.runner.reviewCommand).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
     expect(profiled.runner.requiredEnv).toEqual([]);
     expect(profiled.github.enabled).toBe(false);
+    expect(profiled.execution.backend).toBe("local-process");
   });
 
   it("configures local Claude profile without requiring API env vars", () => {
@@ -105,6 +116,7 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(profiled.runner.command).toBeUndefined();
     expect(profiled.runner.requiredEnv).toEqual([]);
     expect(profiled.github.enabled).toBe(false);
+    expect(profiled.execution.backend).toBe("local-process");
   });
 
   it("configures local Codex profile without requiring API env vars", () => {
@@ -115,5 +127,6 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(profiled.runner.command).toBeUndefined();
     expect(profiled.runner.requiredEnv).toEqual([]);
     expect(profiled.github.enabled).toBe(false);
+    expect(profiled.execution.backend).toBe("local-process");
   });
 });

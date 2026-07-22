@@ -24,10 +24,13 @@ export interface DoctorReport {
 export async function getDoctorReport(ctx: CliContext): Promise<DoctorReport> {
   const checks: Array<[string, string]> = [
     ["git", "git"],
-    ["docker", "docker"],
     ["runner", ctx.runner.buildInvocation({ mode: "work", promptPath: "/tmp/prompt.md", ...withCommandOverride(ctx.config.runner.command) }).command]
   ];
   const results: DoctorReport["checks"] = [];
+
+  if (ctx.executionBackendKind === "local-docker") {
+    checks.splice(1, 0, ["docker", "docker"]);
+  }
 
   if (ctx.config.github.enabled) {
     checks.push(["gh", "gh"]);

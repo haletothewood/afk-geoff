@@ -19,8 +19,11 @@ export class CodexCliRunner implements AgentRunner {
     }
 
     const modelArgs = input.model ? ["--model", input.model] : [];
-    const invocation = resolveCommand(["codex", ...modelArgs, "{prompt}"], input.promptPath);
-    return { ...invocation, promptTransport: "arg" };
+    return {
+      command: "codex",
+      args: ["exec", "--dangerously-bypass-approvals-and-sandbox", ...modelArgs, "-"],
+      promptTransport: "stdin"
+    };
   }
 
   public buildReviewCommand(input: { briefPath: string; reviewCommandOverride?: string[]; commandOverride?: string[] }): string[] {
@@ -39,8 +42,11 @@ export class CodexCliRunner implements AgentRunner {
     }
 
     const modelArgs = input.model ? ["--model", input.model] : [];
-    const invocation = resolveCommand(["codex", ...modelArgs, "{prompt}"], input.reviewPromptPath);
-    return { ...invocation, promptTransport: "arg" };
+    return {
+      command: "codex",
+      args: ["exec", "--dangerously-bypass-approvals-and-sandbox", ...modelArgs, "-"],
+      promptTransport: "stdin"
+    };
   }
 }
 

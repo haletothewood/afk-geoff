@@ -2,10 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress } from "@afk-geoff/core";
+import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress, WorkspaceRuntime } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import {
   buildWorkerPrompt,
   buildFixWorkerPrompt,
@@ -34,7 +33,7 @@ interface LocalDockerExecutionBackendDeps {
   paths: ReturnType<typeof resolveProjectPaths>;
   store: SqliteStateStore;
   git: LocalGitCodeHost;
-  runtime: DockerWorkspaceRuntime;
+  runtime: WorkspaceRuntime;
   runner: AgentRunner;
   githubToken?: string;
 }
@@ -45,7 +44,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
   private readonly paths: ReturnType<typeof resolveProjectPaths>;
   private readonly store: SqliteStateStore;
   private readonly git: LocalGitCodeHost;
-  private readonly runtime: DockerWorkspaceRuntime;
+  private readonly runtime: WorkspaceRuntime;
   private readonly runner: AgentRunner;
   private readonly githubToken: string | undefined;
 
@@ -175,13 +174,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const workerOverrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.worker);
     const reviewOverrideText = maybeReadOverride(this.repoRoot, this.config.prompts?.review);
 
-    const progressContainerPath = "/afk-run/progress.json";
-    const resultContainerPath = "/afk-run/result.json";
+    const runtimeRunDir = this.runtime.runDirPath?.(runDir) ?? "/afk-run";
+    const progressContainerPath = path.join(runtimeRunDir, "progress.json");
+    const resultContainerPath = path.join(runtimeRunDir, "result.json");
     const hostResultPath = path.join(runDir, "result.json");
     const progressPath = path.join(runDir, "progress.json");
 
     const extraEnv = {
-      ...runnerProcessEnv(this.runner, "/afk-run/runner-home"),
+      ...runnerProcessEnv(this.runner, path.join(runtimeRunDir, "runner-home")),
       ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
     };
 
@@ -247,7 +247,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
       const invocation = this.runner.buildInvocation({
         mode: "work",
-        promptPath: `/afk-run/${promptFilename}`,
+        promptPath: path.join(runtimeRunDir, promptFilename),
         ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {}),
         ...(workModel ? { model: workModel } : {})
       });

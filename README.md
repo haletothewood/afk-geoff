@@ -84,7 +84,7 @@ pnpm afk doctor
 pnpm afk run file brief.md --json
 ```
 
-The smoke profile writes `.afk/smoke-runner.mjs` and configures AFK to call it for both work and review. It makes no repo changes and requires no API keys, so it is the safest way to test AFK as an orchestration substrate.
+The smoke profile writes `.afk/smoke-runner.mjs` and configures AFK to call it for both work and review using the `local-process` backend. It makes no repo changes and requires no API keys, so it is the safest way to test AFK as an orchestration substrate.
 
 For a real local agent CLI:
 
@@ -100,7 +100,7 @@ pnpm afk doctor
 pnpm afk run file brief.md --json
 ```
 
-Local runner profiles set `github.enabled: false`, so `doctor` can pass in a plain local repo without an `origin` remote. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`, but they do not require API key environment variables by default. That lets AFK use whichever local account/session the CLI already knows about.
+Local runner profiles set `execution.backend: local-process` and `github.enabled: false`, so `doctor` can pass in a plain local repo without Docker, an `origin` remote, or a GitHub token. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`, but they do not require API key environment variables by default. That lets AFK use whichever local account/session the CLI already knows about.
 
 Turn GitHub back on in `.afk/config.yaml` when you want source issue comments or PR publishing:
 
@@ -154,7 +154,9 @@ Current JSON support covers those commands and emits a single JSON payload on st
 Execution backend selection is explicit on run commands:
 
 - `afk run file <path> --backend local-docker`
+- `afk run file <path> --backend local-process`
 - `afk follow-up <work-item-id> --backend local-docker`
+- `afk follow-up <work-item-id> --backend local-process`
 
 ## GitHub-Backed Setup
 

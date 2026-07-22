@@ -5,7 +5,7 @@ import { z } from "zod";
 import { CONFIG_FILE, DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH, PROJECT_DIR, RUNS_DIR, STATE_DB, WORKTREES_DIR, defaultProjectConfig } from "./defaults.js";
 
 export const runnerKindSchema = z.enum(["claude", "codex"]);
-export const executionBackendKindSchema = z.enum(["local-docker"]);
+export const executionBackendKindSchema = z.enum(["local-docker", "local-process"]);
 export const runnerProfiles = ["claude", "codex", "smoke"] as const;
 export type RunnerProfile = typeof runnerProfiles[number];
 
@@ -110,7 +110,9 @@ export interface WriteDefaultProjectFilesOptions {
 
 export function writeDefaultProjectFiles(cwd: string, options: boolean | WriteDefaultProjectFilesOptions = false): ResolvedProjectPaths {
   const normalizedOptions = typeof options === "boolean" ? { withOverrides: options } : options;
-  const config = applyRunnerProfile(defaultProjectConfig(), normalizedOptions.runnerProfile ?? "claude");
+  const config = normalizedOptions.runnerProfile
+    ? applyRunnerProfile(defaultProjectConfig(), normalizedOptions.runnerProfile)
+    : defaultProjectConfig();
   const paths = resolveProjectPaths(cwd, config);
   fs.mkdirSync(paths.projectDir, { recursive: true });
   fs.mkdirSync(paths.runsDir, { recursive: true });
@@ -202,6 +204,7 @@ export function applyRunnerProfile(config: ProjectConfig, profile: RunnerProfile
 
   if (profile === "codex") {
     next.github = { enabled: false };
+    next.execution = { backend: "local-process" };
     next.runner = {
       kind: "codex",
       requiredEnv: [],
@@ -212,6 +215,7 @@ export function applyRunnerProfile(config: ProjectConfig, profile: RunnerProfile
 
   if (profile === "smoke") {
     next.github = { enabled: false };
+    next.execution = { backend: "local-process" };
     next.runner = {
       kind: "claude",
       command: ["node", ".afk/smoke-runner.mjs", "{prompt}"],
@@ -223,6 +227,7 @@ export function applyRunnerProfile(config: ProjectConfig, profile: RunnerProfile
   }
 
   next.github = { enabled: false };
+  next.execution = { backend: "local-process" };
   next.runner = {
     kind: "claude",
     requiredEnv: [],

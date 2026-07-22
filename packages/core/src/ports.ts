@@ -113,6 +113,7 @@ export interface CodeHost {
 }
 
 export interface WorkspaceRuntime {
+  runDirPath?(hostRunDir: string): string;
   ensureImage(input: { cwd: string; image: string; dockerfilePath: string; buildContext: string }): Promise<void>;
   runWork(input: {
     image: string;

@@ -33,7 +33,7 @@ import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "
 import { formatErrorMessage } from "./cli-utils.js";
 import type { CliDependencies } from "./types.js";
 
-const executionBackendChoices = ["local-docker"] as const;
+const executionBackendChoices = ["local-docker", "local-process"] as const;
 const submitBackendChoices = ["github-actions"] as const;
 
 export type { CliDependencies };
@@ -53,7 +53,6 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       const git = new LocalGitCodeHost();
       await git.assertRepository(commandCwd);
       const configPath = configFilePath(commandCwd);
-      const runnerProfile = options.runnerProfile ?? "claude";
 
       if (fs.existsSync(configPath)) {
         if (!options.withGithubActions && !options.runnerProfile) {
@@ -61,8 +60,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         }
 
         if (options.runnerProfile) {
-          writeRunnerProfile(commandCwd, runnerProfile);
-          console.log(`Configured ${runnerProfile} runner profile`);
+          writeRunnerProfile(commandCwd, options.runnerProfile);
+          console.log(`Configured ${options.runnerProfile} runner profile`);
         }
 
         if (options.withGithubActions) {
@@ -76,11 +75,11 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         withOverrides: options.withOverrides ?? false,
         withGitHubActions: options.withGithubActions ?? false,
         overwriteGitHubActions: options.forceGithubActions ?? false,
-        runnerProfile
+        ...(options.runnerProfile ? { runnerProfile: options.runnerProfile } : {})
       });
       console.log(`Initialized .afk in ${commandCwd}`);
       if (options.runnerProfile) {
-        console.log(`Configured ${runnerProfile} runner profile`);
+        console.log(`Configured ${options.runnerProfile} runner profile`);
       }
     });
 
@@ -302,9 +301,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--pr", "Require the run to open a pull request")
     .option("--detach", "Start the run in the background and return immediately with the run id")
     .option("--json", "Print machine-readable JSON")
-    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
-    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean; backend: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(commandCwd, { ...dependencies, backendOverride: options.backend });
+    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]))
+    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean; backend?: typeof executionBackendChoices[number] }) => {
+      const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
       const runAction = async () => {
         await autoSync(ctx);
         if (options.pr) assertPullRequestReady(ctx);
@@ -356,9 +355,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("follow-up")
     .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
     .option("--json", "Print machine-readable JSON")
-    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
-    .action(async (workItemId: string, options: { json?: boolean; backend: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(commandCwd, { ...dependencies, backendOverride: options.backend });
+    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]))
+    .action(async (workItemId: string, options: { json?: boolean; backend?: typeof executionBackendChoices[number] }) => {
+      const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
       const followUpAction = async () => {
         await autoSync(ctx);
         return await runPullRequestFollowUp(ctx, workItemId);

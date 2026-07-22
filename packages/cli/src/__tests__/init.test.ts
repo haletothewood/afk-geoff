@@ -74,6 +74,7 @@ describe("afk CLI — init command", () => {
     expect(config.runner.command).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
     expect(config.runner.reviewCommand).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
     expect(config.runner.requiredEnv).toEqual([]);
+    expect(config.execution.backend).toBe("local-process");
     expect(fs.readFileSync(smokeRunnerPath, "utf8")).toContain("Smoke runner completed without making changes");
   });
 
@@ -86,6 +87,7 @@ describe("afk CLI — init command", () => {
     expect(config.runner.kind).toBe("codex");
     expect(config.runner.command).toBeUndefined();
     expect(config.runner.requiredEnv).toEqual([]);
+    expect(config.execution.backend).toBe("local-process");
   });
 
   it("Given a GitHub Actions workflow already exists, when init adds GitHub Actions, then it refuses to overwrite it", async () => {
