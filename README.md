@@ -96,12 +96,13 @@ The CLI is the first stable control surface for other tools. Long term, commands
 
 Priority command contracts:
 
+- `afk doctor --json`
 - `afk run file <path> --pr --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`
 
-Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. `run` and `follow-up` payloads include `ok: true` on success and `ok: false` with `error.message` before exiting nonzero on failure.
+Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture preflight checks, ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. `doctor`, `run`, and `follow-up` payloads include `ok: true` on success and `ok: false` with failure details before exiting nonzero on failure.
 
 Execution backend selection is explicit on run commands:
 

@@ -2,12 +2,32 @@ import { commandExistsError, withCommandOverride, withRequiredEnv } from "../cli
 import type { CliContext } from "../types.js";
 
 export async function runDoctor(ctx: CliContext): Promise<void> {
-  const failures: string[] = [];
+  const report = await getDoctorReport(ctx);
+
+  for (const check of report.checks) {
+    console.log(`${check.ok ? "OK" : "FAIL"} ${check.label}: ${check.ok ? check.detail : check.error}`);
+  }
+
+  if (!report.ok) {
+    throw new Error(`Doctor checks failed (${report.failures.length} issue${report.failures.length === 1 ? "" : "s"})`);
+  }
+
+  console.log("Doctor checks passed");
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  checks: Array<{ label: string; ok: true; detail: string } | { label: string; ok: false; error: string }>;
+  failures: string[];
+}
+
+export async function getDoctorReport(ctx: CliContext): Promise<DoctorReport> {
   const checks: Array<[string, string]> = [
     ["git", "git"],
     ["docker", "docker"],
     ["runner", ctx.runner.buildInvocation({ mode: "work", promptPath: "/tmp/prompt.md", ...withCommandOverride(ctx.config.runner.command) }).command]
   ];
+  const results: DoctorReport["checks"] = [];
 
   if (ctx.config.github.enabled) {
     checks.push(["gh", "gh"]);
@@ -17,36 +37,34 @@ export async function runDoctor(ctx: CliContext): Promise<void> {
     const error = await commandExistsError(executable, label);
 
     if (error) {
-      failures.push(error);
-      console.log(`FAIL ${label}: ${error}`);
+      results.push({ label, ok: false, error });
       continue;
     }
 
-    console.log(`OK ${label}: ${executable}`);
+    results.push({ label, ok: true, detail: executable });
   }
 
   for (const envVar of ctx.runner.requiredEnvVars(withRequiredEnv(ctx.config.runner.requiredEnv))) {
     if (!process.env[envVar]) {
       const error = `Missing required env var ${envVar}`;
-      failures.push(error);
-      console.log(`FAIL env:${envVar}: ${error}`);
+      results.push({ label: `env:${envVar}`, ok: false, error });
       continue;
     }
 
-    console.log(`OK env:${envVar}`);
+    results.push({ label: `env:${envVar}`, ok: true, detail: "present" });
   }
 
   if (ctx.config.github.enabled && !ctx.remote) {
     const error = "GitHub is enabled but origin remote owner/repo could not be resolved.";
-    failures.push(error);
-    console.log(`FAIL github: ${error}`);
+    results.push({ label: "github", ok: false, error });
   } else if (ctx.config.github.enabled && ctx.remote) {
-    console.log(`OK github remote: ${ctx.remote.owner}/${ctx.remote.repo}`);
+    results.push({ label: "github remote", ok: true, detail: `${ctx.remote.owner}/${ctx.remote.repo}` });
   }
 
-  if (failures.length > 0) {
-    throw new Error(`Doctor checks failed (${failures.length} issue${failures.length === 1 ? "" : "s"})`);
-  }
-
-  console.log("Doctor checks passed");
+  const failures = results.flatMap((result) => result.ok ? [] : [result.error]);
+  return {
+    ok: failures.length === 0,
+    checks: results,
+    failures
+  };
 }

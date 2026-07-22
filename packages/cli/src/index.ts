@@ -5,7 +5,7 @@ import { Command, Option } from "commander";
 import { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import { configFilePath, writeDefaultProjectFiles } from "@afk-geoff/shared";
 import { openContext } from "./context.js";
-import { runDoctor } from "./commands/doctor.js";
+import { getDoctorReport, runDoctor } from "./commands/doctor.js";
 import { captureRequirement } from "./commands/capture.js";
 import { getStatusSnapshot, printStatus } from "./commands/status.js";
 import { showEntity } from "./commands/show.js";
@@ -54,9 +54,19 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       console.log(`Initialized .afk in ${process.cwd()}`);
     });
 
-  program.command("doctor").action(async () => {
+  program.command("doctor")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (options: { json?: boolean }) => {
     const ctx = await openContext(process.cwd(), dependencies);
-    await runDoctor(ctx);
+    if (options.json) {
+      const report = await runForJson(async () => await getDoctorReport(ctx));
+      printJson({ command: "doctor", backend: ctx.executionBackendKind, ...report });
+      if (!report.ok) {
+        throw new Error(`Doctor checks failed (${report.failures.length} issue${report.failures.length === 1 ? "" : "s"})`);
+      }
+    } else {
+      await runDoctor(ctx);
+    }
   });
 
   program

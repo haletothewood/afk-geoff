@@ -16,7 +16,7 @@ Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 | Command | Primary Domain Effect | Important Observable Outcomes |
 |---|---|---|
 | `afk init` | creates project scaffold | `.afk/config.yaml`, `.afk/.gitignore`, and `.afk/iteration-loop.md` exist |
-| `afk doctor` | validates runtime dependencies | required executables and env vars are present |
+| `afk doctor` | validates runtime dependencies | required executables and env vars are present; `--json` reports structured preflight status |
 | `afk capture` | creates a `Requirement` | requirement exists in SQLite; requirement may be mirrored |
 | `afk status` | reports queue state after lightweight sync | queue output reflects current work item states |
 | `afk dispatch` | starts autonomous execution for runnable AFK work | work runs and run artifacts are created |
