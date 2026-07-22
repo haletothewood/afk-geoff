@@ -27,6 +27,7 @@ import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
 import { submitGitHubActionsIssueRun } from "./commands/submit.js";
 import { listRemoteRuns, printRemoteRuns } from "./commands/remote-runs.js";
+import { listRemoteArtifacts, printRemoteArtifacts } from "./commands/remote-artifacts.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
@@ -175,6 +176,34 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         }
       } else {
         await printRemoteRuns(ctx, { workflowId: options.workflow, limit });
+      }
+    });
+
+  program
+    .command("remote-artifacts")
+    .argument("<runId>", "GitHub Actions run id")
+    .option("--limit <count>", "Maximum number of artifacts to list", "10")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (runId: string, options: { limit: string; json?: boolean }) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      const limit = Number(options.limit);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error("--limit must be a positive integer");
+      }
+      if (!/^\d+$/.test(runId)) {
+        throw new Error("runId must be a GitHub Actions numeric run id");
+      }
+
+      if (options.json) {
+        try {
+          const snapshot = await runForJson(async () => await listRemoteArtifacts(ctx, { runId, limit }));
+          printJson({ command: "remote-artifacts", ok: true, ...snapshot });
+        } catch (error) {
+          printJson({ command: "remote-artifacts", ok: false, runId, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        await printRemoteArtifacts(ctx, { runId, limit });
       }
     });
 

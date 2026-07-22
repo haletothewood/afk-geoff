@@ -1,4 +1,4 @@
-import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
+import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
@@ -43,6 +43,26 @@ export interface OctokitLike {
         }>;
       };
     }>;
+    listWorkflowRunArtifacts(input: {
+      owner: string;
+      repo: string;
+      run_id: number;
+      per_page?: number;
+    }): Promise<{
+      data: {
+        artifacts: Array<{
+          id: number;
+          name: string;
+          size_in_bytes?: number | null;
+          expired?: boolean | null;
+          url?: string | null;
+          archive_download_url?: string | null;
+          created_at?: string | null;
+          updated_at?: string | null;
+          expires_at?: string | null;
+        }>;
+      };
+    }>;
   };
 }
 
@@ -74,7 +94,7 @@ export class GitHubIssueWorkSource implements WorkSource<string> {
   }
 }
 
-export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowDispatcher, WorkflowRunSource {
+export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
   private readonly client: OctokitLike;
 
   public constructor(token: string, client?: OctokitLike) {
@@ -248,6 +268,32 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
       ...(run.html_url ? { url: run.html_url } : {}),
       ...(run.created_at ? { createdAt: run.created_at } : {}),
       ...(run.updated_at ? { updatedAt: run.updated_at } : {})
+    }));
+  }
+
+  public async listWorkflowArtifacts(input: {
+    owner: string;
+    repo: string;
+    runId: string;
+    limit: number;
+  }): Promise<Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }>> {
+    const response = await this.client.actions.listWorkflowRunArtifacts({
+      owner: input.owner,
+      repo: input.repo,
+      run_id: Number(input.runId),
+      per_page: input.limit
+    });
+
+    return response.data.artifacts.map((artifact) => ({
+      id: String(artifact.id),
+      name: artifact.name,
+      ...(typeof artifact.size_in_bytes === "number" ? { sizeInBytes: artifact.size_in_bytes } : {}),
+      ...(typeof artifact.expired === "boolean" ? { expired: artifact.expired } : {}),
+      ...(artifact.url ? { url: artifact.url } : {}),
+      ...(artifact.archive_download_url ? { archiveDownloadUrl: artifact.archive_download_url } : {}),
+      ...(artifact.created_at ? { createdAt: artifact.created_at } : {}),
+      ...(artifact.updated_at ? { updatedAt: artifact.updated_at } : {}),
+      ...(artifact.expires_at ? { expiresAt: artifact.expires_at } : {})
     }));
   }
 

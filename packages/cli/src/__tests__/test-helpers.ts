@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { vi } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, PullRequestReviewSource, Requirement, WorkItem, WorkSource, WorkflowDispatcher } from "@afk-geoff/core";
+import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, PullRequestReviewSource, Requirement, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { runCli } from "../index.js";
 
@@ -449,7 +449,7 @@ export async function waitForProcessExit(pid: number, timeoutMs: number): Promis
   }
 }
 
-export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowDispatcher {
+export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
   public readonly requirementMirrorIds: string[] = [];
   public readonly workItemMirrorIds: string[] = [];
   public readonly pullRequestRequests: ChangeRequest[] = [];
@@ -457,6 +457,7 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
   public readonly issueComments: Array<{ issueNumber: number; body: string }> = [];
   public readonly workflowDispatches: Array<{ owner: string; repo: string; workflowId: string; ref: string; inputs: Record<string, string> }> = [];
   public workflowRuns: Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }> = [];
+  public workflowArtifacts: Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }> = [];
   public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
   public openPullRequestError: Error | undefined;
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
@@ -511,6 +512,10 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
 
   public async listWorkflowRuns(input: { owner: string; repo: string; workflowId: string; limit: number }): Promise<Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
     return this.workflowRuns.slice(0, input.limit);
+  }
+
+  public async listWorkflowArtifacts(input: { owner: string; repo: string; runId: string; limit: number }): Promise<Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }>> {
+    return this.workflowArtifacts.slice(0, input.limit);
   }
 }
 

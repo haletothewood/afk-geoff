@@ -340,6 +340,54 @@ describe("afk CLI — JSON output", () => {
       }
     ]);
   });
+
+  it("Given remote-artifacts --json, when a workflow run has artifacts, then it lists artifact metadata", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.workflowArtifacts = [
+      {
+        id: "456",
+        name: "afk-run-json",
+        sizeInBytes: 2048,
+        expired: false,
+        url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
+        archiveDownloadUrl: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
+        createdAt: "2026-01-01T00:02:00Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+        expiresAt: "2026-04-01T00:02:00Z"
+      }
+    ];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["remote-artifacts", "123", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      runId: string;
+      artifacts: Array<{ id: string; name: string; archiveDownloadUrl: string }>;
+    };
+
+    expect(payload.command).toBe("remote-artifacts");
+    expect(payload.ok).toBe(true);
+    expect(payload.runId).toBe("123");
+    expect(payload.artifacts).toEqual([
+      {
+        id: "456",
+        name: "afk-run-json",
+        sizeInBytes: 2048,
+        expired: false,
+        url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
+        archiveDownloadUrl: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
+        createdAt: "2026-01-01T00:02:00Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+        expiresAt: "2026-04-01T00:02:00Z"
+      }
+    ]);
+  });
 });
 
 async function captureConsoleForRejected(action: () => Promise<void>): Promise<string> {

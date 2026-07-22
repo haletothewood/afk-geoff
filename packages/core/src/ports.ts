@@ -175,6 +175,25 @@ export interface WorkflowRunSource {
   }>>;
 }
 
+export interface WorkflowArtifactSource {
+  listWorkflowArtifacts(input: {
+    owner: string;
+    repo: string;
+    runId: string;
+    limit: number;
+  }): Promise<Array<{
+    id: string;
+    name: string;
+    sizeInBytes?: number;
+    expired?: boolean;
+    url?: string;
+    archiveDownloadUrl?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    expiresAt?: string;
+  }>>;
+}
+
 export interface SourceUpdatePayload {
   status: "done" | "blocked" | "failed";
   summary: string;

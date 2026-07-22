@@ -134,6 +134,25 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
             ]
           }
         };
+      },
+      async listWorkflowRunArtifacts() {
+        return {
+          data: {
+            artifacts: [
+              {
+                id: 456,
+                name: "afk-run-json",
+                size_in_bytes: 2048,
+                expired: false,
+                url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
+                archive_download_url: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
+                created_at: "2026-01-01T00:02:00Z",
+                updated_at: "2026-01-01T00:03:00Z",
+                expires_at: "2026-04-01T00:02:00Z"
+              }
+            ]
+          }
+        };
       }
     }
   };
@@ -401,6 +420,31 @@ describe("GitHubMirror adapter scenarios", () => {
         url: "https://github.com/acme/demo/actions/runs/123",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:01:00Z"
+      }
+    ]);
+  });
+
+  it("Given workflow artifacts exist, when listed, then run artifact metadata is returned", async () => {
+    const mirror = new GitHubMirror("token", createMockClient());
+
+    const artifacts = await mirror.listWorkflowArtifacts({
+      owner: "acme",
+      repo: "demo",
+      runId: "123",
+      limit: 5
+    });
+
+    expect(artifacts).toEqual([
+      {
+        id: "456",
+        name: "afk-run-json",
+        sizeInBytes: 2048,
+        expired: false,
+        url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
+        archiveDownloadUrl: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
+        createdAt: "2026-01-01T00:02:00Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+        expiresAt: "2026-04-01T00:02:00Z"
       }
     ]);
   });
