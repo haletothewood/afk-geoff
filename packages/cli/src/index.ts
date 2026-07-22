@@ -7,9 +7,9 @@ import { configFilePath, writeDefaultProjectFiles } from "@afk-geoff/shared";
 import { openContext } from "./context.js";
 import { runDoctor } from "./commands/doctor.js";
 import { captureRequirement } from "./commands/capture.js";
-import { printStatus } from "./commands/status.js";
+import { getStatusSnapshot, printStatus } from "./commands/status.js";
 import { showEntity } from "./commands/show.js";
-import { printRuns } from "./commands/runs.js";
+import { listRunRecords, printRuns } from "./commands/runs.js";
 import { printRunLogs } from "./commands/logs.js";
 import { watchRun } from "./commands/watch.js";
 import {
@@ -65,10 +65,26 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       console.log(`Created requirement ${requirement.id}`);
     });
 
-  program.command("status").action(async () => {
+  program.command("status")
+    .argument("[workItemId]", "Optional work item id to focus JSON status output")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (workItemId: string | undefined, options: { json?: boolean }) => {
     const ctx = await openContext(process.cwd(), dependencies);
-    await autoSync(ctx);
-    await printStatus(ctx);
+    if (options.json) {
+      const snapshot = await runForJson(async () => {
+        await autoSync(ctx);
+        return await getStatusSnapshot(ctx);
+      });
+      printJson({
+        command: "status",
+        ...(workItemId ? { workItemId } : {}),
+        ...snapshot,
+        ...(workItemId ? { focusedWorkItem: snapshot.workItems.find((item) => item.id === workItemId) } : {})
+      });
+    } else {
+      await autoSync(ctx);
+      await printStatus(ctx);
+    }
   });
 
   program
@@ -80,10 +96,20 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       await showEntity(ctx, entityId);
     });
 
-  program.command("runs").action(async () => {
+  program.command("runs")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (options: { json?: boolean }) => {
     const ctx = await openContext(process.cwd(), dependencies);
-    await autoSync(ctx);
-    await printRuns(ctx);
+    if (options.json) {
+      const runs = await runForJson(async () => {
+        await autoSync(ctx);
+        return await listRunRecords(ctx);
+      });
+      printJson({ command: "runs", runs });
+    } else {
+      await autoSync(ctx);
+      await printRuns(ctx);
+    }
   });
 
   program
@@ -116,27 +142,37 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("[value]", "File path when target is 'file', or GitHub issue URL when target is 'issue'")
     .option("--pr", "Require the run to open a pull request")
     .option("--detach", "Start the run in the background and return immediately with the run id")
-    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean }) => {
+    .option("--json", "Print machine-readable JSON")
+    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean }) => {
       const ctx = await openContext(process.cwd(), dependencies);
-      await autoSync(ctx);
-      if (options.pr) assertPullRequestReady(ctx);
-      assertRunTargetArguments(target, value);
-      await runPreflight(ctx, { requirePullRequest: options.pr ?? false }, dependencies);
+      const runAction = async () => {
+        await autoSync(ctx);
+        if (options.pr) assertPullRequestReady(ctx);
+        assertRunTargetArguments(target, value);
+        await runPreflight(ctx, { requirePullRequest: options.pr ?? false }, dependencies);
 
-      const prOpts = { requirePullRequest: options.pr ?? false };
-      let outcome: { prUrl?: string };
+        const prOpts = { requirePullRequest: options.pr ?? false };
+        let outcome: { prUrl?: string };
 
-      if (options.detach) {
-        if (target === "file") outcome = await runExecutionBriefFileDetached(ctx, value!, dependencies, prOpts);
-        else if (target === "issue") outcome = await runGitHubIssueDetached(ctx, value!, dependencies, prOpts);
-        else outcome = await runWorkItemDetached(ctx, target, dependencies, prOpts);
-      } else {
-        if (target === "file") outcome = await runExecutionBriefFile(ctx, value!, prOpts);
-        else if (target === "issue") outcome = await runGitHubIssue(ctx, value!, dependencies, prOpts);
-        else outcome = await runWorkItem(ctx, target, prOpts);
+        if (options.detach) {
+          if (target === "file") outcome = await runExecutionBriefFileDetached(ctx, value!, dependencies, prOpts);
+          else if (target === "issue") outcome = await runGitHubIssueDetached(ctx, value!, dependencies, prOpts);
+          else outcome = await runWorkItemDetached(ctx, target, dependencies, prOpts);
+        } else {
+          if (target === "file") outcome = await runExecutionBriefFile(ctx, value!, prOpts);
+          else if (target === "issue") outcome = await runGitHubIssue(ctx, value!, dependencies, prOpts);
+          else outcome = await runWorkItem(ctx, target, prOpts);
+        }
+
+        return outcome;
+      };
+
+      const outcome = options.json ? await runForJson(runAction) : await runAction();
+      if (options.json) {
+        printJson({ command: "run", target, ...(value ? { value } : {}), requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
+      } else if (outcome.prUrl) {
+        console.log(`Opened PR: ${outcome.prUrl}`);
       }
-
-      if (outcome.prUrl) console.log(`Opened PR: ${outcome.prUrl}`);
     });
 
   program
@@ -151,10 +187,17 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program
     .command("follow-up")
     .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
-    .action(async (workItemId: string) => {
+    .option("--json", "Print machine-readable JSON")
+    .action(async (workItemId: string, options: { json?: boolean }) => {
       const ctx = await openContext(process.cwd(), dependencies);
-      await autoSync(ctx);
-      await runPullRequestFollowUp(ctx, workItemId);
+      const followUpAction = async () => {
+        await autoSync(ctx);
+        return await runPullRequestFollowUp(ctx, workItemId);
+      };
+      const outcome = options.json ? await runForJson(followUpAction) : await followUpAction();
+      if (options.json) {
+        printJson({ command: "follow-up", workItemId, ...outcome });
+      }
     });
 
   program
@@ -186,6 +229,20 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   });
 
   await program.parseAsync(argv);
+}
+
+async function runForJson<T>(action: () => Promise<T>): Promise<T> {
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    return await action();
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+function printJson(payload: unknown): void {
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 const isDirectCliExecution =

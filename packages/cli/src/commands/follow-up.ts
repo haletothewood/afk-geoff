@@ -61,7 +61,18 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   });
 
   if (result.status === "blocked" || result.status === "failed") {
-    return {};
+    const run = await latestRunForWorkItem(ctx, workItem.id);
+    return {
+      workItemId: workItem.id,
+      ...(run
+        ? {
+            runId: run.id,
+            status: result.status,
+            ...(run.branchName ? { branchName: run.branchName } : {}),
+            ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
+          }
+        : { status: result.status })
+    };
   }
 
   if (result.hasDiff && result.branchName && result.worktreePath) {
@@ -89,6 +100,17 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   console.log(issueComment);
 
   return {
+    workItemId: workItem.id,
+    ...(followUpRun
+      ? {
+          runId: followUpRun.id,
+          status: "completed",
+          ...(followUpRun.branchName ? { branchName: followUpRun.branchName } : {}),
+          ...(followUpRun.worktreePath ? { worktreePath: followUpRun.worktreePath } : {})
+        }
+      : { status: "completed" }),
+    branchName: result.branchName ?? branchName,
+    addressedReviewComments: reviewComments.length,
     ...(prUrl ? { prUrl } : {})
   };
 }

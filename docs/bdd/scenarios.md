@@ -23,6 +23,7 @@ Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 | `afk run` | executes one specific work item | work item moves through `in_progress` to terminal state |
 | `afk review` | prepares a manual HITL review run | review run and `review.md` brief are created |
 | `afk follow-up` | addresses review comments on an AFK-created pull request | existing PR branch receives follow-up commits |
+| `afk --json` command variants | exposes orchestration state to external harnesses | stdout is one structured JSON payload with stable ids and URLs |
 | `afk sync` | reconciles mirrored remote state into SQLite | mirrored state updates local statuses |
 
 ## Core Scenarios
@@ -91,6 +92,20 @@ Covered by:
 
 - `packages/cli/src/__tests__/follow-up.test.ts`
 - `packages/adapter-github/src/index.test.ts`
+
+### Scenario: JSON command output is usable by an external orchestrator
+
+```gherkin
+Given AFK is driven by another agent framework or automation harness
+When a supported command is run with --json
+Then stdout should contain one parseable JSON payload
+And the payload should include stable work item ids, run ids, statuses, branches, worktree paths, and pull request URLs when available
+And normal human-readable progress output should not be mixed into stdout
+```
+
+Covered by:
+
+- `packages/cli/src/__tests__/json-output.test.ts`
 
 ## Adapter-Boundary Scenarios
 

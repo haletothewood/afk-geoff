@@ -45,7 +45,14 @@ export interface CliDependencies {
 }
 
 export interface RunOutcome {
+  workItemId?: string;
+  requirementId?: string;
+  runId?: string;
+  status?: "completed" | "failed" | "blocked" | "running" | "prepared";
+  branchName?: string;
+  worktreePath?: string;
   prUrl?: string;
+  addressedReviewComments?: number;
 }
 
 export interface DetachedRunOptions {

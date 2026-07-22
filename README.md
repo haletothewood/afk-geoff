@@ -101,6 +101,8 @@ Priority command contracts:
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`
 
+Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture ids, statuses, branch names, worktree paths, and PR URLs directly.
+
 ## GitHub-Backed Setup
 
 Once the repo has a GitHub remote:

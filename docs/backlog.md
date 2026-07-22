@@ -84,10 +84,10 @@ Why:
 - structured command output makes demos, CI integration, and bot workflows deterministic
 
 Scope:
-- add `--json` output for the core orchestration commands
-- include stable work item ids, run ids, PR URLs, branch names, terminal statuses, and failure reasons
+- harden the first `--json` output for the core orchestration commands
+- include stable work item ids, run ids, PR URLs, branch names, terminal statuses, worktree paths, and failure reasons
 - keep human-readable output as the default
-- cover `run file <path> --pr`, `status`, `runs`, and `follow-up`
+- cover errors and detached/background runs with the same structured contract
 
 ## P1
 

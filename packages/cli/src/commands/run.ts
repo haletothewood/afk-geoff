@@ -77,7 +77,8 @@ export async function runTrackedWorkItem(
   if (result.status === "blocked" || result.status === "failed") {
     const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: result.status, summary: result.summary });
     await tryPostSourceUpdate(sourceUpdater, { status: result.status, summary: result.summary, issueComment });
-    return {};
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    return buildRunOutcome(workItem.id, latestRun, { status: result.status });
   }
 
   try {
@@ -94,7 +95,8 @@ export async function runTrackedWorkItem(
       const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary });
       await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment });
       await refreshRequirementStatuses(ctx);
-      return {};
+      const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+      return buildRunOutcome(workItem.id, latestRun, { status: "completed" });
     }
 
     if (ctx.resultPublisher && result.branchName && result.worktreePath) {
@@ -120,9 +122,7 @@ export async function runTrackedWorkItem(
       const prUrl = publication.url;
       const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary, ...(prUrl ? { prUrl } : {}) });
       await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment, ...(prUrl ? { prUrl } : {}) });
-      return {
-        ...(prUrl ? { prUrl } : {})
-      };
+      return buildRunOutcome(workItem.id, latestRun, { status: "completed", ...(prUrl ? { prUrl } : {}) });
     }
 
     if (options.requirePullRequest) {
@@ -142,11 +142,30 @@ export async function runTrackedWorkItem(
     await refreshRequirementStatuses(ctx);
     const issueCommentNoPr = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary });
     await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment: issueCommentNoPr });
-    return {};
+    return buildRunOutcome(workItem.id, latestRun, { status: "completed" });
   } catch (error) {
     await markWorkItemRunFailed(ctx, workItem.id, `Post-run publication failed: ${formatErrorMessage(error)}`);
     throw error;
   }
+}
+
+function buildRunOutcome(
+  workItemId: string,
+  run: Awaited<ReturnType<typeof latestRunForWorkItem>>,
+  patch: RunOutcome = {}
+): RunOutcome {
+  return {
+    workItemId,
+    ...(run
+      ? {
+          runId: run.id,
+          status: run.status,
+          ...(run.branchName ? { branchName: run.branchName } : {}),
+          ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
+        }
+      : {}),
+    ...patch
+  };
 }
 
 export async function runExecutionBriefFile(
@@ -208,7 +227,7 @@ export async function importExecutionBrief(
     sourceSummary: string;
     printedSource: string;
   }
-): Promise<{ id: string }> {
+): Promise<{ id: string; requirementId: string }> {
   const now = new Date().toISOString();
   const requirement: Requirement = {
     id: createId("req"),
@@ -248,7 +267,7 @@ export async function importExecutionBrief(
   console.log(`Requirement ${requirement.id}`);
   console.log(`Work item ${workItem.id}`);
 
-  return workItem;
+  return { id: workItem.id, requirementId: requirement.id };
 }
 
 async function runImportedExecutionBrief(
@@ -271,7 +290,8 @@ async function runImportedExecutionBrief(
     requirePullRequest?: boolean;
   }
 ): Promise<RunOutcome> {
-  const workItem = await importExecutionBrief(ctx, brief, options);
+  const workItemRef = await importExecutionBrief(ctx, brief, options);
+  const workItem = await mustGetWorkItem(ctx, workItemRef.id);
 
   const hasExplicitMode = brief.executionMode || brief.overlays || brief.risk;
   const executionModeConfig = hasExplicitMode
@@ -303,7 +323,12 @@ async function runImportedExecutionBrief(
     runOptions.executionModeConfig = executionModeConfig;
   }
 
-  return await runTrackedWorkItem(ctx, workItem.id, runOptions);
+  const outcome = await runTrackedWorkItem(ctx, workItem.id, runOptions);
+  return {
+    requirementId: workItemRef.requirementId,
+    workItemId: workItem.id,
+    ...outcome
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +425,13 @@ export async function runWorkItemDetached(
   console.log(`  pnpm afk status`);
   console.log(`  pnpm afk runs`);
 
-  return {};
+  return {
+    workItemId: workItem.id,
+    runId,
+    status: "running",
+    branchName,
+    worktreePath
+  };
 }
 
 export async function runExecutionBriefFileDetached(
@@ -424,12 +455,17 @@ export async function runExecutionBriefFileDetached(
           ...(brief.risk ? { risk: brief.risk } : {})
         }
       : undefined;
-  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+  const outcome = await runWorkItemDetached(ctx, workItem.id, dependencies, {
     ...options,
     verification: brief.verification,
     ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {}),
     ...(briefModeConfig ? { executionModeConfig: briefModeConfig } : {})
   });
+  return {
+    requirementId: workItem.requirementId,
+    workItemId: workItem.id,
+    ...outcome
+  };
 }
 
 export async function runGitHubIssueDetached(
@@ -461,12 +497,17 @@ export async function runGitHubIssueDetached(
           ...(brief.risk ? { risk: brief.risk } : {})
         }
       : undefined;
-  return runWorkItemDetached(ctx, workItem.id, dependencies, {
+  const outcome = await runWorkItemDetached(ctx, workItem.id, dependencies, {
     ...options,
     verification: brief.verification,
     ...(brief.issueUrl ? { issueUrl: brief.issueUrl } : {}),
     ...(issueModeConfig ? { executionModeConfig: issueModeConfig } : {})
   });
+  return {
+    requirementId: workItem.requirementId,
+    workItemId: workItem.id,
+    ...outcome
+  };
 }
 
 // ---------------------------------------------------------------------------
