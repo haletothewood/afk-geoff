@@ -50,6 +50,7 @@ describe("afk CLI — init command", () => {
     expect(workflow).toContain("working-directory: afk-geoff");
     expect(workflow).toContain("../afk-geoff/packages/cli/bin/afk.js doctor --json");
     expect(workflow).toContain("actions/upload-artifact@v4");
+    expect(workflow).toContain("set -o pipefail");
   });
 
   it("Given the AFK bin is run from another repo without local tsx, when init adds GitHub Actions, then it still starts", async () => {

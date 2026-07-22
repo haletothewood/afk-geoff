@@ -80,7 +80,9 @@ jobs:
 
       - name: Preflight
         working-directory: target
-        run: ../afk-geoff/packages/cli/bin/afk.js doctor --json | tee afk-doctor.json
+        run: |
+          set -o pipefail
+          ../afk-geoff/packages/cli/bin/afk.js doctor --json | tee afk-doctor.json
 
       - name: Run AFK issue
         working-directory: target
