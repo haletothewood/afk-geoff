@@ -32,10 +32,11 @@ describe("afk CLI — JSON output", () => {
     writeBrief(fixture.repoDir);
 
     const output = await captureConsole(async () => {
-      await fixture.cli(["run", "file", "brief.md", "--pr", "--json"]);
+      await fixture.cli(["run", "file", "brief.md", "--pr", "--backend", "local-docker", "--json"]);
     });
     const payload = JSON.parse(output) as {
       command: string;
+      backend: string;
       workItemId: string;
       requirementId: string;
       runId: string;
@@ -46,6 +47,7 @@ describe("afk CLI — JSON output", () => {
     };
 
     expect(payload.command).toBe("run");
+    expect(payload.backend).toBe("local-docker");
     expect(payload.workItemId).toMatch(/^wi_/);
     expect(payload.requirementId).toMatch(/^req_/);
     expect(payload.runId).toMatch(/^run_/);
@@ -85,6 +87,7 @@ describe("afk CLI — JSON output", () => {
     });
     const payload = JSON.parse(output) as {
       command: string;
+      backend: string;
       workItemId: string;
       requirements: unknown[];
       workItems: Array<{ id: string; status: string }>;
@@ -134,6 +137,7 @@ describe("afk CLI — JSON output", () => {
     };
 
     expect(payload.command).toBe("follow-up");
+    expect(payload.backend).toBe("local-docker");
     expect(payload.workItemId).toBe(initialRun!.workItemId);
     expect(payload.status).toBe("completed");
     expect(payload.branchName).toBe(initialRun!.branchName);

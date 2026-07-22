@@ -25,6 +25,9 @@ export function defaultProjectConfig(): ProjectConfig {
       kind: "claude",
       envAllowlist: ["GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
     },
+    execution: {
+      backend: "local-docker"
+    },
     docker: {
       image: "afk-worker:latest"
     },

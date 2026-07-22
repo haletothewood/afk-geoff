@@ -5,6 +5,7 @@ import { z } from "zod";
 import { CONFIG_FILE, PROJECT_DIR, RUNS_DIR, STATE_DB, WORKTREES_DIR, defaultProjectConfig } from "./defaults.js";
 
 export const runnerKindSchema = z.enum(["claude", "codex"]);
+export const executionBackendKindSchema = z.enum(["local-docker"]);
 
 export const projectConfigSchema = z.object({
   version: z.literal(1),
@@ -29,6 +30,11 @@ export const projectConfigSchema = z.object({
     requiredEnv: z.array(z.string().min(1)).optional(),
     envAllowlist: z.array(z.string().min(1)).default([])
   }),
+  execution: z
+    .object({
+      backend: executionBackendKindSchema.default("local-docker")
+    })
+    .default({ backend: "local-docker" }),
   docker: z.object({
     image: z.string().min(1),
     dockerfilePath: z.string().min(1).optional()

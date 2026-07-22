@@ -18,6 +18,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
   const git = new LocalGitCodeHost();
   const repoRoot = await git.assertRepository(cwd);
   const config = loadProjectConfig(repoRoot);
+  const executionBackendKind = dependencies.backendOverride ?? config.execution.backend;
   const paths = ensureProjectLayout(repoRoot, config);
   const store = new SqliteStateStore(paths.statePath);
   const runtime = new DockerWorkspaceRuntime();
@@ -29,7 +30,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
       ? dependencies.githubFactory(githubToken)
       : new GitHubMirror(githubToken)
     : undefined;
-  const executionBackend = new LocalDockerExecutionBackend({
+  const executionBackend = createExecutionBackend(executionBackendKind, {
     repoRoot,
     config,
     paths,
@@ -66,6 +67,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
     git,
     runtime,
     runner,
+    executionBackendKind,
     githubToken,
     github,
     executionBackend,
@@ -73,6 +75,17 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
     remote,
     sourceUpdaterFactory
   };
+}
+
+function createExecutionBackend(
+  kind: CliDependencies["backendOverride"],
+  deps: ConstructorParameters<typeof LocalDockerExecutionBackend>[0]
+) {
+  if (kind === "local-docker") {
+    return new LocalDockerExecutionBackend(deps);
+  }
+
+  throw new Error(`Unsupported execution backend: ${kind}`);
 }
 
 export function createRunner(kind: "claude" | "codex"): AgentRunner {

@@ -5,6 +5,8 @@ import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import type { ChangeRequestPublisher } from "@afk-geoff/core";
 
+export type ExecutionBackendKind = ReturnType<typeof loadProjectConfig>["execution"]["backend"];
+
 export interface CliContext {
   cwd: string;
   repoRoot: string;
@@ -14,6 +16,7 @@ export interface CliContext {
   git: LocalGitCodeHost;
   runtime: DockerWorkspaceRuntime;
   runner: AgentRunner;
+  executionBackendKind: ExecutionBackendKind;
   githubToken: string | undefined;
   github: (IssueMirror & ChangeRequestPublisher & Partial<PullRequestReviewSource>) | undefined;
   executionBackend: ExecutionBackend;
@@ -42,6 +45,8 @@ export interface CliDependencies {
    * Defaults to a GET /user API call. Should throw with a "Preflight failed (github):" message on failure.
    */
   githubAuthVerifier?: (token: string, remote: { owner: string; repo: string }) => Promise<void>;
+  /** Override the configured execution backend for one command invocation. */
+  backendOverride?: ExecutionBackendKind;
 }
 
 export interface RunOutcome {
@@ -53,6 +58,7 @@ export interface RunOutcome {
   worktreePath?: string;
   prUrl?: string;
   addressedReviewComments?: number;
+  backend?: ExecutionBackendKind;
 }
 
 export interface DetachedRunOptions {

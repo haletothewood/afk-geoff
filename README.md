@@ -103,6 +103,11 @@ Priority command contracts:
 
 Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture ids, statuses, branch names, worktree paths, and PR URLs directly.
 
+Execution backend selection is explicit on run commands:
+
+- `afk run file <path> --backend local-docker`
+- `afk follow-up <work-item-id> --backend local-docker`
+
 ## GitHub-Backed Setup
 
 Once the repo has a GitHub remote:

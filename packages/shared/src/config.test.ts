@@ -61,4 +61,28 @@ describe("projectConfigSchema — runner model fields", () => {
   it("rejects runner.model that is an empty string", () => {
     expect(() => projectConfigSchema.parse(baseConfig({ model: "" }))).toThrow();
   });
+
+  it("defaults execution.backend to local-docker", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+    expect(config.execution.backend).toBe("local-docker");
+  });
+
+  it("parses execution.backend when provided", () => {
+    const config = projectConfigSchema.parse({
+      ...baseConfig(),
+      execution: {
+        backend: "local-docker"
+      }
+    });
+    expect(config.execution.backend).toBe("local-docker");
+  });
+
+  it("rejects unsupported execution.backend values", () => {
+    expect(() => projectConfigSchema.parse({
+      ...baseConfig(),
+      execution: {
+        backend: "github-actions"
+      }
+    })).toThrow();
+  });
 });

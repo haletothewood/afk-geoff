@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import { configFilePath, writeDefaultProjectFiles } from "@afk-geoff/shared";
 import { openContext } from "./context.js";
@@ -28,6 +28,8 @@ import { cleanupArtifacts } from "./commands/cleanup.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import type { CliDependencies } from "./types.js";
+
+const executionBackendChoices = ["local-docker"] as const;
 
 export type { CliDependencies };
 
@@ -143,8 +145,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--pr", "Require the run to open a pull request")
     .option("--detach", "Start the run in the background and return immediately with the run id")
     .option("--json", "Print machine-readable JSON")
-    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
+    .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean; backend: typeof executionBackendChoices[number] }) => {
+      const ctx = await openContext(process.cwd(), { ...dependencies, backendOverride: options.backend });
       const runAction = async () => {
         await autoSync(ctx);
         if (options.pr) assertPullRequestReady(ctx);
@@ -169,7 +172,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
       const outcome = options.json ? await runForJson(runAction) : await runAction();
       if (options.json) {
-        printJson({ command: "run", target, ...(value ? { value } : {}), requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
+        printJson({ command: "run", target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
       } else if (outcome.prUrl) {
         console.log(`Opened PR: ${outcome.prUrl}`);
       }
@@ -188,15 +191,16 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .command("follow-up")
     .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
     .option("--json", "Print machine-readable JSON")
-    .action(async (workItemId: string, options: { json?: boolean }) => {
-      const ctx = await openContext(process.cwd(), dependencies);
+    .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]).default("local-docker"))
+    .action(async (workItemId: string, options: { json?: boolean; backend: typeof executionBackendChoices[number] }) => {
+      const ctx = await openContext(process.cwd(), { ...dependencies, backendOverride: options.backend });
       const followUpAction = async () => {
         await autoSync(ctx);
         return await runPullRequestFollowUp(ctx, workItemId);
       };
       const outcome = options.json ? await runForJson(followUpAction) : await followUpAction();
       if (options.json) {
-        printJson({ command: "follow-up", workItemId, ...outcome });
+        printJson({ command: "follow-up", workItemId, backend: ctx.executionBackendKind, ...outcome });
       }
     });
 

@@ -98,7 +98,10 @@ Why:
 - external orchestrators need predictable dispatch behavior
 
 Scope:
-- support an explicit backend selector instead of burying environment-specific behavior in flags
+- harden the first `--backend local-docker` selector on run and follow-up commands
+- keep the configured default in `execution.backend`
+- report the resolved backend in JSON command output
+- leave unsupported remote backend names invalid until those backends exist
 
 ### 4. Optional GitHub Actions backend
 
