@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectConfigSchema } from "./config.js";
+import { applyRunnerProfile, projectConfigSchema } from "./config.js";
 
 describe("projectConfigSchema — runner model fields", () => {
   function baseConfig(overrides: object = {}): object {
@@ -84,5 +84,36 @@ describe("projectConfigSchema — runner model fields", () => {
         backend: "github-actions"
       }
     })).toThrow();
+  });
+
+  it("configures smoke profile with a no-key command runner", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+    const profiled = applyRunnerProfile(config, "smoke");
+
+    expect(profiled.runner.kind).toBe("claude");
+    expect(profiled.runner.command).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
+    expect(profiled.runner.reviewCommand).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
+    expect(profiled.runner.requiredEnv).toEqual([]);
+    expect(profiled.github.enabled).toBe(false);
+  });
+
+  it("configures local Claude profile without requiring API env vars", () => {
+    const config = projectConfigSchema.parse(baseConfig({ requiredEnv: ["ANTHROPIC_API_KEY"] }));
+    const profiled = applyRunnerProfile(config, "claude");
+
+    expect(profiled.runner.kind).toBe("claude");
+    expect(profiled.runner.command).toBeUndefined();
+    expect(profiled.runner.requiredEnv).toEqual([]);
+    expect(profiled.github.enabled).toBe(false);
+  });
+
+  it("configures local Codex profile without requiring API env vars", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+    const profiled = applyRunnerProfile(config, "codex");
+
+    expect(profiled.runner.kind).toBe("codex");
+    expect(profiled.runner.command).toBeUndefined();
+    expect(profiled.runner.requiredEnv).toEqual([]);
+    expect(profiled.github.enabled).toBe(false);
   });
 });

@@ -6,6 +6,8 @@ import { CONFIG_FILE, DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH, PROJECT_DIR, RUNS_DI
 
 export const runnerKindSchema = z.enum(["claude", "codex"]);
 export const executionBackendKindSchema = z.enum(["local-docker"]);
+export const runnerProfiles = ["claude", "codex", "smoke"] as const;
+export type RunnerProfile = typeof runnerProfiles[number];
 
 export const projectConfigSchema = z.object({
   version: z.literal(1),
@@ -103,11 +105,12 @@ export interface WriteDefaultProjectFilesOptions {
   withOverrides?: boolean;
   withGitHubActions?: boolean;
   overwriteGitHubActions?: boolean;
+  runnerProfile?: RunnerProfile;
 }
 
 export function writeDefaultProjectFiles(cwd: string, options: boolean | WriteDefaultProjectFilesOptions = false): ResolvedProjectPaths {
   const normalizedOptions = typeof options === "boolean" ? { withOverrides: options } : options;
-  const config = defaultProjectConfig();
+  const config = applyRunnerProfile(defaultProjectConfig(), normalizedOptions.runnerProfile ?? "claude");
   const paths = resolveProjectPaths(cwd, config);
   fs.mkdirSync(paths.projectDir, { recursive: true });
   fs.mkdirSync(paths.runsDir, { recursive: true });
@@ -169,12 +172,109 @@ export function writeDefaultProjectFiles(cwd: string, options: boolean | WriteDe
     );
   }
 
+  if (normalizedOptions.runnerProfile === "smoke") {
+    writeSmokeRunner(cwd);
+  }
+
   if (normalizedOptions.withGitHubActions) {
     writeGitHubActionsWorkflow(cwd, { overwrite: normalizedOptions.overwriteGitHubActions ?? false });
   }
 
   return paths;
 }
+
+export function writeRunnerProfile(cwd: string, profile: RunnerProfile): string {
+  const configPath = configFilePath(cwd);
+  const config = fs.existsSync(configPath) ? loadProjectConfig(cwd) : defaultProjectConfig();
+  const nextConfig = applyRunnerProfile(config, profile);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, YAML.stringify(nextConfig));
+
+  if (profile === "smoke") {
+    writeSmokeRunner(cwd);
+  }
+
+  return profile;
+}
+
+export function applyRunnerProfile(config: ProjectConfig, profile: RunnerProfile): ProjectConfig {
+  const next: ProjectConfig = structuredClone(config);
+
+  if (profile === "codex") {
+    next.github = { enabled: false };
+    next.runner = {
+      kind: "codex",
+      requiredEnv: [],
+      envAllowlist: ["GH_TOKEN", "OPENAI_API_KEY"]
+    };
+    return next;
+  }
+
+  if (profile === "smoke") {
+    next.github = { enabled: false };
+    next.runner = {
+      kind: "claude",
+      command: ["node", ".afk/smoke-runner.mjs", "{prompt}"],
+      reviewCommand: ["node", ".afk/smoke-runner.mjs", "{prompt}"],
+      requiredEnv: [],
+      envAllowlist: ["GH_TOKEN"]
+    };
+    return next;
+  }
+
+  next.github = { enabled: false };
+  next.runner = {
+    kind: "claude",
+    requiredEnv: [],
+    envAllowlist: ["GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+  };
+  return next;
+}
+
+export function writeSmokeRunner(cwd: string): string {
+  const runnerPath = path.join(cwd, PROJECT_DIR, "smoke-runner.mjs");
+  fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+  fs.writeFileSync(runnerPath, SMOKE_RUNNER_SOURCE);
+  return runnerPath;
+}
+
+const SMOKE_RUNNER_SOURCE = `#!/usr/bin/env node
+import fs from "node:fs";
+
+const promptPath = process.argv.at(-1);
+if (!promptPath) {
+  throw new Error("Usage: node .afk/smoke-runner.mjs <prompt-path>");
+}
+
+const prompt = fs.readFileSync(promptPath, "utf8");
+
+const reviewMatch = prompt.match(/Write your review verdict JSON to this exact path:\\n([^\\n]+)/);
+if (reviewMatch) {
+  fs.writeFileSync(reviewMatch[1].trim(), JSON.stringify({ verdict: "PASS" }, null, 2));
+  process.exit(0);
+}
+
+const progressMatch = prompt.match(/Write progress updates to this exact path while the run is active:\\n([^\\n]+)/);
+if (progressMatch) {
+  fs.writeFileSync(progressMatch[1].trim(), JSON.stringify({
+    phase: "smoke",
+    message: "Smoke runner received the AFK prompt",
+    iteration: 1,
+    updatedAt: new Date().toISOString()
+  }, null, 2));
+}
+
+const resultMatch = prompt.match(/Write a JSON file to this exact path when you are done:\\n([^\\n]+)/);
+if (!resultMatch) {
+  throw new Error("Prompt did not include an AFK result path");
+}
+
+fs.writeFileSync(resultMatch[1].trim(), JSON.stringify({
+  status: "done",
+  summary: "Smoke runner completed without making changes",
+  issueComment: "AFK smoke runner completed successfully. No repository changes were made."
+}, null, 2));
+`;
 
 export function writeGitHubActionsWorkflow(cwd: string, options: { overwrite?: boolean } = {}): string {
   const workflowPath = path.join(cwd, ".github", "workflows", "afk-run.yml");

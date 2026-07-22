@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import YAML from "yaml";
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { createFixture, makeTempDir } from "./test-helpers.js";
 
@@ -61,6 +62,30 @@ describe("afk CLI — init command", () => {
     execFileSync(binPath, ["init", "--with-github-actions"], { cwd: fixture.repoDir });
 
     expect(fs.readFileSync(workflowPath, "utf8")).toContain("name: AFK Run");
+  });
+
+  it("Given smoke runner profile is requested, when init runs, then it writes a no-key smoke runner command", async () => {
+    const fixture = await createFixture(tempDir);
+    const smokeRunnerPath = path.join(fixture.repoDir, ".afk", "smoke-runner.mjs");
+
+    await fixture.cli(["init", "--runner-profile", "smoke"]);
+
+    const config = YAML.parse(fs.readFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "utf8"));
+    expect(config.runner.command).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
+    expect(config.runner.reviewCommand).toEqual(["node", ".afk/smoke-runner.mjs", "{prompt}"]);
+    expect(config.runner.requiredEnv).toEqual([]);
+    expect(fs.readFileSync(smokeRunnerPath, "utf8")).toContain("Smoke runner completed without making changes");
+  });
+
+  it("Given an existing config, when local Codex profile is requested, then init updates runner settings without API env requirements", async () => {
+    const fixture = await createFixture(tempDir);
+
+    await fixture.cli(["init", "--runner-profile", "codex"]);
+
+    const config = YAML.parse(fs.readFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "utf8"));
+    expect(config.runner.kind).toBe("codex");
+    expect(config.runner.command).toBeUndefined();
+    expect(config.runner.requiredEnv).toEqual([]);
   });
 
   it("Given a GitHub Actions workflow already exists, when init adds GitHub Actions, then it refuses to overwrite it", async () => {

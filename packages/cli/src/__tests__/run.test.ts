@@ -105,6 +105,40 @@ describe("afk CLI — run command", () => {
     expect(output).toContain(`Work item ${items[0]!.id}`);
   });
 
+  it("Given the smoke runner profile, when run file is used, then it completes without agent credentials", async () => {
+    const fixture = await createFixture(tempDir, { writeWorktreeChange: false });
+    await fixture.cli(["init", "--runner-profile", "smoke"]);
+    execFileSync("git", ["add", ".afk/config.yaml", ".afk/smoke-runner.mjs"], { cwd: fixture.repoDir });
+    execFileSync("git", ["commit", "-m", "configure afk smoke runner"], { cwd: fixture.repoDir });
+
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "brief.md"),
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Prove AFK orchestration without a live agent.",
+        "",
+        "## Work Item Title",
+        "Run no-key smoke worker",
+        "",
+        "## Work Item Body",
+        "Complete without touching repository files.",
+        "",
+        "## Acceptance Criteria",
+        "- The run completes",
+        "- The smoke runner does not require API credentials"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md", "--json"]);
+
+    const [run] = await fixture.store.listRuns();
+    expect(run?.status).toBe("completed");
+    expect(run?.summary).toBe("Smoke runner completed without making changes");
+    expect(fs.readFileSync(path.join(run!.runDir, "result.json"), "utf8")).toContain("AFK smoke runner completed successfully");
+  });
+
   it("Given repo-level claude.md and .claude config, when a Claude run executes, then runner-home includes both", async () => {
     const fixture = await createFixture(tempDir);
     fs.writeFileSync(path.join(fixture.repoDir, "claude.md"), "# Project Claude instructions\nUse deterministic output.\n");

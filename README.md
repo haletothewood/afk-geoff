@@ -70,6 +70,47 @@ This creates:
 - `.afk/worktrees/`
 - `.github/workflows/afk-run.yml` when `--with-github-actions` is passed
 
+## Local Runner Profiles
+
+For the current prototype, prefer local execution with a CLI agent that is already authenticated on your machine.
+
+Use a credential-free smoke runner first:
+
+```bash
+pnpm afk init --runner-profile smoke
+git add .afk/config.yaml .afk/smoke-runner.mjs
+git commit -m "configure afk smoke runner"
+pnpm afk doctor
+pnpm afk run file brief.md --json
+```
+
+The smoke profile writes `.afk/smoke-runner.mjs` and configures AFK to call it for both work and review. It makes no repo changes and requires no API keys, so it is the safest way to test AFK as an orchestration substrate.
+
+For a real local agent CLI:
+
+```bash
+pnpm afk init --runner-profile claude
+pnpm afk doctor
+pnpm afk run file brief.md --json
+```
+
+```bash
+pnpm afk init --runner-profile codex
+pnpm afk doctor
+pnpm afk run file brief.md --json
+```
+
+Local runner profiles set `github.enabled: false`, so `doctor` can pass in a plain local repo without an `origin` remote. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`, but they do not require API key environment variables by default. That lets AFK use whichever local account/session the CLI already knows about.
+
+Turn GitHub back on in `.afk/config.yaml` when you want source issue comments or PR publishing:
+
+```yaml
+github:
+  enabled: true
+```
+
+Add `runner.requiredEnv` only when you want CI-style non-interactive credential checks.
+
 ## Safe First Workflow
 
 Start with one work item at a time and keep the loop human-reviewed while the orchestration contract stabilizes:

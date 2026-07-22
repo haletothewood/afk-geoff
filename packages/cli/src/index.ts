@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, Option } from "commander";
 import { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
-import { configFilePath, writeDefaultProjectFiles, writeGitHubActionsWorkflow } from "@afk-geoff/shared";
+import { configFilePath, runnerProfiles, writeDefaultProjectFiles, writeGitHubActionsWorkflow, writeRunnerProfile, type RunnerProfile } from "@afk-geoff/shared";
 import { openContext } from "./context.js";
 import { getDoctorReport, runDoctor } from "./commands/doctor.js";
 import { captureRequirement } from "./commands/capture.js";
@@ -48,27 +48,40 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--with-overrides", "Create prompt and Docker overrides")
     .option("--with-github-actions", "Create the AFK GitHub Actions workflow harness")
     .option("--force-github-actions", "Overwrite an existing AFK GitHub Actions workflow")
-    .action(async (options: { withOverrides?: boolean; withGithubActions?: boolean; forceGithubActions?: boolean }) => {
+    .addOption(new Option("--runner-profile <profile>", "Configure a local runner profile").choices([...runnerProfiles]))
+    .action(async (options: { withOverrides?: boolean; withGithubActions?: boolean; forceGithubActions?: boolean; runnerProfile?: RunnerProfile }) => {
       const git = new LocalGitCodeHost();
       await git.assertRepository(commandCwd);
       const configPath = configFilePath(commandCwd);
+      const runnerProfile = options.runnerProfile ?? "claude";
 
       if (fs.existsSync(configPath)) {
-        if (!options.withGithubActions) {
+        if (!options.withGithubActions && !options.runnerProfile) {
           throw new Error(`Config already exists at ${configPath}`);
         }
 
-        const workflowPath = writeGitHubActionsWorkflow(commandCwd, { overwrite: options.forceGithubActions ?? false });
-        console.log(`Created GitHub Actions workflow at ${workflowPath}`);
+        if (options.runnerProfile) {
+          writeRunnerProfile(commandCwd, runnerProfile);
+          console.log(`Configured ${runnerProfile} runner profile`);
+        }
+
+        if (options.withGithubActions) {
+          const workflowPath = writeGitHubActionsWorkflow(commandCwd, { overwrite: options.forceGithubActions ?? false });
+          console.log(`Created GitHub Actions workflow at ${workflowPath}`);
+        }
         return;
       }
 
       writeDefaultProjectFiles(commandCwd, {
         withOverrides: options.withOverrides ?? false,
         withGitHubActions: options.withGithubActions ?? false,
-        overwriteGitHubActions: options.forceGithubActions ?? false
+        overwriteGitHubActions: options.forceGithubActions ?? false,
+        runnerProfile
       });
       console.log(`Initialized .afk in ${commandCwd}`);
+      if (options.runnerProfile) {
+        console.log(`Configured ${runnerProfile} runner profile`);
+      }
     });
 
   program.command("doctor")
