@@ -57,12 +57,26 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Preflight
-        run: pnpm afk doctor --json
+        run: pnpm afk doctor --json | tee afk-doctor.json
 
       - name: Run AFK issue
         run: |
+          set +e
           args=(run issue "${{ inputs.issue_url }}" --backend "${{ inputs.backend }}" --json)
           if [[ "${{ inputs.require_pr }}" == "true" ]]; then
             args+=(--pr)
           fi
-          pnpm afk "${args[@]}"
+          pnpm afk "${args[@]}" > afk-result.json
+          status=$?
+          cat afk-result.json
+          exit "$status"
+
+      - name: Upload AFK JSON artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: afk-run-json
+          path: |
+            afk-doctor.json
+            afk-result.json
+          if-no-files-found: warn

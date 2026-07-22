@@ -124,6 +124,7 @@ And the JSON payload should include the workflow id, ref, backend, and dispatch 
 When the workflow starts
 Then the workflow should run `afk doctor --json`
 And execute `afk run issue <issue-url> --backend local-docker --json`
+And upload `afk-doctor.json` and `afk-result.json` artifacts
 And require pull request publication when the `require_pr` input is true
 ```
 

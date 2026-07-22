@@ -133,6 +133,11 @@ Dispatch inputs:
 - `backend`: currently `local-docker`
 - `require_pr`: whether the run must publish a pull request
 
+Workflow artifacts:
+
+- `afk-doctor.json`: structured preflight result
+- `afk-result.json`: structured run result or failure payload
+
 External orchestrators can trigger that workflow through the CLI:
 
 ```bash
