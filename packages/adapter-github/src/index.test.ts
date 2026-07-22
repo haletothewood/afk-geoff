@@ -153,6 +153,11 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
             ]
           }
         };
+      },
+      async downloadArtifact() {
+        return {
+          data: Buffer.from("zip-bytes")
+        };
       }
     }
   };
@@ -447,5 +452,17 @@ describe("GitHubMirror adapter scenarios", () => {
         expiresAt: "2026-04-01T00:02:00Z"
       }
     ]);
+  });
+
+  it("Given a workflow artifact id, when downloaded, then artifact bytes are returned", async () => {
+    const mirror = new GitHubMirror("token", createMockClient());
+
+    const bytes = await mirror.downloadWorkflowArtifact({
+      owner: "acme",
+      repo: "demo",
+      artifactId: "456"
+    });
+
+    expect(Buffer.from(bytes).toString("utf8")).toBe("zip-bytes");
   });
 });

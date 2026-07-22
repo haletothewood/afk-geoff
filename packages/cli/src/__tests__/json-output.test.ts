@@ -388,6 +388,34 @@ describe("afk CLI — JSON output", () => {
       }
     ]);
   });
+
+  it("Given remote-download --json, when an artifact exists, then it saves the artifact ZIP and reports the path", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.workflowArtifactBytes = new Uint8Array(Buffer.from("zip-bytes"));
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const outputPath = `${fixture.repoDir}/downloaded.zip`;
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["remote-download", "456", "--output", outputPath, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      artifactId: string;
+      outputPath: string;
+      bytes: number;
+    };
+
+    expect(payload.command).toBe("remote-download");
+    expect(payload.ok).toBe(true);
+    expect(payload.artifactId).toBe("456");
+    expect(payload.outputPath).toBe(outputPath);
+    expect(payload.bytes).toBe(9);
+    expect(fs.readFileSync(outputPath, "utf8")).toBe("zip-bytes");
+  });
 });
 
 async function captureConsoleForRejected(action: () => Promise<void>): Promise<string> {

@@ -458,6 +458,7 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
   public readonly workflowDispatches: Array<{ owner: string; repo: string; workflowId: string; ref: string; inputs: Record<string, string> }> = [];
   public workflowRuns: Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }> = [];
   public workflowArtifacts: Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }> = [];
+  public workflowArtifactBytes = new Uint8Array(Buffer.from("zip-bytes"));
   public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
   public openPullRequestError: Error | undefined;
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
@@ -516,6 +517,10 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
 
   public async listWorkflowArtifacts(input: { owner: string; repo: string; runId: string; limit: number }): Promise<Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }>> {
     return this.workflowArtifacts.slice(0, input.limit);
+  }
+
+  public async downloadWorkflowArtifact(): Promise<Uint8Array> {
+    return this.workflowArtifactBytes;
   }
 }
 

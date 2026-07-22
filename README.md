@@ -100,6 +100,7 @@ Priority command contracts:
 - `afk submit issue <github-issue-url> --backend github-actions --json`
 - `afk remote-runs --json`
 - `afk remote-artifacts <github-actions-run-id> --json`
+- `afk remote-download <github-actions-artifact-id> --json`
 - `afk run file <path> --pr --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
@@ -146,6 +147,7 @@ External orchestrators can trigger that workflow through the CLI:
 pnpm afk submit issue <github-issue-url> --backend github-actions --json
 pnpm afk remote-runs --json
 pnpm afk remote-artifacts <github-actions-run-id> --json
+pnpm afk remote-download <github-actions-artifact-id> --json
 ```
 
 ## Useful Commands

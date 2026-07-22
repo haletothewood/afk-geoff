@@ -115,6 +115,7 @@ Scope:
 - publish machine-readable workflow artifacts for preflight and run results
 - expose a CLI command for listing recent remote workflow runs
 - expose a CLI command for listing artifacts from a remote workflow run
+- expose a CLI command for downloading remote workflow artifacts
 - define how local SQLite state and remote workflow state should reconcile
 - then add a remote execution backend behind the existing execution backend port
 - keep local Docker execution as the portable default

@@ -27,7 +27,7 @@ import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
 import { submitGitHubActionsIssueRun } from "./commands/submit.js";
 import { listRemoteRuns, printRemoteRuns } from "./commands/remote-runs.js";
-import { listRemoteArtifacts, printRemoteArtifacts } from "./commands/remote-artifacts.js";
+import { downloadRemoteArtifact, listRemoteArtifacts, printRemoteArtifactDownload, printRemoteArtifacts } from "./commands/remote-artifacts.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
@@ -204,6 +204,32 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         }
       } else {
         await printRemoteArtifacts(ctx, { runId, limit });
+      }
+    });
+
+  program
+    .command("remote-download")
+    .argument("<artifactId>", "GitHub Actions artifact id")
+    .option("--output <path>", "Path for the downloaded artifact ZIP")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (artifactId: string, options: { output?: string; json?: boolean }) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      if (!/^\d+$/.test(artifactId)) {
+        throw new Error("artifactId must be a GitHub Actions numeric artifact id");
+      }
+
+      if (options.json) {
+        try {
+          const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
+          const result = await runForJson(async () => await downloadRemoteArtifact(ctx, downloadOptions));
+          printJson({ command: "remote-download", ok: true, ...result });
+        } catch (error) {
+          printJson({ command: "remote-download", ok: false, artifactId, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
+        await printRemoteArtifactDownload(ctx, downloadOptions);
       }
     });
 

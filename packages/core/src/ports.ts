@@ -192,6 +192,12 @@ export interface WorkflowArtifactSource {
     updatedAt?: string;
     expiresAt?: string;
   }>>;
+
+  downloadWorkflowArtifact(input: {
+    owner: string;
+    repo: string;
+    artifactId: string;
+  }): Promise<Uint8Array>;
 }
 
 export interface SourceUpdatePayload {

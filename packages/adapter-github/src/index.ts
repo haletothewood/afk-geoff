@@ -63,6 +63,12 @@ export interface OctokitLike {
         }>;
       };
     }>;
+    downloadArtifact(input: {
+      owner: string;
+      repo: string;
+      artifact_id: number;
+      archive_format: "zip";
+    }): Promise<{ data: ArrayBuffer | Uint8Array | Buffer | string }>;
   };
 }
 
@@ -297,6 +303,21 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
     }));
   }
 
+  public async downloadWorkflowArtifact(input: {
+    owner: string;
+    repo: string;
+    artifactId: string;
+  }): Promise<Uint8Array> {
+    const response = await this.client.actions.downloadArtifact({
+      owner: input.owner,
+      repo: input.repo,
+      artifact_id: Number(input.artifactId),
+      archive_format: "zip"
+    });
+
+    return toUint8Array(response.data);
+  }
+
   private buildExternalRef(entityType: ExternalRef["entityType"], entityId: string, remoteType: ExternalRef["remoteType"], remoteId: number, remoteNumber: number, url?: string): ExternalRef {
     const now = new Date().toISOString();
     return {
@@ -312,6 +333,20 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
       ...(url ? { url } : {})
     };
   }
+}
+
+function toUint8Array(data: ArrayBuffer | Uint8Array | Buffer | string): Uint8Array {
+  if (typeof data === "string") {
+    return Buffer.from(data);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+
+  return new Uint8Array(data);
 }
 
 export class GitHubPullRequestPublisher implements ResultPublisher {

@@ -24,6 +24,7 @@ Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 | `afk submit` | submits work to a remote execution harness | GitHub Actions workflow dispatch is requested with structured JSON output |
 | `afk remote-runs` | lists remote execution harness runs | recent GitHub Actions workflow runs are returned |
 | `afk remote-artifacts` | lists remote execution harness artifacts | uploaded JSON result artifacts are discoverable by run id |
+| `afk remote-download` | downloads a remote execution artifact | artifact ZIP is written locally and reported as structured JSON |
 | `afk review` | prepares a manual HITL review run | review run and `review.md` brief are created |
 | `afk follow-up` | addresses review comments on an AFK-created pull request | existing PR branch receives follow-up commits |
 | `afk --json` command variants | exposes orchestration state to external harnesses | stdout is one structured JSON payload with stable ids and URLs |
@@ -125,6 +126,7 @@ Then AFK should dispatch the AFK Run workflow with that issue URL
 And the JSON payload should include the workflow id, ref, backend, and dispatch inputs
 And `afk remote-runs --json` should list recent runs for the AFK Run workflow
 And `afk remote-artifacts <run-id> --json` should list uploaded workflow artifacts
+And `afk remote-download <artifact-id> --json` should download an artifact ZIP for offline inspection
 When the workflow starts
 Then the workflow should run `afk doctor --json`
 And execute `afk run issue <issue-url> --backend local-docker --json`
