@@ -57,6 +57,7 @@ flowchart LR
 git init -b main
 pnpm install
 pnpm afk init
+pnpm afk init --with-github-actions
 ```
 
 This creates:
@@ -67,6 +68,7 @@ This creates:
 - `.afk/state.sqlite`
 - `.afk/runs/`
 - `.afk/worktrees/`
+- `.github/workflows/afk-run.yml` when `--with-github-actions` is passed
 
 ## Safe First Workflow
 
@@ -120,11 +122,22 @@ Once the repo has a GitHub remote:
 1. Add an `origin` remote.
 2. Export `GH_TOKEN`.
 3. Ensure the configured runner auth env vars are set.
-4. Run `pnpm afk doctor`.
+4. Run `pnpm afk init --with-github-actions` to install the workflow harness.
+5. Run `pnpm afk doctor`.
 
 ## GitHub Actions Harness
 
 The repository includes an experimental manual workflow, `AFK Run`, for external orchestrators that want a remote "issue URL in, PR out" entry point.
+
+Install it in a target repo with:
+
+```bash
+pnpm afk init --with-github-actions
+```
+
+If `.afk/config.yaml` already exists, this command only adds `.github/workflows/afk-run.yml`. It refuses to overwrite an existing workflow unless `--force-github-actions` is passed.
+
+The workflow currently assumes the target repo can run `pnpm afk`, so the AFK CLI must be available to that repo before remote execution can work.
 
 Required repository secrets:
 

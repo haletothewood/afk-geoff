@@ -34,4 +34,40 @@ describe("afk CLI — init command", () => {
     expect(loopTemplate).toContain("Map all behavior paths");
     expect(loopTemplate).toContain("Run language-specific checks before PR");
   });
+
+  it("Given an initialized repo, when init adds GitHub Actions, then it writes the AFK run workflow", async () => {
+    const fixture = await createFixture(tempDir);
+    const workflowPath = path.join(fixture.repoDir, ".github", "workflows", "afk-run.yml");
+
+    await fixture.cli(["init", "--with-github-actions"]);
+
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    expect(workflow).toContain("name: AFK Run");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("pnpm afk doctor --json");
+    expect(workflow).toContain("actions/upload-artifact@v4");
+  });
+
+  it("Given a GitHub Actions workflow already exists, when init adds GitHub Actions, then it refuses to overwrite it", async () => {
+    const fixture = await createFixture(tempDir);
+    const workflowPath = path.join(fixture.repoDir, ".github", "workflows", "afk-run.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(workflowPath, "name: Custom Workflow\n");
+
+    await expect(fixture.cli(["init", "--with-github-actions"])).rejects.toThrow("GitHub Actions workflow already exists");
+    expect(fs.readFileSync(workflowPath, "utf8")).toBe("name: Custom Workflow\n");
+  });
+
+  it("Given a GitHub Actions workflow already exists, when init is forced, then it replaces the workflow", async () => {
+    const fixture = await createFixture(tempDir);
+    const workflowPath = path.join(fixture.repoDir, ".github", "workflows", "afk-run.yml");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(workflowPath, "name: Custom Workflow\n");
+
+    await fixture.cli(["init", "--with-github-actions", "--force-github-actions"]);
+
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    expect(workflow).toContain("name: AFK Run");
+    expect(workflow).not.toBe("name: Custom Workflow\n");
+  });
 });

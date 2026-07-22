@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
-import { CONFIG_FILE, PROJECT_DIR, RUNS_DIR, STATE_DB, WORKTREES_DIR, defaultProjectConfig } from "./defaults.js";
+import { CONFIG_FILE, DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH, PROJECT_DIR, RUNS_DIR, STATE_DB, WORKTREES_DIR, defaultProjectConfig } from "./defaults.js";
 
 export const runnerKindSchema = z.enum(["claude", "codex"]);
 export const executionBackendKindSchema = z.enum(["local-docker"]);
@@ -99,7 +99,14 @@ export function ensureProjectLayout(cwd: string, config: ProjectConfig): Resolve
   return paths;
 }
 
-export function writeDefaultProjectFiles(cwd: string, withOverrides = false): ResolvedProjectPaths {
+export interface WriteDefaultProjectFilesOptions {
+  withOverrides?: boolean;
+  withGitHubActions?: boolean;
+  overwriteGitHubActions?: boolean;
+}
+
+export function writeDefaultProjectFiles(cwd: string, options: boolean | WriteDefaultProjectFilesOptions = false): ResolvedProjectPaths {
+  const normalizedOptions = typeof options === "boolean" ? { withOverrides: options } : options;
   const config = defaultProjectConfig();
   const paths = resolveProjectPaths(cwd, config);
   fs.mkdirSync(paths.projectDir, { recursive: true });
@@ -151,7 +158,7 @@ export function writeDefaultProjectFiles(cwd: string, withOverrides = false): Re
     ].join("\n")
   );
 
-  if (withOverrides) {
+  if (normalizedOptions.withOverrides) {
     fs.mkdirSync(path.join(paths.projectDir, "prompts"), { recursive: true });
     fs.writeFileSync(path.join(paths.projectDir, "prompts", "plan.md"), "# Extra planning instructions\n");
     fs.writeFileSync(path.join(paths.projectDir, "prompts", "worker.md"), "# Extra worker instructions\n");
@@ -162,7 +169,22 @@ export function writeDefaultProjectFiles(cwd: string, withOverrides = false): Re
     );
   }
 
+  if (normalizedOptions.withGitHubActions) {
+    writeGitHubActionsWorkflow(cwd, { overwrite: normalizedOptions.overwriteGitHubActions ?? false });
+  }
+
   return paths;
+}
+
+export function writeGitHubActionsWorkflow(cwd: string, options: { overwrite?: boolean } = {}): string {
+  const workflowPath = path.join(cwd, ".github", "workflows", "afk-run.yml");
+  if (fs.existsSync(workflowPath) && !(options.overwrite ?? false)) {
+    throw new Error(`GitHub Actions workflow already exists at ${workflowPath}`);
+  }
+
+  fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+  fs.copyFileSync(DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH, workflowPath);
+  return workflowPath;
 }
 
 export function maybeReadOverride(cwd: string, filePath?: string): string | undefined {

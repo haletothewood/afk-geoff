@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, Option } from "commander";
 import { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
-import { configFilePath, writeDefaultProjectFiles } from "@afk-geoff/shared";
+import { configFilePath, writeDefaultProjectFiles, writeGitHubActionsWorkflow } from "@afk-geoff/shared";
 import { openContext } from "./context.js";
 import { getDoctorReport, runDoctor } from "./commands/doctor.js";
 import { captureRequirement } from "./commands/capture.js";
@@ -45,16 +45,28 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program
     .command("init")
     .option("--with-overrides", "Create prompt and Docker overrides")
-    .action(async (options: { withOverrides?: boolean }) => {
+    .option("--with-github-actions", "Create the AFK GitHub Actions workflow harness")
+    .option("--force-github-actions", "Overwrite an existing AFK GitHub Actions workflow")
+    .action(async (options: { withOverrides?: boolean; withGithubActions?: boolean; forceGithubActions?: boolean }) => {
       const git = new LocalGitCodeHost();
       await git.assertRepository(process.cwd());
       const configPath = configFilePath(process.cwd());
 
       if (fs.existsSync(configPath)) {
-        throw new Error(`Config already exists at ${configPath}`);
+        if (!options.withGithubActions) {
+          throw new Error(`Config already exists at ${configPath}`);
+        }
+
+        const workflowPath = writeGitHubActionsWorkflow(process.cwd(), { overwrite: options.forceGithubActions ?? false });
+        console.log(`Created GitHub Actions workflow at ${workflowPath}`);
+        return;
       }
 
-      writeDefaultProjectFiles(process.cwd(), options.withOverrides ?? false);
+      writeDefaultProjectFiles(process.cwd(), {
+        withOverrides: options.withOverrides ?? false,
+        withGitHubActions: options.withGithubActions ?? false,
+        overwriteGitHubActions: options.forceGithubActions ?? false
+      });
       console.log(`Initialized .afk in ${process.cwd()}`);
     });
 

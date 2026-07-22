@@ -111,6 +111,7 @@ Why:
 
 Scope:
 - harden the first manual `workflow_dispatch` harness for "issue URL in, PR out"
+- expose an init flag for installing the GitHub Actions harness in target repos
 - expose a CLI workflow dispatch command for external orchestrators
 - publish machine-readable workflow artifacts for preflight and run results
 - expose a CLI command for listing recent remote workflow runs

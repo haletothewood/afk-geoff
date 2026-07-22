@@ -1,0 +1,82 @@
+name: AFK Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_url:
+        description: "GitHub issue URL containing an AFK execution brief"
+        required: true
+        type: string
+      backend:
+        description: "Execution backend"
+        required: true
+        default: "local-docker"
+        type: choice
+        options:
+          - local-docker
+      require_pr:
+        description: "Require AFK to publish a pull request"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  afk-run:
+    name: Run AFK work from issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Preflight
+        run: pnpm afk doctor --json | tee afk-doctor.json
+
+      - name: Run AFK issue
+        run: |
+          set +e
+          args=(run issue "${{ inputs.issue_url }}" --backend "${{ inputs.backend }}" --json)
+          if [[ "${{ inputs.require_pr }}" == "true" ]]; then
+            args+=(--pr)
+          fi
+          pnpm afk "${args[@]}" > afk-result.json
+          status=$?
+          cat afk-result.json
+          exit "$status"
+
+      - name: Upload AFK JSON artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: afk-run-json
+          path: |
+            afk-doctor.json
+            afk-result.json
+          if-no-files-found: warn

@@ -13,6 +13,10 @@ export const DEFAULT_DOCKERFILE_PATH = path.resolve(
   moduleDir,
   "../../../packages/shared/src/templates/default.Dockerfile"
 );
+export const DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH = path.resolve(
+  moduleDir,
+  "../../../packages/shared/src/templates/afk-run.workflow.yml"
+);
 
 export function defaultProjectConfig(): ProjectConfig {
   return {
