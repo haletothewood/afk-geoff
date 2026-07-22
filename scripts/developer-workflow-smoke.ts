@@ -2,11 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 
-const workspaceRoot = "/Users/davidneil/Development/Personal/afk-geoff";
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliEntry = path.join(workspaceRoot, "packages/cli/src/index.ts");
 const tsxLoader = path.join(workspaceRoot, "node_modules", "tsx", "dist", "loader.mjs");
 
@@ -128,6 +129,12 @@ import path from "node:path";
 
 const promptPath = process.argv.at(-1);
 const prompt = fs.readFileSync(promptPath, "utf8");
+const reviewMatch = prompt.match(/Write your review verdict JSON to this exact path:\\n([^\\n]+)/);
+if (reviewMatch) {
+  fs.writeFileSync(reviewMatch[1].trim(), JSON.stringify({ verdict: "PASS" }, null, 2));
+  process.exit(0);
+}
+
 const match = prompt.match(/Write a JSON file to this exact path(?: when you are done)?:\\n([^\\n]+)/);
 if (!match) {
   throw new Error("Missing output marker");
@@ -171,13 +178,27 @@ if (args[0] !== "run") {
 
 let worktree = process.cwd();
 const mounts = new Map();
+let workdir = process.cwd();
 let index = 1;
 while (index < args.length) {
   if (args[index] === "--rm") {
     index += 1;
     continue;
   }
+  if (args[index] === "-i") {
+    index += 1;
+    continue;
+  }
+  if (args[index] === "--user") {
+    index += 2;
+    continue;
+  }
+  if (args[index] === "--name") {
+    index += 2;
+    continue;
+  }
   if (args[index] === "-w") {
+    workdir = args[index + 1];
     index += 2;
     continue;
   }
@@ -197,27 +218,54 @@ while (index < args.length) {
   break;
 }
 
+for (const [container, host] of mounts.entries()) {
+  if (workdir.startsWith(container)) {
+    worktree = workdir.replace(container, host);
+    break;
+  }
+}
+
 index += 1;
 const command = args[index];
-const commandArgs = args.slice(index + 1).map((value) => {
+let commandArgs = args.slice(index + 1).map((value) => {
+  let rewritten = value;
   for (const [container, host] of mounts.entries()) {
-    if (value.startsWith(container)) {
-      return value.replace(container, host);
-    }
+    rewritten = rewritten.split(container).join(host);
   }
-  return value;
+  return rewritten;
 });
 
-const promptArgIndex = commandArgs.findIndex((value) => value.endsWith(".md"));
-if (promptArgIndex >= 0) {
-  const originalPromptPath = commandArgs[promptArgIndex];
+const promptPaths = new Set();
+for (const value of commandArgs) {
+  const matches = value.match(/\\/[A-Za-z0-9._\\/-]+\\.md/g) ?? [];
+  for (const promptPath of matches) {
+    promptPaths.add(promptPath);
+  }
+}
+
+const rewrittenPromptPaths = new Map();
+for (const promptPath of promptPaths) {
+  if (!fs.existsSync(promptPath)) {
+    continue;
+  }
+  const originalPromptPath = promptPath;
   let prompt = fs.readFileSync(originalPromptPath, "utf8");
   for (const [container, host] of mounts.entries()) {
     prompt = prompt.split(container).join(host);
   }
-  const rewrittenPromptPath = path.join(os.tmpdir(), \`afk-prompt-\${process.pid}-\${Date.now()}.md\`);
+  const rewrittenPromptPath = path.join(os.tmpdir(), \`afk-prompt-\${process.pid}-\${Date.now()}-\${Math.random().toString(16).slice(2)}.md\`);
   fs.writeFileSync(rewrittenPromptPath, prompt);
-  commandArgs[promptArgIndex] = rewrittenPromptPath;
+  rewrittenPromptPaths.set(originalPromptPath, rewrittenPromptPath);
+}
+
+if (rewrittenPromptPaths.size > 0) {
+  commandArgs = commandArgs.map((value) => {
+    let rewritten = value;
+    for (const [originalPromptPath, rewrittenPromptPath] of rewrittenPromptPaths.entries()) {
+      rewritten = rewritten.split(originalPromptPath).join(rewrittenPromptPath);
+    }
+    return rewritten;
+  });
 }
 
 const result = spawnSync(command, commandArgs, {

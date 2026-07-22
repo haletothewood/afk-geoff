@@ -1,10 +1,11 @@
 # AFK Backlog
 
-This backlog is a working priority list for making AFK reliable enough to dogfood regularly.
+This backlog is a working priority list for making AFK a reliable execution layer for agentic repo work.
 
 Trajectory lens:
-- AFK is a reusable orchestrator for many repositories.
-- The target loop is: HITL planning -> autonomous implementation run -> PR -> HITL review/follow-up run (potentially with a different runner/model profile).
+- AFK is a reusable execution substrate for many repositories.
+- Humans, scripts, CI jobs, bots, and higher-level agent frameworks should be able to drive the same core loop.
+- The target loop is: work source -> isolated autonomous implementation run -> verification -> PR -> review/follow-up run -> machine-readable status.
 - Execution modes are operator profiles for run posture, not free-form personas.
 
 Priority meanings:
@@ -14,25 +15,29 @@ Priority meanings:
 
 ## Current Build Order
 
-These are the next three features to build in order.
+These are the next features to build in order.
 
-### 1. Cleanup command
+### 1. Land PR comment resolution pass
 
 Why now:
-- repeated dogfooding leaves runs and worktrees behind
-- cleanup reduces local operational drag and makes it cheaper to recover from failed experiments
-
-### 2. Configurable model selection and runner presets
-
-Why next:
-- the operator should be able to choose the cost/capability tradeoff for each run
-- implementation and review phases should be able to use different runner/model defaults
-
-### 3. PR comment resolution pass
-
-Why third:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
 - this closes the loop from implementation run to reviewer-directed follow-up on the same PR
+
+### 2. Machine-readable orchestration contract
+
+Why next:
+- AFK's CLI should be usable as a stable backend API for another agent framework, bot, scheduler, or CI workflow
+- external orchestrators need structured IDs, URLs, status, run artifacts, and failure reasons without scraping terminal prose
+
+### 3. Explicit backend selection
+
+Why third:
+- AFK should make it obvious whether a run is local or remote
+
+### 4. Optional GitHub Actions backend
+
+Why fourth:
+- once the command contract is stable, GitHub-backed repos can use CI for the cleanest unattended "work source in, PR out" path
 
 ## Recently Landed
 
@@ -50,38 +55,13 @@ Why third:
 - standardized PR bodies with manual QA guidance
 - `afk undo` for open AFK PRs and branches
 - `afk watch <runId>` for live run visibility
+- `afk cleanup` for safe local artifact pruning
+- configurable runner/model selection with separate review model defaults
+- bounded autonomous review gate loop
 
 ## P0
 
-### 1. Cleanup command
-
-Why:
-- local dogfooding leaves runs, worktrees, and state artifacts behind
-- there should be a safe supported way to prune old artifacts without manual surgery
-
-Scope:
-- add a supported command to prune local run artifacts safely
-- distinguish active runs from removable historical artifacts
-- make it easy to clean old worktrees and runs without damaging current execution state
-
-## P1
-
-### 2. Configurable model selection and runner presets
-
-Why:
-- the operator should be able to choose the cost/capability tradeoff for a run instead of accepting a hidden default
-- Claude-backed runs in particular should be able to target models like Opus, Sonnet, or Haiku when the runner supports it
-
-Scope:
-- add a configurable default model in AFK config
-- support runner-specific model selection where the underlying CLI supports it
-- leave room for per-run overrides later without coupling the CLI to one vendor
-- fail clearly when a configured model is not supported by the selected runner
-
-Notes:
-- the abstraction should be “model preference” or “model id”, not Claude-only naming in the core
-
-### 3. PR comment resolution pass
+### 1. Land PR comment resolution pass
 
 Why:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
@@ -97,6 +77,29 @@ Notes:
 - scope the first version to AFK-created pull requests
 - do not auto-resolve comments in the first version
 
+### 2. Machine-readable orchestration contract
+
+Why:
+- AFK should be easy for another agent framework or automation harness to call as a backend worker
+- structured command output makes demos, CI integration, and bot workflows deterministic
+
+Scope:
+- add `--json` output for the core orchestration commands
+- include stable work item ids, run ids, PR URLs, branch names, terminal statuses, and failure reasons
+- keep human-readable output as the default
+- cover `run file <path> --pr`, `status`, `runs`, and `follow-up`
+
+## P1
+
+### 3. Explicit backend selection
+
+Why:
+- AFK should make it obvious whether a run is local or remote
+- external orchestrators need predictable dispatch behavior
+
+Scope:
+- support an explicit backend selector instead of burying environment-specific behavior in flags
+
 ### 4. Optional GitHub Actions backend
 
 Why:
@@ -106,38 +109,33 @@ Scope:
 - add a remote execution backend behind the existing execution backend port
 - keep local Docker execution as the portable default
 
-### 5. Explicit backend selection
-
-Why:
-- AFK should make it obvious whether a run is local or remote
-
-Scope:
-- support an explicit backend selector instead of burying environment-specific behavior in flags
-
 ## P2
 
-### 6. More source adapters
+### 5. More source adapters
 
 Candidates:
 - GitLab issue source
 - Azure DevOps work item source
 - Bitbucket source
+- Linear issue source
+- Slack command source
+- GitHub App webhook source
 
-### 7. More publishing adapters
+### 6. More publishing adapters
 
 Candidates:
 - GitLab merge request publisher
 - Bitbucket pull request publisher
 - local patch or branch summary publisher
 
-### 8. More execution backends
+### 7. More execution backends
 
 Candidates:
 - GitLab CI
 - Azure Pipelines
 - CircleCI
 
-### 9. Runner usage accounting
+### 8. Runner usage accounting
 
 Why:
 - token and cost visibility can be useful, but it should not block core usability work

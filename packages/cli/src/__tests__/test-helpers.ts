@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { vi } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, Requirement, WorkItem, WorkSource } from "@afk-geoff/core";
+import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, PullRequestReviewSource, Requirement, WorkItem, WorkSource } from "@afk-geoff/core";
 import { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { runCli } from "../index.js";
 
@@ -449,12 +449,13 @@ export async function waitForProcessExit(pid: number, timeoutMs: number): Promis
   }
 }
 
-export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
+export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource {
   public readonly requirementMirrorIds: string[] = [];
   public readonly workItemMirrorIds: string[] = [];
   public readonly pullRequestRequests: ChangeRequest[] = [];
   public readonly closedPullRequestNumbers: number[] = [];
   public readonly issueComments: Array<{ issueNumber: number; body: string }> = [];
+  public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
   public openPullRequestError: Error | undefined;
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
 
@@ -496,6 +497,10 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher {
       refId: ref.id,
       ...(this.pullRequestStates.get(ref.remoteNumber) ?? { state: "open", merged: false })
     }));
+  }
+
+  public async listPullRequestReviewComments(): Promise<Array<{ id: string; body: string; path?: string; line?: number }>> {
+    return this.reviewComments;
   }
 }
 

@@ -32,6 +32,20 @@ export class LocalGitCodeHost implements CodeHost {
     await execFileAsync("git", ["checkout", "-B", input.branchName], { cwd: input.path });
   }
 
+  public async createWorktreeFromBranch(input: { cwd: string; branchName: string; path: string }): Promise<void> {
+    try {
+      await execFileAsync("git", ["fetch", "origin", input.branchName], { cwd: input.cwd });
+    } catch {
+      // Local-only branches are valid for tests and non-GitHub workflows.
+    }
+
+    try {
+      await execFileAsync("git", ["worktree", "add", input.path, input.branchName], { cwd: input.cwd });
+    } catch {
+      await execFileAsync("git", ["worktree", "add", "-b", input.branchName, input.path, `origin/${input.branchName}`], { cwd: input.cwd });
+    }
+  }
+
   public async removeWorktree(input: { cwd: string; path: string; force?: boolean }): Promise<void> {
     const args = ["worktree", "remove", ...(input.force ? ["--force"] : []), input.path];
     await execFileAsync("git", args, { cwd: input.cwd });

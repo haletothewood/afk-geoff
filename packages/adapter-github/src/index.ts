@@ -1,4 +1,4 @@
-import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, Requirement, ResultPublisher, WorkItem, WorkSource } from "@afk-geoff/core";
+import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource } from "@afk-geoff/core";
 import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
@@ -13,6 +13,7 @@ export interface OctokitLike {
     create(input: { owner: string; repo: string; title: string; head: string; base: string; body: string }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
     update(input: { owner: string; repo: string; pull_number: number; state: "open" | "closed" }): Promise<unknown>;
     get(input: { owner: string; repo: string; pull_number: number }): Promise<{ data: { state: string; merged: boolean } }>;
+    listReviewComments(input: { owner: string; repo: string; pull_number: number; per_page?: number }): Promise<{ data: Array<{ id: number; body?: string; path?: string; line?: number | null; outdated?: boolean }> }>;
   };
 }
 
@@ -44,7 +45,7 @@ export class GitHubIssueWorkSource implements WorkSource<string> {
   }
 }
 
-export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
+export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource {
   private readonly client: OctokitLike;
 
   public constructor(token: string, client?: OctokitLike) {
@@ -159,6 +160,24 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher {
     }
 
     return results;
+  }
+
+  public async listPullRequestReviewComments(input: { owner: string; repo: string; pullNumber: number }): Promise<Array<{ id: string; body: string; path?: string; line?: number }>> {
+    const response = await this.client.pulls.listReviewComments({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.pullNumber,
+      per_page: 100
+    });
+
+    return response.data
+      .filter((comment) => !comment.outdated && (comment.body ?? "").trim().length > 0)
+      .map((comment) => ({
+        id: String(comment.id),
+        body: comment.body ?? "",
+        ...(comment.path ? { path: comment.path } : {}),
+        ...(typeof comment.line === "number" ? { line: comment.line } : {})
+      }));
   }
 
   private buildExternalRef(entityType: ExternalRef["entityType"], entityId: string, remoteType: ExternalRef["remoteType"], remoteId: number, remoteNumber: number, url?: string): ExternalRef {

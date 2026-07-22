@@ -71,17 +71,30 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       delete process.env.AFK_DETACH_RUN_ID;
     }
 
-    const branchName = branchNameForWorkItem(input.workItem.title);
-    const worktreePath = path.join(this.paths.worktreesDir, runId);
+    const isFollowUp = !!input.followUp;
+    const branchName = input.followUp?.branchName ?? branchNameForWorkItem(input.workItem.title);
+    const worktreePath = input.followUp?.worktreePath && fs.existsSync(input.followUp.worktreePath)
+      ? input.followUp.worktreePath
+      : path.join(this.paths.worktreesDir, runId);
     const runDir = path.join(this.paths.runsDir, runId);
     fs.mkdirSync(runDir, { recursive: true });
 
-    await this.git.createWorktree({
-      cwd: this.repoRoot,
-      branchName,
-      baseBranch: this.config.baseBranch,
-      path: worktreePath
-    });
+    if (!input.followUp?.worktreePath || !fs.existsSync(input.followUp.worktreePath)) {
+      if (isFollowUp) {
+        await this.git.createWorktreeFromBranch({
+          cwd: this.repoRoot,
+          branchName,
+          path: worktreePath
+        });
+      } else {
+        await this.git.createWorktree({
+          cwd: this.repoRoot,
+          branchName,
+          baseBranch: this.config.baseBranch,
+          path: worktreePath
+        });
+      }
+    }
 
     if (!isDetachedResume) {
       // Foreground path: create run record and mark work item as in-progress now.
@@ -182,7 +195,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     // -------------------------------------------------------------------------
     for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       const isFirstIteration = iteration === 1;
-      const phase = isFirstIteration ? "work" : "fix";
+      const isFixIteration = !isFirstIteration || isFollowUp;
+      const phase = isFollowUp && isFirstIteration ? "follow-up" : isFirstIteration ? "work" : "fix";
 
       // Ensure each iteration must produce a fresh result file.
       if (fs.existsSync(hostResultPath)) {
@@ -195,17 +209,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
       writeProgress(progressPath, {
         phase,
-        message: isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
+        message: isFollowUp && isFirstIteration ? "Follow-up agent running" : isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
         iteration,
         updatedAt: new Date().toISOString()
       });
 
       // Build the appropriate prompt for this phase.
-      const promptFilename = isFirstIteration ? "prompt.md" : `fix-prompt-${iteration}.md`;
+      const promptFilename = isFollowUp && isFirstIteration ? "follow-up-prompt.md" : isFirstIteration ? "prompt.md" : `fix-prompt-${iteration}.md`;
       const promptPath = path.join(runDir, promptFilename);
 
       let prompt: string;
-      if (isFirstIteration) {
+      if (!isFixIteration) {
         prompt = buildWorkerPrompt({
           requirement: input.requirement,
           workItem: input.workItem,
@@ -223,7 +237,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           verification: input.verification,
           progressPath: progressContainerPath,
           resultPath: resultContainerPath,
-          reviewIssues,
+          reviewIssues: isFollowUp && isFirstIteration ? input.followUp?.reviewComments ?? [] : reviewIssues,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
           ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
         });
@@ -310,7 +324,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       // Commit changes from this iteration before running verification and review.
       await this.git.commitAll({
         cwd: worktreePath,
-        message: iteration === 1
+        message: isFollowUp && iteration === 1
+          ? `afk: address PR feedback for ${input.workItem.title}`
+          : iteration === 1
           ? `afk: ${input.workItem.title}`
           : `afk: ${input.workItem.title} (fix ${iteration - 1})`
       });

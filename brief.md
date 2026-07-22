@@ -6,37 +6,37 @@ AFK should operate as a reusable orchestrator across many repositories with a st
 
 ## Work Item Title
 
-Add configurable model selection and runner presets
+Add PR comment resolution pass
 
 ## Work Item Body
 
-Implement runner/model presets so AFK resolves the execution engine and model posture explicitly before autonomous work starts.
+Implement a follow-up execution pass that starts from an existing AFK-created pull request and reviewer feedback.
 
 Scope:
-- add config-level defaults for runner/model selection
-- support separate defaults for implementation runs and review runs
-- resolve and surface chosen runner/model in operator-facing output before run start
-- keep execution modes as independent posture guidance; runner/model selection must not replace mode selection
+- ingest unresolved review comments from an open pull request
+- run against the existing PR branch instead of creating a new branch
+- push follow-up commits to the same PR
+- report what comments were addressed and what verification ran
+- scope v1 to AFK-created pull requests
+- do not auto-resolve review comments in v1
 - keep repository instructions and required verification as hard floor constraints
-- fail clearly when a configured model is unsupported by the selected runner
-- keep the abstraction vendor-neutral in core interfaces (`modelId` / model preference rather than provider-specific labels)
-- cover configuration parsing, resolution, validation, and run-path propagation with tests
 
 ### Out of Scope
 
-- PR comment resolution pass on existing PR branches
 - automatic model switching based on token/cost telemetry
 - provider-specific tuning knobs in core domain interfaces
 - full remote execution backend rollout
+- non-GitHub pull request providers
+- auto-resolving GitHub review threads
 
 ## Acceptance Criteria
 
-- AFK config supports default runner/model selection for work and review phases.
-- Work runs and review runs resolve to the configured defaults without hidden fallbacks.
-- AFK prints the resolved runner/model before execution starts.
-- Invalid runner/model combinations fail fast with actionable error messages.
-- Existing execution-mode guidance remains intact and continues to propagate to worker prompts.
-- Tests cover config parsing, validation, and propagation through work and review execution paths.
+- AFK can identify an open AFK-created pull request for follow-up.
+- AFK gathers actionable unresolved review comments for that pull request.
+- The follow-up run uses the existing PR branch and pushes any fix commits back to it.
+- Operator output summarizes addressed comments and verification results.
+- Existing execution-mode and runner/model guidance remain intact.
+- Tests cover comment ingestion, branch reuse, publication to the existing PR, and blocked/failure paths.
 - `pnpm typecheck` passes.
 - `pnpm test` passes.
 
@@ -44,17 +44,17 @@ Scope:
 
 | Decision | Resolution |
 |----------|-----------|
-| Selection model | Config-level defaults with separate work vs review presets |
-| Core abstraction | Use vendor-neutral model identifiers |
-| Error policy | Fail fast on unsupported model/runner combinations |
-| Operator visibility | Print resolved runner/model before run start |
+| Selection model | Existing AFK-created PRs only for v1 |
+| Core abstraction | Keep PR feedback behind adapter ports |
+| Error policy | Fail clearly when PR comments or branch state cannot be resolved |
+| Operator visibility | Print addressed comments and verification summary |
 | Safety model | Repository instructions and required verification remain non-overridable |
 
 ## Known Risks
 
-- Different runners may expose model lists differently, making capability validation brittle.
-- Operators may assume runner/model presets also change execution mode; docs and output must keep this distinction explicit.
-- Misconfigured defaults could create hidden cost spikes if not surfaced clearly in run-start output.
+- GitHub review thread resolution state may require GraphQL or richer adapter support than issue-style comments.
+- Running on an existing branch must avoid accidentally creating a second PR or overwriting unrelated commits.
+- Review comments can be vague; BLOCKED needs to remain a first-class outcome.
 
 ## Verification
 

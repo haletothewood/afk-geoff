@@ -79,6 +79,26 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
       },
       async get() {
         return { data: { state: "closed", merged: true } };
+      },
+      async listReviewComments() {
+        return {
+          data: [
+            {
+              id: 101,
+              body: "Please add error handling.",
+              path: "src/app.ts",
+              line: 12,
+              outdated: false
+            },
+            {
+              id: 102,
+              body: "Old comment",
+              path: "src/old.ts",
+              line: 3,
+              outdated: true
+            }
+          ]
+        };
       }
     }
   };
@@ -219,6 +239,7 @@ describe("GitHubMirror adapter scenarios", () => {
       assertRepository: vi.fn(),
       getRemoteSlug: vi.fn(),
       createWorktree: vi.fn(),
+      createWorktreeFromBranch: vi.fn(),
       removeWorktree: vi.fn(),
       commitAll: vi.fn(),
       pushBranch: vi.fn(),
@@ -272,5 +293,24 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(client.pullCreates[0]?.body).toContain("Claude CLI default (no explicit model configured)");
     expect(client.pullCreates[0]?.body).not.toContain("Claude Code");
     expect(result.url).toBe("https://example.com/pulls/55");
+  });
+
+  it("Given PR review comments exist, when they are listed, then current actionable comments are returned", async () => {
+    const mirror = new GitHubMirror("token", createMockClient());
+
+    const comments = await mirror.listPullRequestReviewComments({
+      owner: "acme",
+      repo: "demo",
+      pullNumber: 55
+    });
+
+    expect(comments).toEqual([
+      {
+        id: "101",
+        body: "Please add error handling.",
+        path: "src/app.ts",
+        line: 12
+      }
+    ]);
   });
 });

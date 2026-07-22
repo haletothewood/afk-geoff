@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import { configFilePath, writeDefaultProjectFiles } from "@afk-geoff/shared";
@@ -20,6 +22,7 @@ import {
 } from "./commands/run.js";
 import { dispatchLoop } from "./commands/dispatch.js";
 import { prepareReview } from "./commands/review.js";
+import { runPullRequestFollowUp } from "./commands/follow-up.js";
 import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
 import { autoSync } from "./sync.js";
@@ -146,6 +149,15 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     });
 
   program
+    .command("follow-up")
+    .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
+    .action(async (workItemId: string) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      await autoSync(ctx);
+      await runPullRequestFollowUp(ctx, workItemId);
+    });
+
+  program
     .command("undo")
     .argument("<workItemId>", "AFK work item id with an open AFK-created pull request")
     .option("--keep-branch", "Close the pull request but keep the branch and worktree")
@@ -176,7 +188,11 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   await program.parseAsync(argv);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectCliExecution =
+  process.argv[1] !== undefined &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isDirectCliExecution) {
   runCli().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);

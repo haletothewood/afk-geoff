@@ -1,27 +1,31 @@
 # afk-geoff
 
-AFK orchestration CLI for turning captured requirements into tracked work runs with local artifacts and optional GitHub mirroring.
+AFK Geoff is a boringly reliable execution layer for agentic repo work: it turns briefs from humans or orchestrators into isolated runs, verified changes, pull requests, and follow-up commits.
 
 ## Product Direction
 
-AFK is intended to be reused across many repositories, not just this one.
+AFK is intended to be reused across many repositories and driven by humans, scripts, CI jobs, bots, or higher-level agent frameworks.
 The operating model is:
 
-- human-guided planning up front
-- autonomous implementation runs from an execution brief
-- pull-request-centric review loops
+- an orchestrator chooses the work to attempt
+- AFK creates an isolated run from a brief or mirrored work source
+- the worker produces verified repo changes
+- GitHub pull requests become the handoff and review boundary
+- follow-up runs address feedback on the existing PR branch
 
 Now:
 - one work item at a time from a brief or mirrored issue
 - optional PR publishing (`run file <path> --pr`)
+- PR review follow-up on the existing PR branch (`follow-up <work-item-id>`)
 - explicit execution mode resolution before work starts
+- configurable runner/model selection for work and review phases
+- bounded autonomous review gate before completion
 
 Next:
-- configurable runner/model selection (including separate implementation vs review defaults)
-- PR review follow-up pass that can run on the existing PR branch
+- machine-readable command output for external orchestrators
 
 Later:
-- remote execution backends and broader source/publisher adapters
+- explicit backend selection, remote execution backends, and broader source/publisher adapters
 
 ## Execution Modes
 
@@ -38,12 +42,13 @@ Overlays (`security-gatekeeper`, `performance-tuner`, `accessibility-advocate`) 
 
 ```mermaid
 flowchart LR
-  A["Human explores and plans"] --> B["Create execution brief"]
-  B --> C["AFK run file brief.md --pr"]
-  C --> D["AFK opens PR with artifacts"]
-  D --> E["Human reviews PR"]
-  E --> F["AFK review/follow-up pass on same PR (planned; runner/model may differ)"]
-  F --> G["Merge and cleanup"]
+  A["Human, bot, CI, or agent framework"] --> B["Submit brief or work source"]
+  B --> C["AFK creates isolated run"]
+  C --> D["Worker edits and verifies repo"]
+  D --> E["AFK opens PR"]
+  E --> F["Human or agent reviews PR"]
+  F --> G["AFK follow-up updates same PR branch"]
+  G --> H["Orchestrator reads final status"]
 ```
 
 ## Quick Start
@@ -65,7 +70,7 @@ This creates:
 
 ## Safe First Workflow
 
-Start with one work item at a time and keep the loop human-reviewed:
+Start with one work item at a time and keep the loop human-reviewed while the orchestration contract stabilizes:
 
 1. Capture a requirement.
 2. Create an execution brief with your preferred planning skill.
@@ -82,7 +87,19 @@ pnpm afk status
 pnpm afk show <requirement-id>
 pnpm afk runs
 pnpm afk logs <run-id>
+pnpm afk follow-up <work-item-id>
 ```
+
+## Orchestrator Contract
+
+The CLI is the first stable control surface for other tools. Long term, commands should be easy for external orchestrators to call without scraping human-readable logs.
+
+Priority command contracts:
+
+- `afk run file <path> --pr --json`
+- `afk status <work-item-id> --json`
+- `afk follow-up <work-item-id> --json`
+- `afk runs --json`
 
 ## GitHub-Backed Setup
 
@@ -101,6 +118,9 @@ Once the repo has a GitHub remote:
 - `pnpm afk runs`
 - `pnpm afk logs <run-id>`
 - `pnpm afk review <work-item-id>`
+- `pnpm afk follow-up <work-item-id>`
+- `pnpm afk watch <run-id>`
+- `pnpm afk cleanup`
 
 ## Guardrails
 
@@ -112,6 +132,6 @@ Once the repo has a GitHub remote:
 
 ## Developer Docs
 
-- [BDD scenarios](/Users/davidneil/Development/Personal/afk-geoff/docs/bdd/scenarios.md)
-- [Ubiquitous language](/Users/davidneil/Development/Personal/afk-geoff/docs/ubiquitous-language.md)
-- [Backlog](/Users/davidneil/Development/Personal/afk-geoff/docs/backlog.md)
+- [BDD scenarios](docs/bdd/scenarios.md)
+- [Ubiquitous language](docs/ubiquitous-language.md)
+- [Backlog](docs/backlog.md)

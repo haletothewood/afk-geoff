@@ -9,7 +9,7 @@ Use these scenarios as the source for:
 - adapter-boundary tests
 - future Gherkin or story files
 
-Terms in this document follow [Ubiquitous Language](/Users/davidneil/Development/Personal/afk-geoff/docs/ubiquitous-language.md).
+Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 
 ## Command Matrix
 
@@ -22,6 +22,7 @@ Terms in this document follow [Ubiquitous Language](/Users/davidneil/Development
 | `afk dispatch` | starts autonomous execution for runnable AFK work | work runs and run artifacts are created |
 | `afk run` | executes one specific work item | work item moves through `in_progress` to terminal state |
 | `afk review` | prepares a manual HITL review run | review run and `review.md` brief are created |
+| `afk follow-up` | addresses review comments on an AFK-created pull request | existing PR branch receives follow-up commits |
 | `afk sync` | reconciles mirrored remote state into SQLite | mirrored state updates local statuses |
 
 ## Core Scenarios
@@ -38,8 +39,8 @@ Then the blocked AFK work item should become todo
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
-- [packages/core/src/usecases.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/core/src/usecases.test.ts)
+- `packages/cli/src/__tests__/dispatch.test.ts`
+- `packages/core/src/usecases.test.ts`
 
 ### Scenario: Preparing review for HITL work creates a review brief
 
@@ -53,8 +54,8 @@ And the review brief should contain the requirement, work item, and acceptance c
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
-- [packages/core/src/usecases.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/core/src/usecases.ts)
+- `packages/cli/src/__tests__/review.test.ts`
+- `packages/core/src/usecases.ts`
 
 ### Scenario: Only actionable work items are mirrored to GitHub
 
@@ -72,8 +73,24 @@ Then that work item should be mirrored
 
 Covered by:
 
-- [packages/cli/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/cli/src/index.test.ts)
-- [packages/adapter-github/src/index.test.ts](/Users/davidneil/Development/Personal/afk-geoff/packages/adapter-github/src/index.test.ts)
+- `packages/cli/src/__tests__/run.test.ts`
+- `packages/adapter-github/src/index.test.ts`
+
+### Scenario: Follow-up on an AFK-created pull request reuses the PR branch
+
+```gherkin
+Given an AFK work item has opened a pull request
+And the pull request has review comments
+When follow-up runs for that work item
+Then AFK should run against the existing PR branch
+And push follow-up commits to the same pull request
+And report how many review comments were addressed
+```
+
+Covered by:
+
+- `packages/cli/src/__tests__/follow-up.test.ts`
+- `packages/adapter-github/src/index.test.ts`
 
 ## Adapter-Boundary Scenarios
 
