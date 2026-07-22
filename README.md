@@ -118,6 +118,20 @@ Once the repo has a GitHub remote:
 3. Ensure the configured runner auth env vars are set.
 4. Run `pnpm afk doctor`.
 
+## GitHub Actions Harness
+
+The repository includes an experimental manual workflow, `AFK Run`, for external orchestrators that want a remote "issue URL in, PR out" entry point.
+
+Required repository secrets:
+
+- `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, depending on the configured runner auth
+
+Dispatch inputs:
+
+- `issue_url`: GitHub issue URL containing an AFK execution brief
+- `backend`: currently `local-docker`
+- `require_pr`: whether the run must publish a pull request
+
 ## Useful Commands
 
 - `pnpm afk doctor`

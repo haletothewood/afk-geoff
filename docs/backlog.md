@@ -110,7 +110,9 @@ Why:
 - for GitHub-backed repos, the cleanest unattended path is often “issue in, PR out” from CI instead of the local machine
 
 Scope:
-- add a remote execution backend behind the existing execution backend port
+- harden the first manual `workflow_dispatch` harness for "issue URL in, PR out"
+- define how local SQLite state and remote workflow state should reconcile
+- then add a remote execution backend behind the existing execution backend port
 - keep local Docker execution as the portable default
 
 ## P2

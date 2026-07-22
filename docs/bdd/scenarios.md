@@ -25,6 +25,7 @@ Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 | `afk follow-up` | addresses review comments on an AFK-created pull request | existing PR branch receives follow-up commits |
 | `afk --json` command variants | exposes orchestration state to external harnesses | stdout is one structured JSON payload with stable ids and URLs |
 | `afk sync` | reconciles mirrored remote state into SQLite | mirrored state updates local statuses |
+| GitHub Actions `AFK Run` workflow | remotely executes issue-backed AFK work | workflow dispatch accepts an issue URL and runs AFK with JSON output |
 
 ## Core Scenarios
 
@@ -111,6 +112,16 @@ Covered by:
 ## Adapter-Boundary Scenarios
 
 These scenarios are intentionally adapter-specific and may use GitHub terms directly.
+
+### Scenario: GitHub Actions can run issue-backed AFK work
+
+```gherkin
+Given an external orchestrator has a GitHub issue URL containing an AFK execution brief
+When it dispatches the AFK Run workflow with that issue URL
+Then the workflow should run `afk doctor --json`
+And execute `afk run issue <issue-url> --backend local-docker --json`
+And require pull request publication when the `require_pr` input is true
+```
 
 ### Scenario: A requirement mirror is a labeled parent issue
 
