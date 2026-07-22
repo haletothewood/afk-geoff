@@ -250,15 +250,21 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<target>", "Work source type: issue")
     .argument("<value>", "GitHub issue URL when target is 'issue'")
     .option("--no-pr", "Do not require the remote run to open a pull request")
+    .option("--afk-repository <repo>", "AFK Geoff repository for the GitHub Actions worker checkout", "haletothewood/afk-geoff")
+    .option("--afk-ref <ref>", "AFK Geoff git ref for the GitHub Actions worker checkout", "main")
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Remote execution backend").choices([...submitBackendChoices]).default("github-actions"))
-    .action(async (target: string, value: string, options: { pr?: boolean; json?: boolean; backend: typeof submitBackendChoices[number] }) => {
+    .action(async (target: string, value: string, options: { pr?: boolean; afkRepository: string; afkRef: string; json?: boolean; backend: typeof submitBackendChoices[number] }) => {
       const ctx = await openContext(process.cwd(), dependencies);
       const submitAction = async () => {
         if (target !== "issue") {
-          throw new Error("Usage: pnpm afk submit issue <github-issue-url> [--backend github-actions] [--json]");
+          throw new Error("Usage: pnpm afk submit issue <github-issue-url> [--backend github-actions] [--afk-repository owner/repo] [--afk-ref ref] [--json]");
         }
-        return await submitGitHubActionsIssueRun(ctx, value, { requirePullRequest: options.pr ?? true });
+        return await submitGitHubActionsIssueRun(ctx, value, {
+          requirePullRequest: options.pr ?? true,
+          afkRepository: options.afkRepository,
+          afkRef: options.afkRef
+        });
       };
 
       if (options.json) {

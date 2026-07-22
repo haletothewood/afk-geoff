@@ -276,7 +276,9 @@ describe("afk CLI — JSON output", () => {
     expect(payload.inputs).toEqual({
       issue_url: issueUrl,
       backend: "local-docker",
-      require_pr: "true"
+      require_pr: "true",
+      afk_repository: "haletothewood/afk-geoff",
+      afk_ref: "main"
     });
     expect(githubMirror.workflowDispatches).toEqual([
       {
@@ -287,10 +289,41 @@ describe("afk CLI — JSON output", () => {
         inputs: {
           issue_url: issueUrl,
           backend: "local-docker",
-          require_pr: "true"
+          require_pr: "true",
+          afk_repository: "haletothewood/afk-geoff",
+          afk_ref: "main"
         }
       }
     ]);
+  });
+
+  it("Given submit issue overrides AFK repo and ref, when dispatched, then those workflow inputs are sent", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    await captureConsole(async () => {
+      await fixture.cli([
+        "submit",
+        "issue",
+        issueUrl,
+        "--backend",
+        "github-actions",
+        "--afk-repository",
+        "acme/afk-geoff",
+        "--afk-ref",
+        "prototype-branch",
+        "--json"
+      ]);
+    });
+
+    expect(githubMirror.workflowDispatches[0]?.inputs).toMatchObject({
+      afk_repository: "acme/afk-geoff",
+      afk_ref: "prototype-branch"
+    });
   });
 
   it("Given remote-runs --json, when workflow runs exist, then it lists GitHub Actions runs", async () => {

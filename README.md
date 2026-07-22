@@ -137,7 +137,7 @@ pnpm afk init --with-github-actions
 
 If `.afk/config.yaml` already exists, this command only adds `.github/workflows/afk-run.yml`. It refuses to overwrite an existing workflow unless `--force-github-actions` is passed.
 
-The workflow currently assumes the target repo can run `pnpm afk`, so the AFK CLI must be available to that repo before remote execution can work.
+The workflow checks the target repo out into `target/`, checks AFK Geoff out into `afk-geoff/`, installs AFK's dependencies, and invokes that checkout's CLI against the target repo. Override the AFK source at dispatch time with `--afk-repository` and `--afk-ref` when testing a branch.
 
 For a local prototype before packaging is formalized, you can run this checkout's bin directly from another repo:
 
@@ -154,6 +154,8 @@ Dispatch inputs:
 - `issue_url`: GitHub issue URL containing an AFK execution brief
 - `backend`: currently `local-docker`
 - `require_pr`: whether the run must publish a pull request
+- `afk_repository`: AFK Geoff repository to check out for the worker CLI
+- `afk_ref`: AFK Geoff branch, tag, or SHA to check out
 
 Workflow artifacts:
 
@@ -164,6 +166,7 @@ External orchestrators can trigger that workflow through the CLI:
 
 ```bash
 pnpm afk submit issue <github-issue-url> --backend github-actions --json
+pnpm afk submit issue <github-issue-url> --backend github-actions --afk-ref <branch-or-sha> --json
 pnpm afk remote-runs --json
 pnpm afk remote-artifacts <github-actions-run-id> --json
 pnpm afk remote-download <github-actions-artifact-id> --json

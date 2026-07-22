@@ -124,13 +124,14 @@ These scenarios are intentionally adapter-specific and may use GitHub terms dire
 Given an external orchestrator has a GitHub issue URL containing an AFK execution brief
 When it runs `afk submit issue <issue-url> --backend github-actions --json`
 Then AFK should dispatch the AFK Run workflow with that issue URL
-And the JSON payload should include the workflow id, ref, backend, and dispatch inputs
+And the JSON payload should include the workflow id, ref, backend, AFK repository/ref, and dispatch inputs
 And `afk remote-runs --json` should list recent runs for the AFK Run workflow
 And `afk remote-artifacts <run-id> --json` should list uploaded workflow artifacts
 And `afk remote-download <artifact-id> --json` should download an artifact ZIP for offline inspection
 When the workflow starts
 Then the workflow should run `afk doctor --json`
 And execute `afk run issue <issue-url> --backend local-docker --json`
+And invoke AFK from the checked-out AFK Geoff repository instead of requiring the target repo to define `pnpm afk`
 And upload `afk-doctor.json` and `afk-result.json` artifacts
 And require pull request publication when the `require_pr` input is true
 ```

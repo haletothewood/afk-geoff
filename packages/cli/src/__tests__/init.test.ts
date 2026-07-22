@@ -45,7 +45,10 @@ describe("afk CLI — init command", () => {
     const workflow = fs.readFileSync(workflowPath, "utf8");
     expect(workflow).toContain("name: AFK Run");
     expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).toContain("pnpm afk doctor --json");
+    expect(workflow).toContain("repository: ${{ inputs.afk_repository }}");
+    expect(workflow).toContain("path: target");
+    expect(workflow).toContain("working-directory: afk-geoff");
+    expect(workflow).toContain("../afk-geoff/packages/cli/bin/afk.js doctor --json");
     expect(workflow).toContain("actions/upload-artifact@v4");
   });
 

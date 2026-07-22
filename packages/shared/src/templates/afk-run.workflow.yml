@@ -19,6 +19,16 @@ on:
         required: true
         default: true
         type: boolean
+      afk_repository:
+        description: "Repository containing the AFK Geoff CLI"
+        required: true
+        default: "haletothewood/afk-geoff"
+        type: string
+      afk_ref:
+        description: "Git ref for the AFK Geoff CLI checkout"
+        required: true
+        default: "main"
+        type: string
 
 permissions:
   contents: write
@@ -40,7 +50,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: target
           persist-credentials: true
+
+      - name: Check out AFK Geoff
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.afk_repository }}
+          ref: ${{ inputs.afk_ref }}
+          path: afk-geoff
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -52,21 +71,25 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: afk-geoff/pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: Install AFK Geoff dependencies
+        working-directory: afk-geoff
         run: pnpm install --frozen-lockfile
 
       - name: Preflight
-        run: pnpm afk doctor --json | tee afk-doctor.json
+        working-directory: target
+        run: ../afk-geoff/packages/cli/bin/afk.js doctor --json | tee afk-doctor.json
 
       - name: Run AFK issue
+        working-directory: target
         run: |
           set +e
           args=(run issue "${{ inputs.issue_url }}" --backend "${{ inputs.backend }}" --json)
           if [[ "${{ inputs.require_pr }}" == "true" ]]; then
             args+=(--pr)
           fi
-          pnpm afk "${args[@]}" > afk-result.json
+          ../afk-geoff/packages/cli/bin/afk.js "${args[@]}" > afk-result.json
           status=$?
           cat afk-result.json
           exit "$status"
@@ -77,6 +100,6 @@ jobs:
         with:
           name: afk-run-json
           path: |
-            afk-doctor.json
-            afk-result.json
+            target/afk-doctor.json
+            target/afk-result.json
           if-no-files-found: warn
