@@ -26,6 +26,7 @@ import { runPullRequestFollowUp } from "./commands/follow-up.js";
 import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
 import { submitGitHubActionsIssueRun } from "./commands/submit.js";
+import { listRemoteRuns, printRemoteRuns } from "./commands/remote-runs.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
@@ -150,6 +151,31 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .action(async (options: { max: string }) => {
       const ctx = await openContext(process.cwd(), dependencies);
       await dispatchLoop(ctx, Number(options.max));
+    });
+
+  program
+    .command("remote-runs")
+    .option("--workflow <workflowId>", "GitHub Actions workflow id", "afk-run.yml")
+    .option("--limit <count>", "Maximum number of workflow runs to list", "10")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (options: { workflow: string; limit: string; json?: boolean }) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      const limit = Number(options.limit);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error("--limit must be a positive integer");
+      }
+
+      if (options.json) {
+        try {
+          const snapshot = await runForJson(async () => await listRemoteRuns(ctx, { workflowId: options.workflow, limit }));
+          printJson({ command: "remote-runs", ok: true, ...snapshot });
+        } catch (error) {
+          printJson({ command: "remote-runs", ok: false, workflowId: options.workflow, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        await printRemoteRuns(ctx, { workflowId: options.workflow, limit });
+      }
     });
 
   program

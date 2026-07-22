@@ -156,6 +156,25 @@ export interface WorkflowDispatcher {
   }): Promise<void>;
 }
 
+export interface WorkflowRunSource {
+  listWorkflowRuns(input: {
+    owner: string;
+    repo: string;
+    workflowId: string;
+    limit: number;
+  }): Promise<Array<{
+    id: string;
+    name?: string;
+    status?: string;
+    conclusion?: string;
+    branch?: string;
+    event?: string;
+    url?: string;
+    createdAt?: string;
+    updatedAt?: string;
+  }>>;
+}
+
 export interface SourceUpdatePayload {
   status: "done" | "blocked" | "failed";
   summary: string;

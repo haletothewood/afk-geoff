@@ -98,6 +98,7 @@ Priority command contracts:
 
 - `afk doctor --json`
 - `afk submit issue <github-issue-url> --backend github-actions --json`
+- `afk remote-runs --json`
 - `afk run file <path> --pr --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
@@ -142,6 +143,7 @@ External orchestrators can trigger that workflow through the CLI:
 
 ```bash
 pnpm afk submit issue <github-issue-url> --backend github-actions --json
+pnpm afk remote-runs --json
 ```
 
 ## Useful Commands

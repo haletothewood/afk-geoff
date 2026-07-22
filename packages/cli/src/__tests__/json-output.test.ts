@@ -292,6 +292,54 @@ describe("afk CLI — JSON output", () => {
       }
     ]);
   });
+
+  it("Given remote-runs --json, when workflow runs exist, then it lists GitHub Actions runs", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.workflowRuns = [
+      {
+        id: "123",
+        name: "Run AFK work from issue",
+        status: "completed",
+        conclusion: "success",
+        branch: "main",
+        event: "workflow_dispatch",
+        url: "https://github.com/acme/demo/actions/runs/123",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:01:00Z"
+      }
+    ];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["remote-runs", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      workflowId: string;
+      runs: Array<{ id: string; status: string; conclusion: string; url: string }>;
+    };
+
+    expect(payload.command).toBe("remote-runs");
+    expect(payload.ok).toBe(true);
+    expect(payload.workflowId).toBe("afk-run.yml");
+    expect(payload.runs).toEqual([
+      {
+        id: "123",
+        name: "Run AFK work from issue",
+        status: "completed",
+        conclusion: "success",
+        branch: "main",
+        event: "workflow_dispatch",
+        url: "https://github.com/acme/demo/actions/runs/123",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:01:00Z"
+      }
+    ]);
+  });
 });
 
 async function captureConsoleForRejected(action: () => Promise<void>): Promise<string> {

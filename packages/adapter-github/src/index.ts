@@ -1,4 +1,4 @@
-import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowDispatcher } from "@afk-geoff/core";
+import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
@@ -23,6 +23,26 @@ export interface OctokitLike {
       ref: string;
       inputs?: Record<string, string>;
     }): Promise<unknown>;
+    listWorkflowRuns(input: {
+      owner: string;
+      repo: string;
+      workflow_id: string;
+      per_page?: number;
+    }): Promise<{
+      data: {
+        workflow_runs: Array<{
+          id: number;
+          name?: string | null;
+          status?: string | null;
+          conclusion?: string | null;
+          head_branch?: string | null;
+          event?: string | null;
+          html_url?: string | null;
+          created_at?: string | null;
+          updated_at?: string | null;
+        }>;
+      };
+    }>;
   };
 }
 
@@ -54,7 +74,7 @@ export class GitHubIssueWorkSource implements WorkSource<string> {
   }
 }
 
-export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowDispatcher {
+export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowDispatcher, WorkflowRunSource {
   private readonly client: OctokitLike;
 
   public constructor(token: string, client?: OctokitLike) {
@@ -203,6 +223,32 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
       ref: input.ref,
       inputs: input.inputs
     });
+  }
+
+  public async listWorkflowRuns(input: {
+    owner: string;
+    repo: string;
+    workflowId: string;
+    limit: number;
+  }): Promise<Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
+    const response = await this.client.actions.listWorkflowRuns({
+      owner: input.owner,
+      repo: input.repo,
+      workflow_id: input.workflowId,
+      per_page: input.limit
+    });
+
+    return response.data.workflow_runs.map((run) => ({
+      id: String(run.id),
+      ...(run.name ? { name: run.name } : {}),
+      ...(run.status ? { status: run.status } : {}),
+      ...(run.conclusion ? { conclusion: run.conclusion } : {}),
+      ...(run.head_branch ? { branch: run.head_branch } : {}),
+      ...(run.event ? { event: run.event } : {}),
+      ...(run.html_url ? { url: run.html_url } : {}),
+      ...(run.created_at ? { createdAt: run.created_at } : {}),
+      ...(run.updated_at ? { updatedAt: run.updated_at } : {})
+    }));
   }
 
   private buildExternalRef(entityType: ExternalRef["entityType"], entityId: string, remoteType: ExternalRef["remoteType"], remoteId: number, remoteNumber: number, url?: string): ExternalRef {

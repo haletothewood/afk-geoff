@@ -115,6 +115,25 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
       async createWorkflowDispatch(input) {
         workflowDispatches.push(input);
         return {};
+      },
+      async listWorkflowRuns() {
+        return {
+          data: {
+            workflow_runs: [
+              {
+                id: 123,
+                name: "Run AFK work from issue",
+                status: "completed",
+                conclusion: "success",
+                head_branch: "main",
+                event: "workflow_dispatch",
+                html_url: "https://github.com/acme/demo/actions/runs/123",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:01:00Z"
+              }
+            ]
+          }
+        };
       }
     }
   };
@@ -357,6 +376,31 @@ describe("GitHubMirror adapter scenarios", () => {
           backend: "local-docker",
           require_pr: "true"
         }
+      }
+    ]);
+  });
+
+  it("Given workflow runs exist, when listed, then recent GitHub Actions runs are returned", async () => {
+    const mirror = new GitHubMirror("token", createMockClient());
+
+    const runs = await mirror.listWorkflowRuns({
+      owner: "acme",
+      repo: "demo",
+      workflowId: "afk-run.yml",
+      limit: 5
+    });
+
+    expect(runs).toEqual([
+      {
+        id: "123",
+        name: "Run AFK work from issue",
+        status: "completed",
+        conclusion: "success",
+        branch: "main",
+        event: "workflow_dispatch",
+        url: "https://github.com/acme/demo/actions/runs/123",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:01:00Z"
       }
     ]);
   });
