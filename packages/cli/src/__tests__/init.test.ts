@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { createFixture, makeTempDir } from "./test-helpers.js";
 
@@ -46,6 +47,16 @@ describe("afk CLI — init command", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("pnpm afk doctor --json");
     expect(workflow).toContain("actions/upload-artifact@v4");
+  });
+
+  it("Given the AFK bin is run from another repo without local tsx, when init adds GitHub Actions, then it still starts", async () => {
+    const fixture = await createFixture(tempDir);
+    const workflowPath = path.join(fixture.repoDir, ".github", "workflows", "afk-run.yml");
+    const binPath = path.join(originalCwd, "packages", "cli", "bin", "afk.js");
+
+    execFileSync(binPath, ["init", "--with-github-actions"], { cwd: fixture.repoDir });
+
+    expect(fs.readFileSync(workflowPath, "utf8")).toContain("name: AFK Run");
   });
 
   it("Given a GitHub Actions workflow already exists, when init adds GitHub Actions, then it refuses to overwrite it", async () => {

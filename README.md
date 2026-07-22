@@ -139,6 +139,12 @@ If `.afk/config.yaml` already exists, this command only adds `.github/workflows/
 
 The workflow currently assumes the target repo can run `pnpm afk`, so the AFK CLI must be available to that repo before remote execution can work.
 
+For a local prototype before packaging is formalized, you can run this checkout's bin directly from another repo:
+
+```bash
+"/absolute/path/to/AFK Geoff/packages/cli/bin/afk.js" init --with-github-actions
+```
+
 Required repository secrets:
 
 - `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, depending on the configured runner auth
