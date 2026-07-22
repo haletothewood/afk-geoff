@@ -97,6 +97,7 @@ The CLI is the first stable control surface for other tools. Long term, commands
 Priority command contracts:
 
 - `afk doctor --json`
+- `afk submit issue <github-issue-url> --backend github-actions --json`
 - `afk run file <path> --pr --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
@@ -131,6 +132,12 @@ Dispatch inputs:
 - `issue_url`: GitHub issue URL containing an AFK execution brief
 - `backend`: currently `local-docker`
 - `require_pr`: whether the run must publish a pull request
+
+External orchestrators can trigger that workflow through the CLI:
+
+```bash
+pnpm afk submit issue <github-issue-url> --backend github-actions --json
+```
 
 ## Useful Commands
 

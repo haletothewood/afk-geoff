@@ -146,6 +146,16 @@ export interface PullRequestReviewSource {
   listPullRequestReviewComments(input: { owner: string; repo: string; pullNumber: number }): Promise<Array<{ id: string; body: string; path?: string; line?: number }>>;
 }
 
+export interface WorkflowDispatcher {
+  dispatchWorkflow(input: {
+    owner: string;
+    repo: string;
+    workflowId: string;
+    ref: string;
+    inputs: Record<string, string>;
+  }): Promise<void>;
+}
+
 export interface SourceUpdatePayload {
   status: "done" | "blocked" | "failed";
   summary: string;

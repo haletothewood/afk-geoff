@@ -18,13 +18,23 @@ interface RecordedPullCreate {
   body: string;
 }
 
-function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]; pullCreates: RecordedPullCreate[] } {
+interface RecordedWorkflowDispatch {
+  owner: string;
+  repo: string;
+  workflow_id: string;
+  ref: string;
+  inputs?: Record<string, string>;
+}
+
+function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]; pullCreates: RecordedPullCreate[]; workflowDispatches: RecordedWorkflowDispatch[] } {
   const issueCreates: RecordedIssueCreate[] = [];
   const pullCreates: RecordedPullCreate[] = [];
+  const workflowDispatches: RecordedWorkflowDispatch[] = [];
 
   return {
     issueCreates,
     pullCreates,
+    workflowDispatches,
     issues: {
       async create(input) {
         issueCreates.push(input);
@@ -99,6 +109,12 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
             }
           ]
         };
+      }
+    },
+    actions: {
+      async createWorkflowDispatch(input) {
+        workflowDispatches.push(input);
+        return {};
       }
     }
   };
@@ -310,6 +326,37 @@ describe("GitHubMirror adapter scenarios", () => {
         body: "Please add error handling.",
         path: "src/app.ts",
         line: 12
+      }
+    ]);
+  });
+
+  it("Given a workflow dispatch is requested, then the GitHub Actions workflow is dispatched with inputs", async () => {
+    const client = createMockClient();
+    const mirror = new GitHubMirror("token", client);
+
+    await mirror.dispatchWorkflow({
+      owner: "acme",
+      repo: "demo",
+      workflowId: "afk-run.yml",
+      ref: "main",
+      inputs: {
+        issue_url: "https://github.com/acme/demo/issues/42",
+        backend: "local-docker",
+        require_pr: "true"
+      }
+    });
+
+    expect(client.workflowDispatches).toEqual([
+      {
+        owner: "acme",
+        repo: "demo",
+        workflow_id: "afk-run.yml",
+        ref: "main",
+        inputs: {
+          issue_url: "https://github.com/acme/demo/issues/42",
+          backend: "local-docker",
+          require_pr: "true"
+        }
       }
     ]);
   });

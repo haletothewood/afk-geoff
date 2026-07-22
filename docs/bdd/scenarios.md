@@ -21,6 +21,7 @@ Terms in this document follow [Ubiquitous Language](../ubiquitous-language.md).
 | `afk status` | reports queue state after lightweight sync | queue output reflects current work item states |
 | `afk dispatch` | starts autonomous execution for runnable AFK work | work runs and run artifacts are created |
 | `afk run` | executes one specific work item | work item moves through `in_progress` to terminal state |
+| `afk submit` | submits work to a remote execution harness | GitHub Actions workflow dispatch is requested with structured JSON output |
 | `afk review` | prepares a manual HITL review run | review run and `review.md` brief are created |
 | `afk follow-up` | addresses review comments on an AFK-created pull request | existing PR branch receives follow-up commits |
 | `afk --json` command variants | exposes orchestration state to external harnesses | stdout is one structured JSON payload with stable ids and URLs |
@@ -117,11 +118,19 @@ These scenarios are intentionally adapter-specific and may use GitHub terms dire
 
 ```gherkin
 Given an external orchestrator has a GitHub issue URL containing an AFK execution brief
-When it dispatches the AFK Run workflow with that issue URL
+When it runs `afk submit issue <issue-url> --backend github-actions --json`
+Then AFK should dispatch the AFK Run workflow with that issue URL
+And the JSON payload should include the workflow id, ref, backend, and dispatch inputs
+When the workflow starts
 Then the workflow should run `afk doctor --json`
 And execute `afk run issue <issue-url> --backend local-docker --json`
 And require pull request publication when the `require_pr` input is true
 ```
+
+Covered by:
+
+- `packages/cli/src/__tests__/json-output.test.ts`
+- `packages/adapter-github/src/index.test.ts`
 
 ### Scenario: A requirement mirror is a labeled parent issue
 

@@ -25,12 +25,14 @@ import { prepareReview } from "./commands/review.js";
 import { runPullRequestFollowUp } from "./commands/follow-up.js";
 import { undoWorkItem } from "./commands/undo.js";
 import { cleanupArtifacts } from "./commands/cleanup.js";
+import { submitGitHubActionsIssueRun } from "./commands/submit.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
 import type { CliDependencies } from "./types.js";
 
 const executionBackendChoices = ["local-docker"] as const;
+const submitBackendChoices = ["github-actions"] as const;
 
 export type { CliDependencies };
 
@@ -148,6 +150,36 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .action(async (options: { max: string }) => {
       const ctx = await openContext(process.cwd(), dependencies);
       await dispatchLoop(ctx, Number(options.max));
+    });
+
+  program
+    .command("submit")
+    .argument("<target>", "Work source type: issue")
+    .argument("<value>", "GitHub issue URL when target is 'issue'")
+    .option("--no-pr", "Do not require the remote run to open a pull request")
+    .option("--json", "Print machine-readable JSON")
+    .addOption(new Option("--backend <backend>", "Remote execution backend").choices([...submitBackendChoices]).default("github-actions"))
+    .action(async (target: string, value: string, options: { pr?: boolean; json?: boolean; backend: typeof submitBackendChoices[number] }) => {
+      const ctx = await openContext(process.cwd(), dependencies);
+      const submitAction = async () => {
+        if (target !== "issue") {
+          throw new Error("Usage: pnpm afk submit issue <github-issue-url> [--backend github-actions] [--json]");
+        }
+        return await submitGitHubActionsIssueRun(ctx, value, { requirePullRequest: options.pr ?? true });
+      };
+
+      if (options.json) {
+        try {
+          const outcome = await runForJson(submitAction);
+          printJson({ command: "submit", ok: true, target, value, ...outcome });
+        } catch (error) {
+          printJson({ command: "submit", ok: false, target, value, backend: options.backend, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        const outcome = await submitAction();
+        console.log(`Submitted ${value} to ${outcome.workflowId} on ${outcome.ref}`);
+      }
     });
 
   program

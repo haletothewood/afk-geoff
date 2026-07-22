@@ -211,7 +211,7 @@ describe("afk CLI — JSON output", () => {
 	    expect(output).not.toContain("Addressed 1 review comment");
 	  });
 
-	  it("Given follow-up --json has no review comments, then stdout includes a structured error payload", async () => {
+  it("Given follow-up --json has no review comments, then stdout includes a structured error payload", async () => {
 	    const githubMirror = new MockGitHubMirror();
 	    const fixture = await createFixture(tempDir, {
 	      githubEnabled: true,
@@ -237,9 +237,62 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.ok).toBe(false);
 	    expect(payload.backend).toBe("local-docker");
 	    expect(payload.workItemId).toBe(initialRun!.workItemId);
-	    expect(payload.error.message).toContain("no actionable review comments");
-	  });
-	});
+    expect(payload.error.message).toContain("no actionable review comments");
+  });
+
+  it("Given submit issue --backend github-actions --json, when GitHub is configured, then it dispatches the AFK workflow", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      target: string;
+      value: string;
+      backend: string;
+      workflowId: string;
+      ref: string;
+      issueUrl: string;
+      requirePullRequest: boolean;
+      inputs: Record<string, string>;
+    };
+
+    expect(payload.command).toBe("submit");
+    expect(payload.ok).toBe(true);
+    expect(payload.target).toBe("issue");
+    expect(payload.value).toBe(issueUrl);
+    expect(payload.backend).toBe("github-actions");
+    expect(payload.workflowId).toBe("afk-run.yml");
+    expect(payload.ref).toBe("main");
+    expect(payload.issueUrl).toBe(issueUrl);
+    expect(payload.requirePullRequest).toBe(true);
+    expect(payload.inputs).toEqual({
+      issue_url: issueUrl,
+      backend: "local-docker",
+      require_pr: "true"
+    });
+    expect(githubMirror.workflowDispatches).toEqual([
+      {
+        owner: "acme",
+        repo: "demo",
+        workflowId: "afk-run.yml",
+        ref: "main",
+        inputs: {
+          issue_url: issueUrl,
+          backend: "local-docker",
+          require_pr: "true"
+        }
+      }
+    ]);
+  });
+});
 
 async function captureConsoleForRejected(action: () => Promise<void>): Promise<string> {
   const lines: string[] = [];

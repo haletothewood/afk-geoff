@@ -1,4 +1,4 @@
-import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource } from "@afk-geoff/core";
+import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowDispatcher } from "@afk-geoff/core";
 import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
@@ -14,6 +14,15 @@ export interface OctokitLike {
     update(input: { owner: string; repo: string; pull_number: number; state: "open" | "closed" }): Promise<unknown>;
     get(input: { owner: string; repo: string; pull_number: number }): Promise<{ data: { state: string; merged: boolean } }>;
     listReviewComments(input: { owner: string; repo: string; pull_number: number; per_page?: number }): Promise<{ data: Array<{ id: number; body?: string; path?: string; line?: number | null; outdated?: boolean }> }>;
+  };
+  actions: {
+    createWorkflowDispatch(input: {
+      owner: string;
+      repo: string;
+      workflow_id: string;
+      ref: string;
+      inputs?: Record<string, string>;
+    }): Promise<unknown>;
   };
 }
 
@@ -45,7 +54,7 @@ export class GitHubIssueWorkSource implements WorkSource<string> {
   }
 }
 
-export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource {
+export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowDispatcher {
   private readonly client: OctokitLike;
 
   public constructor(token: string, client?: OctokitLike) {
@@ -178,6 +187,22 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
         ...(comment.path ? { path: comment.path } : {}),
         ...(typeof comment.line === "number" ? { line: comment.line } : {})
       }));
+  }
+
+  public async dispatchWorkflow(input: {
+    owner: string;
+    repo: string;
+    workflowId: string;
+    ref: string;
+    inputs: Record<string, string>;
+  }): Promise<void> {
+    await this.client.actions.createWorkflowDispatch({
+      owner: input.owner,
+      repo: input.repo,
+      workflow_id: input.workflowId,
+      ref: input.ref,
+      inputs: input.inputs
+    });
   }
 
   private buildExternalRef(entityType: ExternalRef["entityType"], entityId: string, remoteType: ExternalRef["remoteType"], remoteId: number, remoteNumber: number, url?: string): ExternalRef {

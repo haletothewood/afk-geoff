@@ -1,4 +1,4 @@
-import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater } from "@afk-geoff/core";
+import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater, WorkflowDispatcher } from "@afk-geoff/core";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { DockerWorkspaceRuntime } from "@afk-geoff/runtime-docker";
@@ -18,7 +18,7 @@ export interface CliContext {
   runner: AgentRunner;
   executionBackendKind: ExecutionBackendKind;
   githubToken: string | undefined;
-  github: (IssueMirror & ChangeRequestPublisher & Partial<PullRequestReviewSource>) | undefined;
+  github: (IssueMirror & ChangeRequestPublisher & Partial<PullRequestReviewSource> & Partial<WorkflowDispatcher>) | undefined;
   executionBackend: ExecutionBackend;
   resultPublisher: ResultPublisher | undefined;
   remote: { owner: string; repo: string } | undefined;
@@ -26,7 +26,7 @@ export interface CliContext {
 }
 
 export interface CliDependencies {
-  githubFactory?: (token: string) => IssueMirror & ChangeRequestPublisher & Partial<PullRequestReviewSource>;
+  githubFactory?: (token: string) => IssueMirror & ChangeRequestPublisher & Partial<PullRequestReviewSource> & Partial<WorkflowDispatcher>;
   githubIssueWorkSourceFactory?: (token: string) => import("@afk-geoff/core").WorkSource<string>;
   githubTokenResolver?: () => Promise<string | undefined>;
   /** Override the mechanism used to spawn the background worker for --detach runs. */
