@@ -189,6 +189,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
     let lastWorkerResult: import("@afk-geoff/shared").WorkerResult | undefined;
     let reviewIssues: string[] = [];
+    const workerResults: WorkerPhaseSummary[] = [];
+    const reviewResults: ReviewPhaseSummary[] = [];
+    const verificationSummaries: VerificationPhaseSummary[] = [];
+    const commits: CommitPhaseSummary[] = [];
 
     // -------------------------------------------------------------------------
     // Bounded autonomous gate loop: work → verify → review → fix → verify → ...
@@ -255,6 +259,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
       const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
       const stderrPath = path.join(runDir, `${phase}-stderr-${iteration}.log`);
+      console.log(`[${phase}] iteration ${iteration}: worker running (logs: ${path.basename(stdoutPath)}, ${path.basename(stderrPath)})`);
 
       const heartbeatInterval = setInterval(() => {
         try {
@@ -304,12 +309,33 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         });
         throw new Error(`Agent produced malformed result.json for ${input.workItem.id} (iteration ${iteration}): ${String(err)}`);
       }
+      const phaseResultPath = path.join(runDir, `${phase}-result-${iteration}.json`);
+      fs.copyFileSync(hostResultPath, phaseResultPath);
+      workerResults.push({
+        iteration,
+        phase,
+        status: agentResult.status,
+        summary: agentResult.summary,
+        resultPath: phaseResultPath
+      });
+      console.log(`[${phase}] iteration ${iteration}: ${agentResult.status} - ${agentResult.summary}`);
 
       if (agentResult.status === "blocked" || agentResult.status === "failed") {
         await this.store.updateWorkItemStatus(input.workItem.id, agentResult.status);
         await this.store.updateRun(runId, {
           status: agentResult.status === "failed" ? "failed" : "completed",
           summary: agentResult.summary
+        });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: agentResult.status,
+          summary: agentResult.summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          branchName,
+          worktreePath
         });
         return {
           status: agentResult.status,
@@ -322,7 +348,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       lastWorkerResult = agentResult;
 
       // Commit changes from this iteration before running verification and review.
-      await this.git.commitAll({
+      const commit = await this.git.commitAll({
         cwd: worktreePath,
         message: isFollowUp && iteration === 1
           ? `afk: address PR feedback for ${input.workItem.title}`
@@ -330,6 +356,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           ? `afk: ${input.workItem.title}`
           : `afk: ${input.workItem.title} (fix ${iteration - 1})`
       });
+      commits.push({ iteration, phase, created: commit.created, ...(commit.sha ? { sha: commit.sha } : {}) });
+      console.log(`[commit] iteration ${iteration}: ${commit.created ? commit.sha ?? "created" : "no changes"}`);
 
       // ------------------------------------------------------------------
       // Verification
@@ -342,6 +370,20 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       });
 
       const verificationResults = await runVerificationCommands(input.verification, worktreePath);
+      verificationSummaries.push({
+        iteration,
+        results: verificationResults.map((result) => ({
+          command: result.command,
+          passed: result.passed,
+          exitCode: result.exitCode
+        }))
+      });
+      if (verificationResults.length > 0) {
+        const passed = verificationResults.filter((result) => result.passed).length;
+        console.log(`[verify] iteration ${iteration}: ${passed}/${verificationResults.length} passed`);
+      } else {
+        console.log(`[verify] iteration ${iteration}: no verification commands configured`);
+      }
 
       // ------------------------------------------------------------------
       // Review
@@ -377,6 +419,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const reviewStdin = reviewInvocation.promptTransport === "stdin" ? reviewPrompt : undefined;
       const reviewStdoutPath = path.join(runDir, `review-stdout-${iteration}.log`);
       const reviewStderrPath = path.join(runDir, `review-stderr-${iteration}.log`);
+      console.log(`[review] iteration ${iteration}: reviewer running (logs: ${path.basename(reviewStdoutPath)}, ${path.basename(reviewStderrPath)})`);
 
       let reviewExitCode: number;
       try {
@@ -429,6 +472,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           hasDiff: false
         };
       }
+      reviewResults.push({
+        iteration,
+        verdict: reviewResult.verdict,
+        ...(reviewResult.issues && reviewResult.issues.length > 0 ? { issues: reviewResult.issues } : {}),
+        ...(reviewResult.blockerReason ? { blockerReason: reviewResult.blockerReason } : {}),
+        resultPath: reviewResultPath
+      });
+      console.log(`[review] iteration ${iteration}: ${reviewResult.verdict}${reviewResult.issues?.length ? ` (${reviewResult.issues.length} issue${reviewResult.issues.length === 1 ? "" : "s"})` : ""}`);
 
       if (reviewResult.verdict === "PASS") {
         // Quality gate passed — proceed to publish.
@@ -439,6 +490,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         const reason = reviewResult.blockerReason ?? "Review agent returned BLOCKED without a reason";
         await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
         await this.store.updateRun(runId, { status: "completed", summary: reason });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary: reason,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          branchName,
+          worktreePath
+        });
         return {
           status: "blocked",
           summary: reason,
@@ -455,6 +517,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         const issueList = reviewIssues.map((i) => `- ${i}`).join("\n");
         await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
         await this.store.updateRun(runId, { status: "completed", summary: capSummary });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary: capSummary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          branchName,
+          worktreePath
+        });
         return {
           status: "blocked",
           summary: capSummary,
@@ -475,6 +548,18 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     if (!hasDiff) {
       await this.store.updateWorkItemStatus(input.workItem.id, "done");
       await this.store.updateRun(runId, { status: "completed", summary: finalResult.summary });
+      writeFinalRunResult(path.join(runDir, "final-result.json"), {
+        runId,
+        status: "done",
+        summary: finalResult.summary,
+        workerResults,
+        reviewResults,
+        verificationSummaries,
+        commits,
+        branchName,
+        worktreePath,
+        hasDiff: false
+      });
       return {
         status: "done",
         summary: finalResult.summary,
@@ -494,6 +579,19 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           }
         : undefined;
 
+    writeFinalRunResult(path.join(runDir, "final-result.json"), {
+      runId,
+      status: "done",
+      summary: finalResult.summary,
+      workerResults,
+      reviewResults,
+      verificationSummaries,
+      commits,
+      branchName,
+      worktreePath,
+      hasDiff: true
+    });
+
     return {
       status: "done",
       summary: finalResult.summary,
@@ -509,6 +607,97 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+interface WorkerPhaseSummary {
+  iteration: number;
+  phase: string;
+  status: string;
+  summary: string;
+  resultPath: string;
+}
+
+interface ReviewPhaseSummary {
+  iteration: number;
+  verdict: string;
+  issues?: string[];
+  blockerReason?: string;
+  resultPath: string;
+}
+
+interface VerificationPhaseSummary {
+  iteration: number;
+  results: Array<{ command: string; passed: boolean; exitCode: number }>;
+}
+
+interface CommitPhaseSummary {
+  iteration: number;
+  phase: string;
+  created: boolean;
+  sha?: string;
+}
+
+function writeFinalRunResult(pathname: string, result: {
+  runId: string;
+  status: string;
+  summary: string;
+  workerResults: WorkerPhaseSummary[];
+  reviewResults: ReviewPhaseSummary[];
+  verificationSummaries: VerificationPhaseSummary[];
+  commits: CommitPhaseSummary[];
+  branchName: string;
+  worktreePath: string;
+  hasDiff?: boolean;
+}): void {
+  fs.writeFileSync(
+    pathname,
+    JSON.stringify(
+      {
+        ...result,
+        latestWorkerSummary: result.summary,
+        summary: buildAggregateSummary(result)
+      },
+      null,
+      2
+    )
+  );
+}
+
+function buildAggregateSummary(result: {
+  status: string;
+  summary: string;
+  workerResults: WorkerPhaseSummary[];
+  reviewResults: ReviewPhaseSummary[];
+  verificationSummaries: VerificationPhaseSummary[];
+  commits: CommitPhaseSummary[];
+}): string {
+  const workerCount = result.workerResults.length;
+  const reviewCount = result.reviewResults.length;
+  const commitCount = result.commits.filter((commit) => commit.created).length;
+  const verificationCommandCount = result.verificationSummaries.reduce(
+    (count, verification) => count + verification.results.length,
+    0
+  );
+  const issueCount = result.reviewResults.reduce(
+    (count, review) => count + (review.issues?.length ?? 0),
+    0
+  );
+  const parts = [
+    result.summary,
+    `${workerCount} worker phase${workerCount === 1 ? "" : "s"}`,
+    `${reviewCount} review pass${reviewCount === 1 ? "" : "es"}`,
+    `${commitCount} commit${commitCount === 1 ? "" : "s"}`
+  ];
+
+  if (verificationCommandCount > 0) {
+    parts.push(`${verificationCommandCount} verification command${verificationCommandCount === 1 ? "" : "s"}`);
+  }
+
+  if (issueCount > 0) {
+    parts.push(`${issueCount} review issue${issueCount === 1 ? "" : "s"} addressed`);
+  }
+
+  return `${result.status}: ${parts.join("; ")}`;
+}
 
 function writeProgress(progressPath: string, progress: RunProgress): void {
   fs.writeFileSync(progressPath, JSON.stringify(progress, null, 2));

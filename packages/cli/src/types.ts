@@ -55,6 +55,10 @@ export interface RunOutcome {
   status?: "completed" | "failed" | "blocked" | "running" | "prepared";
   branchName?: string;
   worktreePath?: string;
+  runDir?: string;
+  resultPath?: string;
+  finalResultPath?: string;
+  finalVerdict?: string;
   prUrl?: string;
   addressedReviewComments?: number;
   backend?: ExecutionBackendKind;

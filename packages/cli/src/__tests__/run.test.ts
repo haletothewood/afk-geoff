@@ -137,6 +137,19 @@ describe("afk CLI — run command", () => {
     expect(run?.status).toBe("completed");
     expect(run?.summary).toBe("Smoke runner completed without making changes");
     expect(fs.readFileSync(path.join(run!.runDir, "result.json"), "utf8")).toContain("AFK smoke runner completed successfully");
+    expect(fs.existsSync(path.join(run!.runDir, "work-result-1.json"))).toBe(true);
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      latestWorkerSummary: string;
+      workerResults: Array<{ phase: string; summary: string }>;
+      reviewResults: Array<{ verdict: string }>;
+    };
+    expect(finalResult.latestWorkerSummary).toBe("Smoke runner completed without making changes");
+    expect(finalResult.workerResults).toEqual([
+      expect.objectContaining({ phase: "work", summary: "Smoke runner completed without making changes" })
+    ]);
+    expect(finalResult.reviewResults).toEqual([
+      expect.objectContaining({ verdict: "PASS" })
+    ]);
   });
 
   it("Given repo-level claude.md and .claude config, when a Claude run executes, then runner-home includes both", async () => {

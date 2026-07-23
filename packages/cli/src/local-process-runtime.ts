@@ -48,7 +48,7 @@ export class LocalProcessWorkspaceRuntime implements WorkspaceRuntime {
       {
         stdoutPath: input.stdoutPath,
         stderrPath: input.stderrPath,
-        mirrorToConsole: true,
+        mirrorToConsole: process.env.AFK_VERBOSE === "1",
         pidPath: path.join(input.runDir, "worker-process.json"),
         pidMetadata: { runtime: "local-process" }
       }

@@ -157,15 +157,38 @@ function buildRunOutcome(
   return {
     workItemId,
     ...(run
-      ? {
-          runId: run.id,
-          status: run.status,
-          ...(run.branchName ? { branchName: run.branchName } : {}),
-          ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
-        }
+      ? buildRunArtifactOutcome(run)
       : {}),
     ...patch
   };
+}
+
+function buildRunArtifactOutcome(run: NonNullable<Awaited<ReturnType<typeof latestRunForWorkItem>>>): RunOutcome {
+  const finalResultPath = path.join(run.runDir, "final-result.json");
+  const finalVerdict = readFinalVerdict(finalResultPath);
+  return {
+    runId: run.id,
+    status: run.status,
+    ...(run.branchName ? { branchName: run.branchName } : {}),
+    ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
+    runDir: run.runDir,
+    resultPath: path.join(run.runDir, "result.json"),
+    finalResultPath,
+    ...(finalVerdict ? { finalVerdict } : {})
+  };
+}
+
+function readFinalVerdict(finalResultPath: string): string | undefined {
+  if (!fs.existsSync(finalResultPath)) {
+    return undefined;
+  }
+
+  try {
+    const result = JSON.parse(fs.readFileSync(finalResultPath, "utf8")) as { status?: unknown };
+    return typeof result.status === "string" ? result.status : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runExecutionBriefFile(

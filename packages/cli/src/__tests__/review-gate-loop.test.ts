@@ -82,6 +82,26 @@ describe("afk CLI — autonomous review gate loop", () => {
     // There should be both a work prompt and a fix prompt in the run directory.
     expect(fs.existsSync(path.join(run!.runDir, "prompt.md"))).toBe(true);
     expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-2.md"))).toBe(true);
+    expect(fs.existsSync(path.join(run!.runDir, "work-result-1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(run!.runDir, "fix-result-2.json"))).toBe(true);
+
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      summary: string;
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string; issues?: string[] }>;
+      commits: Array<{ created: boolean }>;
+    };
+    expect(finalResult.summary).toContain("2 worker phases");
+    expect(finalResult.summary).toContain("2 review passes");
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work", "fix"]);
+    expect(finalResult.reviewResults).toEqual([
+      expect.objectContaining({
+        verdict: "ISSUES",
+        issues: ["Missing error handling in the queue processor"]
+      }),
+      expect.objectContaining({ verdict: "PASS" })
+    ]);
+    expect(finalResult.commits.some((commit) => commit.created)).toBe(true);
   });
 
   // -----------------------------------------------------------------------

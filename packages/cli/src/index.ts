@@ -31,7 +31,7 @@ import { downloadRemoteArtifact, listRemoteArtifacts, printRemoteArtifactDownloa
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
-import type { CliDependencies } from "./types.js";
+import type { CliDependencies, RunOutcome } from "./types.js";
 
 const executionBackendChoices = ["local-docker", "local-process"] as const;
 const submitBackendChoices = ["github-actions"] as const;
@@ -311,7 +311,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         await runPreflight(ctx, { requirePullRequest: options.pr ?? false }, dependencies);
 
         const prOpts = { requirePullRequest: options.pr ?? false };
-        let outcome: { prUrl?: string };
+        let outcome: RunOutcome;
 
         if (options.detach) {
           if (target === "file") outcome = await runExecutionBriefFileDetached(ctx, value!, dependencies, prOpts);
@@ -336,6 +336,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         }
       } else {
         const outcome = await runAction();
+        printRunOutcome(outcome);
         if (outcome.prUrl) {
           console.log(`Opened PR: ${outcome.prUrl}`);
         }
@@ -371,7 +372,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
-        await followUpAction();
+        const outcome = await followUpAction();
+        printRunOutcome(outcome);
       }
     });
 
@@ -418,6 +420,29 @@ async function runForJson<T>(action: () => Promise<T>): Promise<T> {
 
 function printJson(payload: unknown): void {
   console.log(JSON.stringify(payload, null, 2));
+}
+
+function printRunOutcome(outcome: {
+  status?: string;
+  runId?: string;
+  branchName?: string;
+  worktreePath?: string;
+  runDir?: string;
+  resultPath?: string;
+  finalResultPath?: string;
+  finalVerdict?: string;
+}): void {
+  if (!outcome.runId) {
+    return;
+  }
+
+  console.log(`Run ${outcome.status ?? "completed"}: ${outcome.runId}`);
+  if (outcome.finalVerdict) console.log(`Final verdict: ${outcome.finalVerdict}`);
+  if (outcome.branchName) console.log(`Branch: ${outcome.branchName}`);
+  if (outcome.worktreePath) console.log(`Worktree: ${outcome.worktreePath}`);
+  if (outcome.finalResultPath) console.log(`Final result: ${outcome.finalResultPath}`);
+  if (outcome.resultPath) console.log(`Last worker result: ${outcome.resultPath}`);
+  if (outcome.runDir) console.log(`Logs: ${outcome.runDir}`);
 }
 
 const isDirectCliExecution =
