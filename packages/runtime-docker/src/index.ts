@@ -108,7 +108,11 @@ export function buildRuntimeEntrypoint(command: string, args: string[]): string 
   const bootstrap = [
     "if [ -f package.json ]; then",
     "  if [ -f pnpm-lock.yaml ]; then",
-    "    corepack pnpm install --frozen-lockfile",
+    "    AFK_PACKAGE_MANAGER=$(node -e \"try { const pm = JSON.parse(require('fs').readFileSync('package.json', 'utf8')).packageManager; if (typeof pm === 'string') process.stdout.write(pm); } catch {}\")",
+    "    case \"$AFK_PACKAGE_MANAGER\" in",
+    "      pnpm@*) corepack \"$AFK_PACKAGE_MANAGER\" install --frozen-lockfile ;;",
+    "      *) corepack pnpm install --frozen-lockfile ;;",
+    "    esac",
     "  elif [ -f package-lock.json ]; then",
     "    npm ci",
     "  elif [ -f yarn.lock ]; then",

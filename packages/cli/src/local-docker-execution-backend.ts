@@ -193,6 +193,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const reviewResults: ReviewPhaseSummary[] = [];
     const verificationSummaries: VerificationPhaseSummary[] = [];
     const commits: CommitPhaseSummary[] = [];
+    const packageManager = await resolvePackageManager(worktreePath);
+    if (packageManager.warning) {
+      console.warn(packageManager.warning);
+    }
 
     // -------------------------------------------------------------------------
     // Bounded autonomous gate loop: work → verify → review → fix → verify → ...
@@ -369,7 +373,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         updatedAt: new Date().toISOString()
       });
 
-      const verificationResults = await runVerificationCommands(input.verification, worktreePath);
+      const verificationResults = await runVerificationCommands(input.verification, worktreePath, packageManager);
       verificationSummaries.push({
         iteration,
         results: verificationResults.map((result) => ({
@@ -636,6 +640,11 @@ interface CommitPhaseSummary {
   sha?: string;
 }
 
+interface PackageManagerResolution {
+  shellPrelude?: string;
+  warning?: string;
+}
+
 function writeFinalRunResult(pathname: string, result: {
   runId: string;
   status: string;
@@ -762,7 +771,48 @@ async function getGitDiff(worktreePath: string, baseBranch: string): Promise<str
   }
 }
 
-async function runVerificationCommands(commands: string[], cwd: string): Promise<VerificationCommandResult[]> {
+async function resolvePackageManager(cwd: string): Promise<PackageManagerResolution> {
+  const packageJsonPath = path.join(cwd, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    return {};
+  }
+
+  let packageManager: string | undefined;
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { packageManager?: unknown };
+    packageManager = typeof packageJson.packageManager === "string" ? packageJson.packageManager : undefined;
+  } catch {
+    return {};
+  }
+
+  const match = packageManager?.match(/^pnpm@([^+\s]+)(?:\+.*)?$/);
+  if (!match) {
+    return {};
+  }
+
+  const version = match[1]!;
+  const shellPrelude = `pnpm() { corepack pnpm@${shellQuote(version)} "$@"; }`;
+  const pathVersion = await getPathPnpmVersion(cwd);
+  const warning = pathVersion && pathVersion !== version
+    ? `[AFK] Package manager: repo declares pnpm@${version}, PATH has pnpm@${pathVersion}. Using pnpm@${version} via Corepack for verification.`
+    : undefined;
+
+  return {
+    shellPrelude,
+    ...(warning ? { warning } : {})
+  };
+}
+
+async function getPathPnpmVersion(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("pnpm", ["--version"], { cwd, timeout: 10_000 });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function runVerificationCommands(commands: string[], cwd: string, packageManager: PackageManagerResolution): Promise<VerificationCommandResult[]> {
   const results: VerificationCommandResult[] = [];
 
   for (const cmd of commands) {
@@ -772,7 +822,10 @@ async function runVerificationCommands(commands: string[], cwd: string): Promise
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync("bash", ["-lc", trimmed], {
+      const shellCommand = packageManager.shellPrelude
+        ? `${packageManager.shellPrelude}\n${trimmed}`
+        : trimmed;
+      const { stdout, stderr } = await execFileAsync("bash", ["-lc", shellCommand], {
         cwd,
         timeout: 5 * 60 * 1000
       });
@@ -790,6 +843,10 @@ async function runVerificationCommands(commands: string[], cwd: string): Promise
   }
 
   return results;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function spawnReviewProcess(

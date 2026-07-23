@@ -16,7 +16,9 @@ describe("runtime docker helpers", () => {
   it("uses corepack-backed package manager bootstrap before executing the worker command", () => {
     const script = buildRuntimeEntrypoint("claude", ["--print", "/afk-run/prompt.md"]);
 
-    expect(script).toContain("corepack pnpm install --frozen-lockfile");
+    expect(script).toContain("AFK_PACKAGE_MANAGER=$(node -e");
+    expect(script).toContain('pnpm@*) corepack "$AFK_PACKAGE_MANAGER" install --frozen-lockfile');
+    expect(script).toContain("*) corepack pnpm install --frozen-lockfile");
     expect(script).toContain("corepack yarn install --frozen-lockfile");
     expect(script).toContain("npm ci");
     expect(script).toContain("exec 'claude' '--print' '/afk-run/prompt.md'");

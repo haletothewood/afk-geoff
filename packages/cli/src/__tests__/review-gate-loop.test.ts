@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole, createFixture, makeTempDir, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
@@ -281,6 +282,53 @@ if (prompt.includes("# Issues to fix")) {
     expect(reviewPrompt).toContain("# Verification Results");
     // The failed command should appear in the verification section.
     expect(reviewPrompt).toContain("node -e process.exit(1)");
+  });
+
+  it("verification package manager: declared pnpm version is used through Corepack when PATH differs", async () => {
+    const fixture = await createFixture(tempDir);
+    const corepackLogPath = path.join(fixture.repoDir, "corepack-calls.log");
+    const packageJsonPath = path.join(fixture.repoDir, "package.json");
+    fs.writeFileSync(packageJsonPath, JSON.stringify({ name: "fixture", private: true, packageManager: "pnpm@10.20.0" }, null, 2));
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "pnpm"),
+      ["#!/usr/bin/env node", "console.log('11.7.0');"].join("\n")
+    );
+    fs.chmodSync(path.join(fixture.repoDir, "pnpm"), 0o755);
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "corepack"),
+      [
+        "#!/usr/bin/env node",
+        "import fs from 'node:fs';",
+        `fs.appendFileSync(${JSON.stringify(corepackLogPath)}, process.argv.slice(2).join(' ') + '\\n');`,
+        "if (process.argv[3] === '--version') console.log('10.20.0');"
+      ].join("\n")
+    );
+    fs.chmodSync(path.join(fixture.repoDir, "corepack"), 0o755);
+    execFileSync("git", ["add", "package.json", "pnpm", "corepack"], { cwd: fixture.repoDir });
+    execFileSync("git", ["commit", "-m", "configure package manager"], { cwd: fixture.repoDir });
+    process.env.PATH = `${fixture.repoDir}:${process.env.PATH ?? ""}`;
+
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = ["pnpm --version"];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const warnSpy = vi.spyOn(console, "warn");
+    await fixture.cli(["run", backend!.id]);
+
+    expect(fs.readFileSync(corepackLogPath, "utf8")).toContain("pnpm@10.20.0 --version");
+    const warnCalls = warnSpy.mock.calls.map((args) => args.join(" "));
+    expect(warnCalls.some((msg) => msg.includes("repo declares pnpm@10.20.0") && msg.includes("PATH has pnpm@11.7.0"))).toBe(true);
+
+    const [run] = await fixture.store.listRuns();
+    const reviewPrompt = fs.readFileSync(path.join(run!.runDir, "review-prompt-1.md"), "utf8");
+    expect(reviewPrompt).toContain("## pnpm --version [PASSED]");
+    expect(reviewPrompt).toContain("10.20.0");
   });
 
   // -----------------------------------------------------------------------

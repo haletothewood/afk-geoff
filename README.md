@@ -55,10 +55,15 @@ flowchart LR
 
 ```bash
 git init -b main
-pnpm install
+corepack pnpm install
 pnpm afk init
 pnpm afk init --with-github-actions
 ```
+
+The repository declares its package manager in `package.json`. If `pnpm --version`
+does not match that declaration, use `corepack pnpm ...` or `/opt/homebrew/bin/pnpm ...`
+so native dependencies such as `better-sqlite3` are installed for the Node version
+you actually run.
 
 This creates:
 
