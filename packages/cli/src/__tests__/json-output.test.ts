@@ -270,6 +270,64 @@ describe("afk CLI — JSON output", () => {
     expect(payload.error.message).toBe("Run run_missing not found");
   });
 
+  it("Given watch --json sees a dead detached worker before artifacts exist, then it marks the run failed", async () => {
+    const fixture = await createFixture(tempDir, { watchPollIntervalMs: 0 });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runId = "run_dead_detached";
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    const worktreePath = path.join(fixture.repoDir, ".afk", "worktrees", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/dead-detached",
+      worktreePath,
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    fs.writeFileSync(path.join(runDir, "detach-process.json"), JSON.stringify({ pid: 999999, startedAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "starting", message: "Detached worker starting", iteration: 0, updatedAt: new Date().toISOString() }, null, 2)
+    );
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["watch", runId, "--json"]);
+    });
+    const payloads = parseNdjson(output);
+    const events = payloads.filter((payload) => payload.kind === "run_event");
+    const result = payloads.at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      runId: string;
+      status: string;
+      error: { message: string };
+    };
+
+    expect(events.map((event) => event.event)).toEqual(expect.arrayContaining(["watch_started", "progress_observed", "run_failed"]));
+    expect(result.kind).toBe("watch_result");
+    expect(result.command).toBe("watch");
+    expect(result.ok).toBe(false);
+    expect(result.runId).toBe(runId);
+    expect(result.status).toBe("failed");
+    expect(result.error.message).toContain("Detached worker process 999999 exited before creating run artifacts");
+
+    const [updatedRun] = (await fixture.store.listRuns()).filter((run) => run.id === runId);
+    expect(updatedRun?.status).toBe("failed");
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("failed");
+  });
+
   it("Given status --json, when work exists, then it prints queue and next-action state", async () => {
     const fixture = await createFixture(tempDir);
     writeBrief(fixture.repoDir);

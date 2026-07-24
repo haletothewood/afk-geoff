@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
-import { delay, readRunProgress } from "../cli-utils.js";
+import { delay, processExists, readDetachedProcessInfo, readRunProgress } from "../cli-utils.js";
+import { refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, CliDependencies } from "../types.js";
 import { emitRunEvent } from "../run-events.js";
 
@@ -115,6 +116,16 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
       }
     }
 
+    const detachedFailure = await failIfDetachedProcessExited(ctx, runId);
+    if (detachedFailure) {
+      if (options.json) {
+        emitRunEvent(toWatchEvent("run_failed", detachedFailure));
+      } else {
+        console.log(`Run ${runId} failed: ${detachedFailure.summary ?? "Detached worker exited before completion"}`);
+      }
+      return toWatchOutcome(detachedFailure);
+    }
+
     // Test hook: allow callers to mutate state between poll and status check.
     if (dependencies.onAfterPoll) {
       await dependencies.onAfterPoll();
@@ -173,4 +184,31 @@ function toWatchEvent(event: string, run: Awaited<ReturnType<CliContext["store"]
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
     runDir: run.runDir
   };
+}
+
+async function failIfDetachedProcessExited(ctx: CliContext, runId: string) {
+  const runs = await ctx.store.listRuns();
+  const run = runs.find((candidate) => candidate.id === runId);
+  if (!run || run.status !== "running") {
+    return undefined;
+  }
+
+  const processInfo = readDetachedProcessInfo(run.runDir);
+  if (!processInfo || processExists(processInfo.pid)) {
+    return undefined;
+  }
+
+  const worktreeExists = run.worktreePath ? fs.existsSync(run.worktreePath) : false;
+  const finalResultPath = path.join(run.runDir, "final-result.json");
+  if (worktreeExists || fs.existsSync(finalResultPath)) {
+    return undefined;
+  }
+
+  const summary = `Detached worker process ${processInfo.pid} exited before creating run artifacts`;
+  await ctx.store.updateRun(run.id, { status: "failed", summary });
+  await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+  await refreshRequirementStatuses(ctx);
+
+  const updatedRuns = await ctx.store.listRuns();
+  return updatedRuns.find((candidate) => candidate.id === runId);
 }

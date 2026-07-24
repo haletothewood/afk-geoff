@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import path from "node:path";
 import { evaluateNextStatus } from "@afk-geoff/core";
 import type { Requirement } from "@afk-geoff/core";
-import { readRunProgress } from "./cli-utils.js";
+import { processExists, readDetachedProcessInfo, readRunProgress } from "./cli-utils.js";
 import { refreshRequirementStatuses, terminateRunWorker } from "./store-helpers.js";
 import type { CliContext } from "./types.js";
 
@@ -81,6 +82,23 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
       await ctx.store.updateRun(run.id, {
         status: "failed",
         summary: "Run directory missing; treating interrupted run as failed"
+      });
+
+      const workItem = await ctx.store.getWorkItem(run.workItemId);
+      if (workItem?.status === "in_progress") {
+        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
+      }
+
+      continue;
+    }
+
+    const detachedProcessInfo = readDetachedProcessInfo(run.runDir);
+    const worktreeExists = run.worktreePath ? fs.existsSync(run.worktreePath) : false;
+    const finalResultExists = fs.existsSync(path.join(run.runDir, "final-result.json"));
+    if (detachedProcessInfo && !processExists(detachedProcessInfo.pid) && !worktreeExists && !finalResultExists) {
+      await ctx.store.updateRun(run.id, {
+        status: "failed",
+        summary: `Detached worker process ${detachedProcessInfo.pid} exited before creating run artifacts`
       });
 
       const workItem = await ctx.store.getWorkItem(run.workItemId);

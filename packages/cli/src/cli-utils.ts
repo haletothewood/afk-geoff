@@ -150,7 +150,14 @@ export function readRunProgress(runDir: string): RunProgress | undefined {
 }
 
 export function readWorkerProcessInfo(runDir: string): WorkerProcessInfo | undefined {
-  const processPath = path.join(runDir, "worker-process.json");
+  return readProcessInfoFile(path.join(runDir, "worker-process.json"));
+}
+
+export function readDetachedProcessInfo(runDir: string): WorkerProcessInfo | undefined {
+  return readProcessInfoFile(path.join(runDir, "detach-process.json"));
+}
+
+function readProcessInfoFile(processPath: string): WorkerProcessInfo | undefined {
   try {
     if (!fs.existsSync(processPath)) {
       return undefined;

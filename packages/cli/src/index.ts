@@ -176,12 +176,24 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .action(async (runId: string, options: { json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
       if (options.json) {
+        let outcome: Awaited<ReturnType<typeof watchRun>>;
         try {
-          const outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx, runId, dependencies, { json: true })), { allowRunEvents: true });
-          printJson({ kind: "watch_result", command: "watch", ok: true, backend: ctx.executionBackendKind, ...outcome }, { compact: true });
+          outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx, runId, dependencies, { json: true })), { allowRunEvents: true });
         } catch (error) {
           printJson({ kind: "watch_result", command: "watch", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } }, { compact: true });
           throw error;
+        }
+        const ok = outcome.status === "completed";
+        printJson({
+          kind: "watch_result",
+          command: "watch",
+          ok,
+          backend: ctx.executionBackendKind,
+          ...outcome,
+          ...(!ok ? { error: { message: outcome.summary ?? `Run ${runId} ${outcome.status}` } } : {})
+        }, { compact: true });
+        if (!ok) {
+          throw new Error(outcome.summary ?? `Run ${runId} ${outcome.status}`);
         }
       } else {
         await watchRun(ctx, runId, dependencies);
