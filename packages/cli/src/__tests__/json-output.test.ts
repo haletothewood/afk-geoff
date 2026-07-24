@@ -192,13 +192,82 @@ describe("afk CLI — JSON output", () => {
     const output = await captureConsole(async () => {
       await fixture.cli(["runs", "--json"]);
     });
-    const payload = JSON.parse(output) as { command: string; runs: Array<{ id: string; status: string; workItemId: string }> };
+    const payload = JSON.parse(output) as { command: string; ok: boolean; backend: string; count: number; runs: Array<{ id: string; status: string; workItemId: string }> };
 
     expect(payload.command).toBe("runs");
+    expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.count).toBe(1);
     expect(payload.runs).toHaveLength(1);
     expect(payload.runs[0]?.id).toMatch(/^run_/);
     expect(payload.runs[0]?.workItemId).toMatch(/^wi_/);
     expect(payload.runs[0]?.status).toBe("completed");
+  });
+
+  it("Given watch --json observes a completed run, then stdout contains a run event and final watch result", async () => {
+    const fixture = await createFixture(tempDir);
+    writeBrief(fixture.repoDir);
+    await fixture.cli(["run", "file", "brief.md"]);
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["watch", run!.id, "--json"]);
+    });
+    const payloads = parseNdjson(output);
+    const event = payloads[0] as { kind: string; event: string; runId: string; status: string; workItemId: string };
+    const result = payloads.at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      status: string;
+      workItemId: string;
+      branchName: string;
+      worktreePath: string;
+      runDir: string;
+    };
+
+    expect(event.kind).toBe("run_event");
+    expect(event.event).toBe("run_observed");
+    expect(event.runId).toBe(run!.id);
+    expect(event.status).toBe("completed");
+    expect(event.workItemId).toBe(run!.workItemId);
+    expect(result.kind).toBe("watch_result");
+    expect(result.command).toBe("watch");
+    expect(result.ok).toBe(true);
+    expect(result.backend).toBe("local-docker");
+    expect(result.runId).toBe(run!.id);
+    expect(result.status).toBe("completed");
+    expect(result.workItemId).toBe(run!.workItemId);
+    expect(result.branchName).toBe(run!.branchName);
+    expect(result.worktreePath).toBe(run!.worktreePath);
+    expect(result.runDir).toBe(run!.runDir);
+    expect(output).not.toContain("[stdout]");
+  });
+
+  it("Given watch --json cannot find a run, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["watch", "run_missing", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      error: { message: string };
+    };
+
+    expect(payload.kind).toBe("watch_result");
+    expect(payload.command).toBe("watch");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.runId).toBe("run_missing");
+    expect(payload.error.message).toBe("Run run_missing not found");
   });
 
   it("Given status --json, when work exists, then it prints queue and next-action state", async () => {

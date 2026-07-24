@@ -145,11 +145,16 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .action(async (options: { json?: boolean }) => {
     const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
-      const runs = await runForJson(async () => {
-        await autoSync(ctx);
-        return await listRunRecords(ctx);
-      });
-      printJson({ command: "runs", runs });
+      try {
+        const runs = await runForJson(async () => {
+          await autoSync(ctx);
+          return await listRunRecords(ctx);
+        });
+        printJson({ command: "runs", ok: true, backend: ctx.executionBackendKind, count: runs.length, runs });
+      } catch (error) {
+        printJson({ command: "runs", ok: false, backend: ctx.executionBackendKind, error: { message: formatErrorMessage(error) } });
+        throw error;
+      }
     } else {
       await autoSync(ctx);
       await printRuns(ctx);
@@ -167,9 +172,20 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program
     .command("watch")
     .argument("<runId>", "Run id")
-    .action(async (runId: string) => {
+    .option("--json", "Print machine-readable JSON/NDJSON")
+    .action(async (runId: string, options: { json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
-      await watchRun(ctx, runId, dependencies);
+      if (options.json) {
+        try {
+          const outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx, runId, dependencies, { json: true })), { allowRunEvents: true });
+          printJson({ kind: "watch_result", command: "watch", ok: true, backend: ctx.executionBackendKind, ...outcome }, { compact: true });
+        } catch (error) {
+          printJson({ kind: "watch_result", command: "watch", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } }, { compact: true });
+          throw error;
+        }
+      } else {
+        await watchRun(ctx, runId, dependencies);
+      }
     });
 
   program
