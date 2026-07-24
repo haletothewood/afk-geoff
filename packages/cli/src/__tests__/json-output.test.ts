@@ -231,6 +231,80 @@ describe("afk CLI — JSON output", () => {
     expect(payload.runs[0]?.diagnostics.finalResultExists).toBe(true);
   });
 
+  it("Given inspect --json, when a completed run exists, then it prints run diagnostics and final result summary", async () => {
+    const fixture = await createFixture(tempDir);
+    writeBrief(fixture.repoDir, { verification: ["node -e \"process.exit(0)\""] });
+    await fixture.cli(["run", "file", "brief.md"]);
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["inspect", run!.id, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      run: { id: string; branchName: string; worktreePath: string; status: string };
+      paths: { runDir: string; resultPath: string; finalResultPath: string; worktreePath: string };
+      diagnostics: { runDirExists: boolean; resultExists: boolean; finalResultExists: boolean; worktreeExists?: boolean };
+      derived: {
+        complete: boolean;
+        publishable?: boolean;
+        branchName?: string;
+        reviewVerdict?: string;
+        verificationStatus: string;
+        createdCommitCount?: number;
+        worktreeClean?: boolean;
+      };
+      finalResult: { branchName: string; publishable: boolean };
+    };
+
+    expect(payload.command).toBe("inspect");
+    expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.runId).toBe(run!.id);
+    expect(payload.run.id).toBe(run!.id);
+    expect(payload.run.status).toBe("completed");
+    expect(payload.paths.runDir).toBe(run!.runDir);
+    expect(payload.paths.resultPath).toBe(path.join(run!.runDir, "result.json"));
+    expect(payload.paths.finalResultPath).toBe(path.join(run!.runDir, "final-result.json"));
+    expect(payload.paths.worktreePath).toBe(run!.worktreePath);
+    expect(payload.diagnostics.runDirExists).toBe(true);
+    expect(payload.diagnostics.resultExists).toBe(true);
+    expect(payload.diagnostics.finalResultExists).toBe(true);
+    expect(payload.diagnostics.worktreeExists).toBe(true);
+    expect(payload.derived.complete).toBe(true);
+    expect(payload.derived.branchName).toBe(run!.branchName);
+    expect(payload.derived.reviewVerdict).toBe("PASS");
+    expect(payload.derived.verificationStatus).toBe("passed");
+    expect(payload.derived.createdCommitCount).toBe(1);
+    expect(payload.derived.worktreeClean).toBe(true);
+    expect(payload.finalResult.branchName).toBe(run!.branchName);
+  });
+
+  it("Given inspect --json cannot find a run, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["inspect", "run_missing", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("inspect");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.runId).toBe("run_missing");
+    expect(payload.error.message).toBe("Run run_missing not found");
+  });
+
   it("Given watch --json observes a completed run, then stdout contains a run event and final watch result", async () => {
     const fixture = await createFixture(tempDir);
     writeBrief(fixture.repoDir);

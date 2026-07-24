@@ -14,7 +14,7 @@ The orchestrator should:
 2. Start a run with a structured command.
 3. Capture the returned `runId`, `workItemId`, `branchName`, paths, and optional PR URL.
 4. Observe progress through JSON/NDJSON.
-5. Read `final-result.json` when the run completes.
+5. Inspect the run or read `final-result.json` when the run completes.
 6. Decide whether to publish, report, retry, or escalate.
 
 The orchestrator should not scrape human-readable terminal prose.
@@ -28,6 +28,7 @@ afk doctor --json
 afk run file brief.md --detach --json
 afk runs --json
 afk watch <runId> --json
+afk inspect <runId> --json
 ```
 
 `run --detach --json` returns quickly with the pre-created run identifiers. `watch --json` can then be used by a bot, scheduler, or parent agent to stream status until the run reaches a terminal state.
@@ -69,6 +70,7 @@ Primary commands:
 - `afk run file <path> --pr --json`
 - `afk runs --json`
 - `afk watch <runId> --json`
+- `afk inspect <runId> --json`
 - `afk status [workItemId] --json`
 - `afk follow-up <workItemId> --json`
 - `afk submit issue <github-issue-url> --backend github-actions --json`
@@ -134,6 +136,8 @@ Important artifacts:
 
 When present, prefer `finalResultPath` over `resultPath`; `resultPath` may describe only the last worker phase.
 
+`inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
+
 `runs --json` and `status --json` include a `diagnostics` object for run records. Use it to detect common detached-worker states without guessing:
 
 - `detachProcessPid` and `detachProcessAlive`
@@ -152,5 +156,5 @@ When another agent session is asked to use AFK Geoff:
 2. Use JSON commands by default.
 3. Run `doctor --json` before starting work.
 4. Prefer `run file <brief.md> --detach --json` plus `watch --json` for orchestration demos.
-5. Read `final-result.json` before declaring success.
+5. Use `inspect <runId> --json` or read `final-result.json` before declaring success.
 6. Report branch, run id, final verdict, verification, publishability, and artifact paths.

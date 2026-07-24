@@ -10,6 +10,7 @@ import { captureRequirement } from "./commands/capture.js";
 import { getStatusSnapshot, printStatus } from "./commands/status.js";
 import { showEntity } from "./commands/show.js";
 import { listRunRecords, printRuns } from "./commands/runs.js";
+import { inspectRun, printRunInspection } from "./commands/inspect.js";
 import { printRunLogs } from "./commands/logs.js";
 import { watchRun } from "./commands/watch.js";
 import {
@@ -160,6 +161,29 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       await printRuns(ctx);
     }
   });
+
+  program
+    .command("inspect")
+    .argument("<runId>", "Run id")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (runId: string, options: { json?: boolean }) => {
+      const ctx = await openContext(commandCwd, dependencies);
+      if (options.json) {
+        try {
+          const inspection = await runForJson(async () => {
+            await autoSync(ctx);
+            return await inspectRun(ctx, runId);
+          });
+          printJson({ command: "inspect", ok: true, backend: ctx.executionBackendKind, runId, ...inspection });
+        } catch (error) {
+          printJson({ command: "inspect", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        await autoSync(ctx);
+        await printRunInspection(ctx, runId);
+      }
+    });
 
   program
     .command("logs")

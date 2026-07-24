@@ -155,6 +155,7 @@ Priority command contracts:
 - `afk remote-artifacts <github-actions-run-id> --json`
 - `afk remote-download <github-actions-artifact-id> --json`
 - `afk run file <path> --pr --json`
+- `afk inspect <run-id> --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`

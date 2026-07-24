@@ -7,7 +7,7 @@ It deliberately uses only the public CLI contract:
 1. `afk doctor --json`
 2. `afk run file <brief> --detach --json`
 3. `afk watch <runId> --json`
-4. read `<runDir>/final-result.json`
+4. `afk inspect <runId> --json`
 
 Run it from any AFK-configured target repository:
 

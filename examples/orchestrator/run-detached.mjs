@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
@@ -57,9 +56,8 @@ async function main() {
     return;
   }
 
-  const finalResultPath = path.join(watchResult.runDir, "final-result.json");
-  const finalResult = JSON.parse(fs.readFileSync(finalResultPath, "utf8"));
-  printSuccessSummary(watchResult, finalResult, finalResultPath);
+  const inspection = await runJsonCommand(afkCommand("inspect", runResult.runId, "--json"));
+  printSuccessSummary(watchResult, inspection);
 }
 
 function readOption(name, fallback) {
@@ -148,39 +146,18 @@ function logRunEvent(event) {
   console.log(parts.join(" "));
 }
 
-function printSuccessSummary(watchResult, finalResult, finalResultPath) {
+function printSuccessSummary(watchResult, inspection) {
+  const finalResult = inspection.finalResult ?? {};
+  const derived = inspection.derived ?? {};
   console.log("[orchestrator] completed");
   console.log(`  run: ${watchResult.runId}`);
-  console.log(`  branch: ${finalResult.branchName ?? watchResult.branchName ?? "unknown"}`);
-  console.log(`  publishable: ${String(finalResult.publishable)}`);
-  console.log(`  review: ${reviewStatus(finalResult)}`);
-  console.log(`  verification: ${verificationStatus(finalResult)}`);
-  console.log(`  commits: ${createdCommitCount(finalResult)}`);
-  console.log(`  worktree clean: ${String(finalResult.worktreeStatus?.clean)}`);
-  console.log(`  final result: ${finalResultPath}`);
-}
-
-function reviewStatus(finalResult) {
-  const reviews = Array.isArray(finalResult.reviewResults) ? finalResult.reviewResults : [];
-  if (reviews.length === 0) {
-    return "skipped";
-  }
-  const lastReview = reviews.at(-1);
-  return lastReview?.verdict ?? "unknown";
-}
-
-function verificationStatus(finalResult) {
-  const phases = Array.isArray(finalResult.verificationSummaries) ? finalResult.verificationSummaries : [];
-  const results = phases.flatMap((phase) => Array.isArray(phase.results) ? phase.results : []);
-  if (results.length === 0) {
-    return "skipped";
-  }
-  return results.every((result) => result.passed) ? "passed" : "failed";
-}
-
-function createdCommitCount(finalResult) {
-  const commits = Array.isArray(finalResult.commits) ? finalResult.commits : [];
-  return commits.filter((commit) => commit.created).length;
+  console.log(`  branch: ${derived.branchName ?? finalResult.branchName ?? watchResult.branchName ?? "unknown"}`);
+  console.log(`  publishable: ${String(derived.publishable ?? finalResult.publishable)}`);
+  console.log(`  review: ${derived.reviewVerdict ?? "unknown"}`);
+  console.log(`  verification: ${derived.verificationStatus ?? "unknown"}`);
+  console.log(`  commits: ${derived.createdCommitCount ?? 0}`);
+  console.log(`  worktree clean: ${String(derived.worktreeClean ?? finalResult.worktreeStatus?.clean)}`);
+  console.log(`  final result: ${inspection.paths?.finalResultPath ?? "unknown"}`);
 }
 
 function printFailureSummary(watchResult) {
