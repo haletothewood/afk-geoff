@@ -93,12 +93,11 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
     }
 
     const detachedProcessInfo = readDetachedProcessInfo(run.runDir);
-    const worktreeExists = run.worktreePath ? fs.existsSync(run.worktreePath) : false;
     const finalResultExists = fs.existsSync(path.join(run.runDir, "final-result.json"));
-    if (detachedProcessInfo && !processExists(detachedProcessInfo.pid) && !worktreeExists && !finalResultExists) {
+    if (detachedProcessInfo && !processExists(detachedProcessInfo.pid) && !finalResultExists) {
       await ctx.store.updateRun(run.id, {
         status: "failed",
-        summary: `Detached worker process ${detachedProcessInfo.pid} exited before creating run artifacts`
+        summary: `Detached worker process ${detachedProcessInfo.pid} exited before completing run artifacts`
       });
 
       const workItem = await ctx.store.getWorkItem(run.workItemId);

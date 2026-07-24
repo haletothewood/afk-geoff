@@ -231,7 +231,7 @@ describe("afk CLI — status command", () => {
     expect(timedOutRun?.summary).toContain("Run timeout exceeded");
   });
 
-  it("Given a detached process exits before creating artifacts, when status is refreshed, then the run and work item are marked failed", async () => {
+  it("Given a detached process exits before final artifacts exist, when status is refreshed, then the run and work item are marked failed", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
@@ -244,6 +244,7 @@ describe("afk CLI — status command", () => {
     const runDir = path.join(fixture.repoDir, ".afk", "runs", "run_dead_detached_status");
     const worktreePath = path.join(fixture.repoDir, ".afk", "worktrees", "run_dead_detached_status");
     fs.mkdirSync(runDir, { recursive: true });
+    fs.mkdirSync(worktreePath, { recursive: true });
     await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
     await fixture.store.createRun({
       id: "run_dead_detached_status",
@@ -268,7 +269,7 @@ describe("afk CLI — status command", () => {
     expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("failed");
     const staleRun = (await fixture.store.listRuns()).find((run) => run.id === "run_dead_detached_status");
     expect(staleRun?.status).toBe("failed");
-    expect(staleRun?.summary).toContain("Detached worker process 999999 exited before creating run artifacts");
+    expect(staleRun?.summary).toContain("Detached worker process 999999 exited before completing run artifacts");
   });
 
   it("Given a running work item with a stale heartbeat beyond the configured window, when status is refreshed, then the run and work item are marked failed with a heartbeat stale summary", async () => {

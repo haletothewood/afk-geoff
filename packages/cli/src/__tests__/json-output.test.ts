@@ -298,7 +298,7 @@ describe("afk CLI — JSON output", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("Given watch --json sees a dead detached worker before artifacts exist, then it marks the run failed", async () => {
+  it("Given watch --json sees a dead detached worker before final artifacts exist, then it marks the run failed", async () => {
     const fixture = await createFixture(tempDir, { watchPollIntervalMs: 0 });
     const requirement = await fixture.capture(
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
@@ -311,6 +311,7 @@ describe("afk CLI — JSON output", () => {
     const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
     const worktreePath = path.join(fixture.repoDir, ".afk", "worktrees", runId);
     fs.mkdirSync(runDir, { recursive: true });
+    fs.mkdirSync(worktreePath, { recursive: true });
     await fixture.store.createRun({
       id: runId,
       workItemId: backend!.id,
@@ -349,7 +350,7 @@ describe("afk CLI — JSON output", () => {
     expect(result.ok).toBe(false);
     expect(result.runId).toBe(runId);
     expect(result.status).toBe("failed");
-    expect(result.error.message).toContain("Detached worker process 999999 exited before creating run artifacts");
+    expect(result.error.message).toContain("Detached worker process 999999 exited before completing run artifacts");
     expect(exitCode).toBe(1);
 
     const [updatedRun] = (await fixture.store.listRuns()).filter((run) => run.id === runId);

@@ -198,13 +198,12 @@ async function failIfDetachedProcessExited(ctx: CliContext, runId: string) {
     return undefined;
   }
 
-  const worktreeExists = run.worktreePath ? fs.existsSync(run.worktreePath) : false;
   const finalResultPath = path.join(run.runDir, "final-result.json");
-  if (worktreeExists || fs.existsSync(finalResultPath)) {
+  if (fs.existsSync(finalResultPath)) {
     return undefined;
   }
 
-  const summary = `Detached worker process ${processInfo.pid} exited before creating run artifacts`;
+  const summary = `Detached worker process ${processInfo.pid} exited before completing run artifacts`;
   await ctx.store.updateRun(run.id, { status: "failed", summary });
   await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
   await refreshRequirementStatuses(ctx);
