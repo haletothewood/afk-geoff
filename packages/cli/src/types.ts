@@ -56,6 +56,10 @@ export interface RunOutcome {
   branchName?: string;
   worktreePath?: string;
   runDir?: string;
+  detachLogPaths?: {
+    stdout: string;
+    stderr: string;
+  };
   resultPath?: string;
   finalResultPath?: string;
   finalVerdict?: string;

@@ -386,7 +386,11 @@ export async function runWorkItemDetached(
   const branchName = branchNameForWorkItem(workItem.title);
   const worktreePath = path.join(ctx.paths.worktreesDir, runId);
   const runDir = path.join(ctx.paths.runsDir, runId);
+  const detachStdoutPath = path.join(runDir, "detach-stdout.log");
+  const detachStderrPath = path.join(runDir, "detach-stderr.log");
   fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(detachStdoutPath, "");
+  fs.writeFileSync(detachStderrPath, "");
 
   await ctx.store.createRun({
     id: runId,
@@ -417,6 +421,8 @@ export async function runWorkItemDetached(
     ...(options.executionModeConfig ? { executionModeConfig: options.executionModeConfig } : {})
   });
   launchEnv.AFK_DETACH_RUN_OPTIONS = detachedOptions;
+  launchEnv.AFK_DETACH_STDOUT_PATH = detachStdoutPath;
+  launchEnv.AFK_DETACH_STDERR_PATH = detachStderrPath;
   const launchArgv: string[] = [
     process.execPath,
     process.argv[1] ?? "afk",
@@ -453,7 +459,12 @@ export async function runWorkItemDetached(
     runId,
     status: "running",
     branchName,
-    worktreePath
+    worktreePath,
+    runDir,
+    detachLogPaths: {
+      stdout: detachStdoutPath,
+      stderr: detachStderrPath
+    }
   };
 }
 
@@ -579,12 +590,20 @@ function spawnDetachedProcess(argv: string[], env: NodeJS.ProcessEnv, cwd: strin
     return { pid: 0 };
   }
 
+  const stdout = env.AFK_DETACH_STDOUT_PATH ? fs.openSync(env.AFK_DETACH_STDOUT_PATH, "a") : "ignore";
+  const stderr = env.AFK_DETACH_STDERR_PATH ? fs.openSync(env.AFK_DETACH_STDERR_PATH, "a") : "ignore";
   const child = spawn(cmd, args, {
     detached: true,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", stdout, stderr],
     env,
     cwd
   });
+  if (typeof stdout === "number") {
+    fs.closeSync(stdout);
+  }
+  if (typeof stderr === "number") {
+    fs.closeSync(stderr);
+  }
   child.unref();
   return { pid: child.pid ?? 0 };
 }

@@ -1,4 +1,5 @@
 import type { CliContext } from "../types.js";
+import { withRunDiagnostics } from "../run-diagnostics.js";
 
 export async function printRuns(ctx: CliContext): Promise<void> {
   const runs = await listRunRecords(ctx);
@@ -16,5 +17,5 @@ export async function printRuns(ctx: CliContext): Promise<void> {
 }
 
 export async function listRunRecords(ctx: CliContext) {
-  return await ctx.store.listRuns();
+  return (await ctx.store.listRuns()).map(withRunDiagnostics);
 }

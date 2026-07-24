@@ -1,5 +1,6 @@
 import { classifyWorkItems } from "@afk-geoff/core";
 import { getGlobalNextActions, printLinesOrNone, printNextActionLines, readRunProgress } from "../cli-utils.js";
+import { getRunDiagnostics } from "../run-diagnostics.js";
 import type { CliContext } from "../types.js";
 
 export async function printStatus(ctx: CliContext): Promise<void> {
@@ -34,12 +35,14 @@ export async function getStatusSnapshot(ctx: CliContext) {
 
   for (const run of runs.filter((record) => record.status === "running" || record.status === "prepared")) {
     const progress = readRunProgress(run.runDir);
+    const diagnostics = getRunDiagnostics(run);
     if (progress) {
       active.push({
         type: "run",
         id: run.id,
         workItemId: run.workItemId,
         status: run.status,
+        diagnostics,
         progress,
         label: `- ${run.id}  ${run.workItemId}  ${run.status}  [${progress.phase}] ${progress.message} (iteration ${progress.iteration}, updated ${progress.updatedAt})`
       });
@@ -49,6 +52,7 @@ export async function getStatusSnapshot(ctx: CliContext) {
         id: run.id,
         workItemId: run.workItemId,
         status: run.status,
+        diagnostics,
         label: `- ${run.id}  ${run.workItemId}  ${run.status}`
       });
     }

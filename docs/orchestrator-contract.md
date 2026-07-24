@@ -32,6 +32,8 @@ afk watch <runId> --json
 
 `run --detach --json` returns quickly with the pre-created run identifiers. `watch --json` can then be used by a bot, scheduler, or parent agent to stream status until the run reaches a terminal state.
 
+The detached kickoff payload includes `runDir`, `worktreePath`, and `detachLogPaths`. The log paths point at captured stdout/stderr from the background worker, so an orchestrator can surface useful diagnostics without attaching to the process.
+
 ## Local Foreground Flow
 
 Use this flow when the caller wants one command to block until the AFK loop finishes.
@@ -128,8 +130,19 @@ Important artifacts:
 - `resultPath`: last worker result
 - `runDir`: logs, prompts, review results, progress, and final result
 - `worktreePath`: isolated checkout containing the produced branch
+- `detachLogPaths`: stdout/stderr capture files for detached background workers
 
 When present, prefer `finalResultPath` over `resultPath`; `resultPath` may describe only the last worker phase.
+
+`runs --json` and `status --json` include a `diagnostics` object for run records. Use it to detect common detached-worker states without guessing:
+
+- `detachProcessPid` and `detachProcessAlive`
+- `worktreeExists`
+- `runDirExists`
+- `resultExists`
+- `finalResultExists`
+- `lastProgressAgeSeconds`
+- `detachLogPaths`
 
 ## Agent Instructions
 
@@ -141,4 +154,3 @@ When another agent session is asked to use AFK Geoff:
 4. Prefer `run file <brief.md> --detach --json` plus `watch --json` for orchestration demos.
 5. Read `final-result.json` before declaring success.
 6. Report branch, run id, final verdict, verification, publishability, and artifact paths.
-

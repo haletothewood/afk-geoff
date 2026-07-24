@@ -100,6 +100,68 @@ describe("afk CLI — status command", () => {
     expect(output).toContain("iteration 3");
   });
 
+  it("Given status --json has an active detached run, then it includes process and artifact diagnostics", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runId = "run_active_detached_diagnostics";
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    const worktreePath = path.join(fixture.repoDir, ".afk", "worktrees", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.writeFileSync(path.join(runDir, "detach-process.json"), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(path.join(runDir, "detach-stdout.log"), "");
+    fs.writeFileSync(path.join(runDir, "detach-stderr.log"), "");
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "starting", message: "Detached worker starting", iteration: 0, updatedAt: new Date().toISOString() }, null, 2)
+    );
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/active-detached-diagnostics",
+      worktreePath,
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["status", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      active: Array<{
+        id: string;
+        diagnostics: {
+          detachProcessPid?: number;
+          detachProcessAlive?: boolean;
+          worktreeExists?: boolean;
+          runDirExists: boolean;
+          lastProgressAgeSeconds?: number;
+          detachLogPaths?: { stdout: string; stderr: string };
+        };
+      }>;
+    };
+    const activeRun = payload.active.find((entry) => entry.id === runId);
+
+    expect(activeRun?.diagnostics.detachProcessPid).toBe(process.pid);
+    expect(activeRun?.diagnostics.detachProcessAlive).toBe(true);
+    expect(activeRun?.diagnostics.worktreeExists).toBe(true);
+    expect(activeRun?.diagnostics.runDirExists).toBe(true);
+    expect(activeRun?.diagnostics.lastProgressAgeSeconds).toEqual(expect.any(Number));
+    expect(activeRun?.diagnostics.detachLogPaths?.stdout).toBe(path.join(runDir, "detach-stdout.log"));
+    expect(activeRun?.diagnostics.detachLogPaths?.stderr).toBe(path.join(runDir, "detach-stderr.log"));
+  });
+
   it("Given a stale running work item with a missing run directory, when status is refreshed, then the run and work item are marked failed", async () => {
     const fixture = await createFixture(tempDir);
     const requirement = await fixture.capture(

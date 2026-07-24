@@ -101,6 +101,8 @@ describe("afk CLI — JSON output", () => {
 	      status: string;
 	      branchName: string;
 	      worktreePath: string;
+        runDir: string;
+        detachLogPaths: { stdout: string; stderr: string };
 	    };
 
       expect(payloads[0]?.kind).toBe("run_event");
@@ -115,6 +117,11 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.status).toBe("running");
 	    expect(payload.branchName).toMatch(/^afk\//);
 	    expect(payload.worktreePath).toContain(payload.runId);
+      expect(payload.runDir).toContain(payload.runId);
+      expect(payload.detachLogPaths.stdout).toBe(path.join(payload.runDir, "detach-stdout.log"));
+      expect(payload.detachLogPaths.stderr).toBe(path.join(payload.runDir, "detach-stderr.log"));
+      expect(fs.existsSync(payload.detachLogPaths.stdout)).toBe(true);
+      expect(fs.existsSync(payload.detachLogPaths.stderr)).toBe(true);
 	    expect(output).not.toContain("Imported execution brief");
 	    expect(output).not.toContain("pnpm afk status");
 	  });
@@ -192,7 +199,23 @@ describe("afk CLI — JSON output", () => {
     const output = await captureConsole(async () => {
       await fixture.cli(["runs", "--json"]);
     });
-    const payload = JSON.parse(output) as { command: string; ok: boolean; backend: string; count: number; runs: Array<{ id: string; status: string; workItemId: string }> };
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      count: number;
+      runs: Array<{
+        id: string;
+        status: string;
+        workItemId: string;
+        diagnostics: {
+          runDirExists: boolean;
+          worktreeExists?: boolean;
+          resultExists: boolean;
+          finalResultExists: boolean;
+        };
+      }>;
+    };
 
     expect(payload.command).toBe("runs");
     expect(payload.ok).toBe(true);
@@ -202,6 +225,10 @@ describe("afk CLI — JSON output", () => {
     expect(payload.runs[0]?.id).toMatch(/^run_/);
     expect(payload.runs[0]?.workItemId).toMatch(/^wi_/);
     expect(payload.runs[0]?.status).toBe("completed");
+    expect(payload.runs[0]?.diagnostics.runDirExists).toBe(true);
+    expect(payload.runs[0]?.diagnostics.worktreeExists).toBe(true);
+    expect(payload.runs[0]?.diagnostics.resultExists).toBe(true);
+    expect(payload.runs[0]?.diagnostics.finalResultExists).toBe(true);
   });
 
   it("Given watch --json observes a completed run, then stdout contains a run event and final watch result", async () => {
