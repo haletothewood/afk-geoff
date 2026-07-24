@@ -10,6 +10,7 @@ describe("afk CLI — run command", () => {
   const originalGhToken = process.env.GH_TOKEN;
   const originalBreakWorktreeGit = process.env.AFK_TEST_BREAK_WORKTREE_GIT;
   const originalStatusInterval = process.env.AFK_STATUS_INTERVAL_MS;
+  const originalDetachRunId = process.env.AFK_DETACH_RUN_ID;
   let tempDir = "";
 
   beforeEach(() => {
@@ -36,6 +37,12 @@ describe("afk CLI — run command", () => {
       delete process.env.AFK_STATUS_INTERVAL_MS;
     } else {
       process.env.AFK_STATUS_INTERVAL_MS = originalStatusInterval;
+    }
+
+    if (originalDetachRunId === undefined) {
+      delete process.env.AFK_DETACH_RUN_ID;
+    } else {
+      process.env.AFK_DETACH_RUN_ID = originalDetachRunId;
     }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -184,6 +191,45 @@ describe("afk CLI — run command", () => {
     expect(fs.existsSync(copiedClaudeSettings)).toBe(true);
     expect(fs.readFileSync(copiedInstructions, "utf8")).toContain("Project Claude instructions");
     expect(JSON.parse(fs.readFileSync(copiedClaudeSettings, "utf8"))).toEqual({ mode: "test" });
+  });
+
+  it("Given a detached parent pre-created run metadata, when the worker resumes, then it keeps the same branch", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runId = "run_precreated_detached_branch";
+    const branchName = "afk/precreated-detached-branch";
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    const worktreePath = path.join(fixture.repoDir, ".afk", "worktrees", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName,
+      worktreePath,
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    await fixture.store.updateWorkItemStatus(backend!.id, "in_progress");
+    process.env.AFK_DETACH_RUN_ID = runId;
+
+    await fixture.cli(["run", backend!.id]);
+
+    const run = (await fixture.store.listRuns()).find((candidate) => candidate.id === runId);
+    expect(run?.status).toBe("completed");
+    expect(run?.branchName).toBe(branchName);
+    const finalResult = JSON.parse(fs.readFileSync(path.join(runDir, "final-result.json"), "utf8")) as { branchName: string };
+    expect(finalResult.branchName).toBe(branchName);
+    const actualBranch = execFileSync("git", ["branch", "--show-current"], { cwd: worktreePath, encoding: "utf8" }).trim();
+    expect(actualBranch).toBe(branchName);
   });
 
   it("Given the worker writes malformed JSON with unescaped quotes, when run file is used, then AFK repairs the result and completes the run", async () => {

@@ -65,6 +65,13 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const detachedRunId = process.env.AFK_DETACH_RUN_ID;
     const isDetachedResume = !!detachedRunId;
     const runId = detachedRunId ?? createId("run");
+    const existingDetachedRun = isDetachedResume
+      ? (await this.store.listRuns()).find((run) => run.id === runId)
+      : undefined;
+
+    if (isDetachedResume && !existingDetachedRun) {
+      throw new Error(`Detached run ${runId} not found`);
+    }
 
     // Clear before spawning Docker so the container does not inherit it.
     if (detachedRunId) {
@@ -72,11 +79,11 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     }
 
     const isFollowUp = !!input.followUp;
-    const branchName = input.followUp?.branchName ?? branchNameForWorkItem(input.workItem.title);
+    const branchName = input.followUp?.branchName ?? existingDetachedRun?.branchName ?? branchNameForWorkItem(input.workItem.title);
     const worktreePath = input.followUp?.worktreePath && fs.existsSync(input.followUp.worktreePath)
       ? input.followUp.worktreePath
-      : path.join(this.paths.worktreesDir, runId);
-    const runDir = path.join(this.paths.runsDir, runId);
+      : existingDetachedRun?.worktreePath ?? path.join(this.paths.worktreesDir, runId);
+    const runDir = existingDetachedRun?.runDir ?? path.join(this.paths.runsDir, runId);
     fs.mkdirSync(runDir, { recursive: true });
 
     if (!input.followUp?.worktreePath || !fs.existsSync(input.followUp.worktreePath)) {
