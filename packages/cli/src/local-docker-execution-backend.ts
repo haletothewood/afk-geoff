@@ -193,6 +193,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const reviewResults: ReviewPhaseSummary[] = [];
     const verificationSummaries: VerificationPhaseSummary[] = [];
     const commits: CommitPhaseSummary[] = [];
+    const generatedArtifacts: GeneratedArtifactSummary[] = [];
     const packageManager = await resolvePackageManager(worktreePath);
     if (packageManager.warning) {
       console.warn(packageManager.warning);
@@ -264,6 +265,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
       const stderrPath = path.join(runDir, `${phase}-stderr-${iteration}.log`);
       console.log(`[${phase}] iteration ${iteration}: worker running (logs: ${path.basename(stdoutPath)}, ${path.basename(stderrPath)})`);
+      const stopStatusTicker = startStatusTicker({
+        label: `[${phase}] iteration ${iteration}`,
+        progressPath,
+        runDir,
+        stdoutPath,
+        stderrPath,
+        startedAt: Date.now()
+      });
 
       const heartbeatInterval = setInterval(() => {
         try {
@@ -291,6 +300,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         });
       } finally {
         clearInterval(heartbeatInterval);
+        stopStatusTicker();
       }
 
       if (!fs.existsSync(hostResultPath)) {
@@ -338,6 +348,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           reviewResults,
           verificationSummaries,
           commits,
+          generatedArtifacts,
           branchName,
           worktreePath
         });
@@ -350,6 +361,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }
 
       lastWorkerResult = agentResult;
+
+      await recordGeneratedArtifactCleanup({
+        git: this.git,
+        worktreePath,
+        summaries: generatedArtifacts,
+        iteration,
+        phase,
+        stage: "post-worker"
+      });
 
       // Commit changes from this iteration before running verification and review.
       const commit = await this.git.commitAll({
@@ -388,6 +408,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       } else {
         console.log(`[verify] iteration ${iteration}: no verification commands configured`);
       }
+      await recordGeneratedArtifactCleanup({
+        git: this.git,
+        worktreePath,
+        summaries: generatedArtifacts,
+        iteration,
+        phase,
+        stage: "post-verification"
+      });
 
       // ------------------------------------------------------------------
       // Review
@@ -424,6 +452,14 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const reviewStdoutPath = path.join(runDir, `review-stdout-${iteration}.log`);
       const reviewStderrPath = path.join(runDir, `review-stderr-${iteration}.log`);
       console.log(`[review] iteration ${iteration}: reviewer running (logs: ${path.basename(reviewStdoutPath)}, ${path.basename(reviewStderrPath)})`);
+      const stopReviewStatusTicker = startStatusTicker({
+        label: `[review] iteration ${iteration}`,
+        progressPath,
+        runDir,
+        stdoutPath: reviewStdoutPath,
+        stderrPath: reviewStderrPath,
+        startedAt: Date.now()
+      });
 
       let reviewExitCode: number;
       try {
@@ -446,6 +482,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           issueComment: `Review agent process failed (iteration ${iteration}): ${String(err)}`,
           hasDiff: false
         };
+      } finally {
+        stopReviewStatusTicker();
       }
 
       if (!fs.existsSync(reviewResultPath)) {
@@ -502,6 +540,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           reviewResults,
           verificationSummaries,
           commits,
+          generatedArtifacts,
           branchName,
           worktreePath
         });
@@ -529,6 +568,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           reviewResults,
           verificationSummaries,
           commits,
+          generatedArtifacts,
           branchName,
           worktreePath
         });
@@ -543,6 +583,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
     // The loop completed with a PASS verdict.
     const finalResult = lastWorkerResult!;
+
+    await recordGeneratedArtifactCleanup({
+      git: this.git,
+      worktreePath,
+      summaries: generatedArtifacts,
+      iteration: reviewResults.at(-1)?.iteration ?? 0,
+      phase: "final",
+      stage: "pre-final-diff"
+    });
 
     const hasDiff = await this.git.hasDiffAgainst({
       cwd: worktreePath,
@@ -560,6 +609,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         reviewResults,
         verificationSummaries,
         commits,
+        generatedArtifacts,
         branchName,
         worktreePath,
         hasDiff: false
@@ -591,6 +641,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       reviewResults,
       verificationSummaries,
       commits,
+      generatedArtifacts,
       branchName,
       worktreePath,
       hasDiff: true
@@ -640,6 +691,13 @@ interface CommitPhaseSummary {
   sha?: string;
 }
 
+interface GeneratedArtifactSummary {
+  iteration: number;
+  phase: string;
+  stage: string;
+  paths: string[];
+}
+
 interface PackageManagerResolution {
   shellPrelude?: string;
   warning?: string;
@@ -653,6 +711,7 @@ function writeFinalRunResult(pathname: string, result: {
   reviewResults: ReviewPhaseSummary[];
   verificationSummaries: VerificationPhaseSummary[];
   commits: CommitPhaseSummary[];
+  generatedArtifacts: GeneratedArtifactSummary[];
   branchName: string;
   worktreePath: string;
   hasDiff?: boolean;
@@ -678,6 +737,7 @@ function buildAggregateSummary(result: {
   reviewResults: ReviewPhaseSummary[];
   verificationSummaries: VerificationPhaseSummary[];
   commits: CommitPhaseSummary[];
+  generatedArtifacts: GeneratedArtifactSummary[];
 }): string {
   const workerCount = result.workerResults.length;
   const reviewCount = result.reviewResults.length;
@@ -705,7 +765,66 @@ function buildAggregateSummary(result: {
     parts.push(`${issueCount} review issue${issueCount === 1 ? "" : "s"} addressed`);
   }
 
+  const generatedArtifactCount = result.generatedArtifacts.reduce(
+    (count, cleanup) => count + cleanup.paths.length,
+    0
+  );
+  if (generatedArtifactCount > 0) {
+    parts.push(`${generatedArtifactCount} generated artifact${generatedArtifactCount === 1 ? "" : "s"} cleaned`);
+  }
+
   return `${result.status}: ${parts.join("; ")}`;
+}
+
+async function recordGeneratedArtifactCleanup(input: {
+  git: LocalGitCodeHost;
+  worktreePath: string;
+  summaries: GeneratedArtifactSummary[];
+  iteration: number;
+  phase: string;
+  stage: string;
+}): Promise<void> {
+  const paths = await input.git.discardGeneratedArtifacts({ cwd: input.worktreePath });
+  if (paths.length === 0) {
+    return;
+  }
+
+  input.summaries.push({
+    iteration: input.iteration,
+    phase: input.phase,
+    stage: input.stage,
+    paths
+  });
+  console.log(`[cleanup] ${input.stage}: removed generated artifact${paths.length === 1 ? "" : "s"} ${paths.join(", ")}`);
+}
+
+function startStatusTicker(input: {
+  label: string;
+  progressPath: string;
+  runDir: string;
+  stdoutPath: string;
+  stderrPath: string;
+  startedAt: number;
+}): () => void {
+  const intervalMs = Number(process.env.AFK_STATUS_INTERVAL_MS ?? 30_000);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return () => {};
+  }
+
+  const interval = setInterval(() => {
+    const elapsedSeconds = Math.round((Date.now() - input.startedAt) / 1000);
+    const progress = readProgressIfExists(input.progressPath);
+    const processInfo = readWorkerProcessIfExists(input.runDir);
+    const progressLabel = progress
+      ? `progress: [${progress.phase}] ${progress.message}, updated ${secondsSince(progress.updatedAt)}s ago`
+      : "progress: unavailable";
+    const pidLabel = processInfo?.pid ? `, pid: ${processInfo.pid}` : "";
+    console.log(
+      `${input.label}: still running (${elapsedSeconds}s; ${progressLabel}${pidLabel}; logs: ${path.basename(input.stdoutPath)}, ${path.basename(input.stderrPath)})`
+    );
+  }, intervalMs);
+
+  return () => clearInterval(interval);
 }
 
 function writeProgress(progressPath: string, progress: RunProgress): void {
@@ -714,6 +833,37 @@ function writeProgress(progressPath: string, progress: RunProgress): void {
 
 function readProgress(progressPath: string): RunProgress {
   return JSON.parse(fs.readFileSync(progressPath, "utf8")) as RunProgress;
+}
+
+function readProgressIfExists(progressPath: string): RunProgress | undefined {
+  try {
+    if (!fs.existsSync(progressPath)) {
+      return undefined;
+    }
+    return readProgress(progressPath);
+  } catch {
+    return undefined;
+  }
+}
+
+function readWorkerProcessIfExists(runDir: string): { pid?: number } | undefined {
+  try {
+    const processPath = path.join(runDir, "worker-process.json");
+    if (!fs.existsSync(processPath)) {
+      return undefined;
+    }
+    return JSON.parse(fs.readFileSync(processPath, "utf8")) as { pid?: number };
+  } catch {
+    return undefined;
+  }
+}
+
+function secondsSince(isoTimestamp: string): number {
+  const timestampMs = new Date(isoTimestamp).getTime();
+  if (!Number.isFinite(timestampMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.round((Date.now() - timestampMs) / 1000));
 }
 
 function ensureRunnerHome(runner: AgentRunner, repoRoot: string, runDir: string): string {

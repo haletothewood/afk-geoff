@@ -9,6 +9,7 @@ describe("afk CLI — run command", () => {
   const originalPath = process.env.PATH ?? "";
   const originalGhToken = process.env.GH_TOKEN;
   const originalBreakWorktreeGit = process.env.AFK_TEST_BREAK_WORKTREE_GIT;
+  const originalStatusInterval = process.env.AFK_STATUS_INTERVAL_MS;
   let tempDir = "";
 
   beforeEach(() => {
@@ -29,6 +30,12 @@ describe("afk CLI — run command", () => {
       delete process.env.AFK_TEST_BREAK_WORKTREE_GIT;
     } else {
       process.env.AFK_TEST_BREAK_WORKTREE_GIT = originalBreakWorktreeGit;
+    }
+
+    if (originalStatusInterval === undefined) {
+      delete process.env.AFK_STATUS_INTERVAL_MS;
+    } else {
+      process.env.AFK_STATUS_INTERVAL_MS = originalStatusInterval;
     }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -223,6 +230,57 @@ describe("afk CLI — run command", () => {
     expect(workItem?.status).toBe("done");
     expect(run?.status).toBe("completed");
     expect(run?.summary).toBe("Recovered malformed JSON worker result");
+  });
+
+  it("Given a quiet worker, when run is active, then AFK prints still-running status ticks", async () => {
+    process.env.AFK_STATUS_INTERVAL_MS = "1";
+    const fixture = await createFixture(tempDir, {
+      runnerScriptSuffix: "await new Promise((resolve) => setTimeout(resolve, 50));"
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", backend!.id]);
+    });
+
+    expect(output).toContain("[work] iteration 1: still running");
+    expect(output).toContain("logs: work-stdout-1.log, work-stderr-1.log");
+  });
+
+  it("Given TypeScript build info churn, when AFK commits, then generated artifacts are cleaned and reported", async () => {
+    const fixture = await createFixture(tempDir, {
+      runnerScriptSuffix: 'fs.writeFileSync(path.join(process.cwd(), "tsconfig.tsbuildinfo"), "cache\\n");'
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", backend!.id]);
+    });
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const status = execFileSync("git", ["status", "--short"], { cwd: run!.worktreePath, encoding: "utf8" });
+    const diffNames = execFileSync("git", ["diff", "--name-only", "main..HEAD"], { cwd: run!.worktreePath, encoding: "utf8" });
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      generatedArtifacts: Array<{ stage: string; paths: string[] }>;
+    };
+
+    expect(status).not.toContain("tsconfig.tsbuildinfo");
+    expect(diffNames).not.toContain("tsconfig.tsbuildinfo");
+    expect(finalResult.generatedArtifacts).toEqual([
+      expect.objectContaining({ stage: "post-worker", paths: ["tsconfig.tsbuildinfo"] })
+    ]);
+    expect(output).toContain("[cleanup] post-worker: removed generated artifact tsconfig.tsbuildinfo");
   });
 
   it("Given GitHub publishing is enabled, when run file is used with --pr, then it opens a pull request and prints the review URL", async () => {
