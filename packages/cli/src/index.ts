@@ -181,7 +181,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx, runId, dependencies, { json: true })), { allowRunEvents: true });
         } catch (error) {
           printJson({ kind: "watch_result", command: "watch", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } }, { compact: true });
-          throw error;
+          process.exitCode = 1;
+          return;
         }
         const ok = outcome.status === "completed";
         printJson({
@@ -193,7 +194,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           ...(!ok ? { error: { message: outcome.summary ?? `Run ${runId} ${outcome.status}` } } : {})
         }, { compact: true });
         if (!ok) {
-          throw new Error(outcome.summary ?? `Run ${runId} ${outcome.status}`);
+          process.exitCode = 1;
         }
       } else {
         await watchRun(ctx, runId, dependencies);

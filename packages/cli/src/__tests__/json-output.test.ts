@@ -250,7 +250,7 @@ describe("afk CLI — JSON output", () => {
   it("Given watch --json cannot find a run, then stdout includes a structured error payload", async () => {
     const fixture = await createFixture(tempDir);
 
-    const output = await captureConsoleForRejected(async () => {
+    const { output, exitCode } = await captureConsoleAndExitCode(async () => {
       await fixture.cli(["watch", "run_missing", "--json"]);
     });
     const payload = JSON.parse(output) as {
@@ -268,6 +268,7 @@ describe("afk CLI — JSON output", () => {
     expect(payload.backend).toBe("local-docker");
     expect(payload.runId).toBe("run_missing");
     expect(payload.error.message).toBe("Run run_missing not found");
+    expect(exitCode).toBe(1);
   });
 
   it("Given watch --json sees a dead detached worker before artifacts exist, then it marks the run failed", async () => {
@@ -301,7 +302,7 @@ describe("afk CLI — JSON output", () => {
       JSON.stringify({ phase: "starting", message: "Detached worker starting", iteration: 0, updatedAt: new Date().toISOString() }, null, 2)
     );
 
-    const output = await captureConsoleForRejected(async () => {
+    const { output, exitCode } = await captureConsoleAndExitCode(async () => {
       await fixture.cli(["watch", runId, "--json"]);
     });
     const payloads = parseNdjson(output);
@@ -322,6 +323,7 @@ describe("afk CLI — JSON output", () => {
     expect(result.runId).toBe(runId);
     expect(result.status).toBe("failed");
     expect(result.error.message).toContain("Detached worker process 999999 exited before creating run artifacts");
+    expect(exitCode).toBe(1);
 
     const [updatedRun] = (await fixture.store.listRuns()).filter((run) => run.id === runId);
     expect(updatedRun?.status).toBe("failed");
@@ -654,6 +656,17 @@ async function captureConsoleForRejected(action: () => Promise<void>): Promise<s
   }
 
   return lines.join("\n");
+}
+
+async function captureConsoleAndExitCode(action: () => Promise<void>): Promise<{ output: string; exitCode: string | number | undefined }> {
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const output = await captureConsole(action);
+    return { output, exitCode: process.exitCode };
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 }
 
 function parseNdjson(output: string): Array<Record<string, any>> {
