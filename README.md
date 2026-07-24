@@ -143,6 +143,8 @@ pnpm afk follow-up <work-item-id>
 
 The CLI is the first stable control surface for other tools. Long term, commands should be easy for external orchestrators to call without scraping human-readable logs.
 
+For the full agent-facing protocol, see [docs/orchestrator-contract.md](docs/orchestrator-contract.md).
+
 Priority command contracts:
 
 - `afk doctor --json`

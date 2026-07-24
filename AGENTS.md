@@ -13,6 +13,13 @@ Software craftsmanship standards are centralized in `CRAFTSMANSHIP.md`.
 - Explain tradeoffs briefly and concretely.
 - Run relevant checks before finishing.
 
+## AFK Orchestrator Protocol
+- AFK Geoff is intended to be a boringly reliable execution layer for other agents, bots, schedulers, CI jobs, and harnesses.
+- When acting as an orchestrator or helping another agent use AFK, read `docs/orchestrator-contract.md` first.
+- Prefer machine-readable commands: `afk doctor --json`, `afk run file <brief.md> --detach --json`, `afk runs --json`, and `afk watch <runId> --json`.
+- Treat `final-result.json` as the authoritative completion artifact; do not declare success from terminal prose alone.
+- Report `runId`, `workItemId`, branch, final verdict, publishability, verification status, and artifact paths.
+
 ## Planning and Handoff
 - Use `scratchpad.md` as a team working brief when planning complex work.
 - Keep updates concise and factual.
