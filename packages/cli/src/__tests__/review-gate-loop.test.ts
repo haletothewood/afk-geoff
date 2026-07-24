@@ -255,7 +255,7 @@ if (prompt.includes("# Issues to fix")) {
   // -----------------------------------------------------------------------
   // Verification failure is not ignored
   // -----------------------------------------------------------------------
-  it("verification failure: failed verification results are passed to the review agent as context", async () => {
+  it("verification failure: failed verification forces fix iterations and blocks if it never passes", async () => {
     const fixture = await createFixture(tempDir);
     // Add a failing verification command to the config after fixture setup.
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
@@ -269,11 +269,12 @@ if (prompt.includes("# Issues to fix")) {
     const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
     expect(backend).toBeDefined();
 
-    // Review defaults to PASS so the run completes despite verification failure.
+    // Review defaults to PASS, but wrapper verification is authoritative and should still block.
     await fixture.cli(["run", backend!.id]);
 
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
+    expect(run?.summary).toBe("Iteration cap (4) reached with failing verification");
 
     // The review prompt must include the verification results section.
     const reviewPromptPath = path.join(run!.runDir, "review-prompt-1.md");
@@ -282,6 +283,16 @@ if (prompt.includes("# Issues to fix")) {
     expect(reviewPrompt).toContain("# Verification Results");
     // The failed command should appear in the verification section.
     expect(reviewPrompt).toContain("node -e process.exit(1)");
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+    };
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable).toEqual(
+      expect.arrayContaining(["Verification failed: node -e process.exit(1) (exit 2)"])
+    );
   });
 
   it("verification package manager: declared pnpm version is used through Corepack when PATH differs", async () => {

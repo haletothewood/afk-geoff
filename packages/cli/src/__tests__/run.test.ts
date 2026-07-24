@@ -80,8 +80,8 @@ describe("afk CLI — run command", () => {
         "- The imported work item is executed and tracked locally",
         "",
         "## Verification",
-        "- pnpm typecheck",
-        "- pnpm test -- packages/cli/src/index.test.ts"
+        "- node -e \"process.exit(0)\"",
+        "- node -e \"console.log('brief verification')\""
       ].join("\n")
     );
 
@@ -106,8 +106,8 @@ describe("afk CLI — run command", () => {
     expect(prompt).toContain("Write progress updates to this exact path while the run is active:");
     expect(prompt).toContain("/afk-run/progress.json");
     expect(prompt).toContain('Escape any double quotes inside string values as \\".');
-    expect(prompt).toContain("- pnpm typecheck");
-    expect(prompt).toContain("- pnpm test -- packages/cli/src/index.test.ts");
+    expect(prompt).toContain('- node -e "process.exit(0)"');
+    expect(prompt).toContain('- node -e "console.log(\'brief verification\')"');
     expect(output).toContain("Imported execution brief");
     expect(output).toContain(`Work item ${items[0]!.id}`);
   });
@@ -254,7 +254,10 @@ describe("afk CLI — run command", () => {
 
   it("Given TypeScript build info churn, when AFK commits, then generated artifacts are cleaned and reported", async () => {
     const fixture = await createFixture(tempDir, {
-      runnerScriptSuffix: 'fs.writeFileSync(path.join(process.cwd(), "tsconfig.tsbuildinfo"), "cache\\n");'
+      runnerScriptSuffix: [
+        'fs.writeFileSync(path.join(process.cwd(), "tsconfig.tsbuildinfo"), "cache\\n");',
+        'fs.writeFileSync(path.join(process.cwd(), "pnpm-workspace.yaml"), "allowBuilds:\\n  esbuild: set this to true or false\\n");'
+      ].join("\n")
     });
     const requirement = await fixture.capture(
       "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
@@ -277,12 +280,18 @@ describe("afk CLI — run command", () => {
     };
 
     expect(status).not.toContain("tsconfig.tsbuildinfo");
+    expect(status).not.toContain("pnpm-workspace.yaml");
     expect(diffNames).not.toContain("tsconfig.tsbuildinfo");
+    expect(diffNames).not.toContain("pnpm-workspace.yaml");
     expect(finalResult.worktreeStatus.clean).toBe(true);
-    expect(finalResult.generatedArtifacts).toEqual([
-      expect.objectContaining({ stage: "post-worker", paths: ["tsconfig.tsbuildinfo"] })
-    ]);
-    expect(output).toContain("[cleanup] post-worker: removed generated artifact tsconfig.tsbuildinfo");
+    expect(finalResult.generatedArtifacts).toHaveLength(1);
+    expect(finalResult.generatedArtifacts[0]).toEqual(expect.objectContaining({ stage: "post-worker" }));
+    expect(finalResult.generatedArtifacts[0]?.paths).toEqual(
+      expect.arrayContaining(["tsconfig.tsbuildinfo", "pnpm-workspace.yaml"])
+    );
+    expect(output).toContain("[cleanup] post-worker: removed generated artifacts");
+    expect(output).toContain("tsconfig.tsbuildinfo");
+    expect(output).toContain("pnpm-workspace.yaml");
   });
 
   it("Given GitHub publishing is enabled, when run file is used with --pr, then it opens a pull request and prints the review URL", async () => {
@@ -493,7 +502,7 @@ describe("afk CLI — run command", () => {
             workItemTitle: "Run from issue",
             workItemBody: "Execute a hand-authored GitHub issue body.",
             acceptanceCriteria: ["The runner can import a GitHub issue body"],
-            verification: ["pnpm typecheck"],
+            verification: ["node -e \"process.exit(0)\""],
             issueUrl: "https://github.com/acme/demo/issues/42"
           };
         }

@@ -172,6 +172,8 @@ Example event stream:
 
 `doctor`, `run`, and `follow-up` payloads include `ok: true` on success and `ok: false` with failure details before exiting nonzero on failure. Each local run also writes `.afk/runs/<run-id>/progress.json`, which includes the current phase, iteration, elapsed seconds, command/log paths, worktree status, and latest event for polling orchestrators.
 
+`final-result.json` includes `publishable` and `whyNotPublishable`. A local run is only publishable when wrapper verification passed, the review gate passed, there is a committed diff against the base branch, and the worktree is clean. Failed wrapper verification is fed back into the autonomous fix loop even if the reviewer returns `PASS`; if the loop cannot clear it, AFK reports `blocked` rather than `done`.
+
 Execution backend selection is explicit on run commands:
 
 - `afk run file <path> --backend local-docker`

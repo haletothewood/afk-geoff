@@ -73,10 +73,15 @@ export class LocalGitCodeHost implements CodeHost {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => line.slice(3))
-      .map((line) => line.includes(" -> ") ? line.split(" -> ").at(-1)! : line)
-      .filter(isGeneratedArtifactPath);
+      .map((line) => line.includes(" -> ") ? line.split(" -> ").at(-1)! : line);
 
-    const uniqueArtifactPaths = [...new Set(artifactPaths)];
+    const uniqueArtifactPaths: string[] = [];
+    for (const artifactPath of [...new Set(artifactPaths)]) {
+      if (await isGeneratedArtifactPath(input.cwd, artifactPath)) {
+        uniqueArtifactPaths.push(artifactPath);
+      }
+    }
+
     for (const artifactPath of uniqueArtifactPaths) {
       if (await isTracked(input.cwd, artifactPath)) {
         await execFileAsync("git", ["restore", "--staged", "--worktree", "--", artifactPath], { cwd: input.cwd });
@@ -124,8 +129,21 @@ async function isTracked(cwd: string, pathname: string): Promise<boolean> {
   }
 }
 
-function isGeneratedArtifactPath(pathname: string): boolean {
-  return path.basename(pathname) === "tsconfig.tsbuildinfo" || pathname.endsWith(".tsbuildinfo");
+async function isGeneratedArtifactPath(cwd: string, pathname: string): Promise<boolean> {
+  if (path.basename(pathname) === "tsconfig.tsbuildinfo" || pathname.endsWith(".tsbuildinfo")) {
+    return true;
+  }
+
+  if (pathname !== "pnpm-workspace.yaml" || await isTracked(cwd, pathname)) {
+    return false;
+  }
+
+  try {
+    const contents = fs.readFileSync(path.join(cwd, pathname), "utf8");
+    return contents.includes("allowBuilds:");
+  } catch {
+    return false;
+  }
 }
 
 export function branchNameForWorkItem(title: string): string {

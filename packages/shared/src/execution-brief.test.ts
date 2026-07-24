@@ -95,4 +95,20 @@ describe("parseExecutionBriefMarkdown — execution mode fields", () => {
     expect(result.overlays).toEqual(["security-gatekeeper"]);
     expect(result.risk).toBe("high");
   });
+
+  it("strips Markdown code formatting from verification commands", () => {
+    const brief = [
+      BASE_BRIEF,
+      "",
+      "## Verification",
+      "- `pnpm exec vitest --run app/admin/invites/__tests__/bulkInvites.test.ts`",
+      "- `pnpm run typecheck`"
+    ].join("\n");
+
+    const result = parseExecutionBriefMarkdown(brief);
+    expect(result.verification).toEqual([
+      "pnpm exec vitest --run app/admin/invites/__tests__/bulkInvites.test.ts",
+      "pnpm run typecheck"
+    ]);
+  });
 });

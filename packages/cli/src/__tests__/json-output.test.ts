@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig } from "./test-helpers.js";
 
@@ -147,6 +149,40 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.error.message).toContain("__afk_nonexistent_json_runner__");
 	    expect(await fixture.store.listRuns()).toHaveLength(0);
 	  });
+
+  it("Given package-manager mismatch during run --json, then stdout remains strict NDJSON", async () => {
+    const fixture = await createFixture(tempDir);
+    const corepackLogPath = path.join(fixture.repoDir, "corepack-calls.log");
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "package.json"),
+      JSON.stringify({ name: "fixture", private: true, packageManager: "pnpm@10.20.0" }, null, 2)
+    );
+    fs.writeFileSync(path.join(fixture.repoDir, "pnpm"), ["#!/usr/bin/env node", "console.log('11.7.0');"].join("\n"));
+    fs.chmodSync(path.join(fixture.repoDir, "pnpm"), 0o755);
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "corepack"),
+      [
+        "#!/usr/bin/env node",
+        "import fs from 'node:fs';",
+        `fs.appendFileSync(${JSON.stringify(corepackLogPath)}, process.argv.slice(2).join(' ') + '\\n');`,
+        "if (process.argv[3] === '--version') console.log('10.20.0');"
+      ].join("\n")
+    );
+    fs.chmodSync(path.join(fixture.repoDir, "corepack"), 0o755);
+    execFileSync("git", ["add", "package.json", "pnpm", "corepack"], { cwd: fixture.repoDir });
+    execFileSync("git", ["commit", "-m", "configure package manager"], { cwd: fixture.repoDir });
+    process.env.PATH = `${fixture.repoDir}:${process.env.PATH ?? ""}`;
+    writeBrief(fixture.repoDir, { verification: ["pnpm --version"] });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--json"]);
+    });
+
+    expect(output.split("\n").filter(Boolean).every((line) => line.trim().startsWith("{"))).toBe(true);
+    const payloads = parseNdjson(output);
+    expect(payloads.every((payload) => payload.kind === "run_event" || payload.kind === "run_result")).toBe(true);
+    expect(payloads.map((payload) => payload.event)).toContain("package_manager_warning");
+  });
 
   it("Given runs --json, when runs exist, then it prints structured run records", async () => {
     const fixture = await createFixture(tempDir);
@@ -501,7 +537,7 @@ function parseNdjson(output: string): Array<Record<string, any>> {
     .map((line) => JSON.parse(line) as Record<string, any>);
 }
 
-function writeBrief(repoDir: string): void {
+function writeBrief(repoDir: string, options: { verification?: string[] } = {}): void {
   fs.writeFileSync(
     `${repoDir}/brief.md`,
     [
@@ -517,7 +553,10 @@ function writeBrief(repoDir: string): void {
       "Create a branch and pull request.",
       "",
       "## Acceptance Criteria",
-      "- A pull request is opened for review"
+      "- A pull request is opened for review",
+      ...(options.verification && options.verification.length > 0
+        ? ["", "## Verification", ...options.verification.map((command) => `- ${command}`)]
+        : [])
     ].join("\n")
   );
 }

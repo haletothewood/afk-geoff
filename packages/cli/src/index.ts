@@ -414,16 +414,19 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
 async function runForJson<T>(action: () => Promise<T>, options: { allowRunEvents?: boolean } = {}): Promise<T> {
   const originalLog = console.log;
+  const originalWarn = console.warn;
   console.log = (...args: unknown[]) => {
     const line = args.map((arg) => String(arg)).join(" ");
     if (options.allowRunEvents && isRunEventLine(line)) {
       originalLog(line);
     }
   };
+  console.warn = () => {};
   try {
     return await action();
   } finally {
     console.log = originalLog;
+    console.warn = originalWarn;
   }
 }
 

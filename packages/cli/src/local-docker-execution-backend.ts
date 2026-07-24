@@ -21,7 +21,7 @@ import {
 } from "@afk-geoff/shared";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
-import { emitRunEvent } from "./run-events.js";
+import { emitRunEvent, isRunEventsEnabled } from "./run-events.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -212,7 +212,16 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const generatedArtifacts: GeneratedArtifactSummary[] = [];
     const packageManager = await resolvePackageManager(worktreePath);
     if (packageManager.warning) {
-      console.warn(packageManager.warning);
+      if (isRunEventsEnabled()) {
+        emitRunEvent({
+          event: "package_manager_warning",
+          runId,
+          workItemId: input.workItem.id,
+          message: packageManager.warning
+        });
+      } else {
+        console.warn(packageManager.warning);
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -642,6 +651,62 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       });
 
       if (reviewResult.verdict === "PASS") {
+        const verificationIssues = verificationFailureIssues(verificationResults);
+        if (verificationIssues.length > 0) {
+          console.log(`[verify] iteration ${iteration}: forcing fix because wrapper verification failed`);
+          emitRunEvent({
+            event: "verification_issues",
+            runId,
+            workItemId: input.workItem.id,
+            iteration,
+            phase: "verify",
+            issueCount: verificationIssues.length,
+            issues: verificationIssues
+          });
+
+          reviewIssues = verificationIssues;
+          if (iteration >= MAX_ITERATIONS) {
+            const capSummary = `Iteration cap (${MAX_ITERATIONS}) reached with failing verification`;
+            const issueList = reviewIssues.map((i) => `- ${i}`).join("\n");
+            await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+            await this.store.updateRun(runId, { status: "completed", summary: capSummary });
+            writeFinalRunResult(path.join(runDir, "final-result.json"), {
+              runId,
+              status: "blocked",
+              summary: capSummary,
+              workerResults,
+              reviewResults,
+              verificationSummaries,
+              commits,
+              generatedArtifacts,
+              branchName,
+              worktreePath,
+              hasDiff: true,
+              publishable: false,
+              whyNotPublishable: verificationIssues
+            });
+            emitRunEvent({
+              event: "run_completed",
+              runId,
+              workItemId: input.workItem.id,
+              status: "blocked",
+              message: capSummary,
+              branchName,
+              worktreePath,
+              runDir,
+              finalResultPath: path.join(runDir, "final-result.json")
+            });
+            return {
+              status: "blocked",
+              summary: capSummary,
+              issueComment: `**AFK run blocked**\n\n${capSummary}\n\nPending issues:\n${issueList}`,
+              hasDiff: false
+            };
+          }
+
+          continue;
+        }
+
         // Quality gate passed — proceed to publish.
         break;
       }
@@ -733,6 +798,45 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       stage: "pre-final-diff"
     });
 
+    const finalWorktreeStatus = readWorktreeStatus(worktreePath);
+    if (!finalWorktreeStatus.clean) {
+      const summary = "Run completed review but left a dirty worktree";
+      await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+      await this.store.updateRun(runId, { status: "completed", summary });
+      writeFinalRunResult(path.join(runDir, "final-result.json"), {
+        runId,
+        status: "blocked",
+        summary,
+        workerResults,
+        reviewResults,
+        verificationSummaries,
+        commits,
+        generatedArtifacts,
+        branchName,
+        worktreePath,
+        hasDiff: true,
+        publishable: false,
+        whyNotPublishable: [`Dirty worktree: ${finalWorktreeStatus.shortStatus}`]
+      });
+      emitRunEvent({
+        event: "run_completed",
+        runId,
+        workItemId: input.workItem.id,
+        status: "blocked",
+        message: summary,
+        branchName,
+        worktreePath,
+        runDir,
+        finalResultPath: path.join(runDir, "final-result.json")
+      });
+      return {
+        status: "blocked",
+        summary,
+        issueComment: `**AFK run blocked**\n\n${summary}\n\n${finalWorktreeStatus.shortStatus}`,
+        hasDiff: false
+      };
+    }
+
     const hasDiff = await this.git.hasDiffAgainst({
       cwd: worktreePath,
       baseBranch: this.config.baseBranch
@@ -752,7 +856,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         generatedArtifacts,
         branchName,
         worktreePath,
-        hasDiff: false
+        hasDiff: false,
+        publishable: false,
+        whyNotPublishable: ["No changes relative to the base branch"]
       });
       emitRunEvent({
         event: "run_completed",
@@ -795,7 +901,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       generatedArtifacts,
       branchName,
       worktreePath,
-      hasDiff: true
+      hasDiff: true,
+      publishable: true
     });
     emitRunEvent({
       event: "run_completed",
@@ -884,14 +991,34 @@ function writeFinalRunResult(pathname: string, result: {
   branchName: string;
   worktreePath: string;
   hasDiff?: boolean;
+  publishable?: boolean;
+  whyNotPublishable?: string[];
 }): void {
   const worktreeStatus = readWorktreeStatus(result.worktreePath);
+  const verificationIssues = result.verificationSummaries.flatMap((summary) =>
+    summary.results
+      .filter((verification) => !verification.passed)
+      .map((verification) => `Verification failed: ${verification.command} (exit ${verification.exitCode})`)
+  );
+  const whyNotPublishable = [
+    ...verificationIssues,
+    ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
+    ...(result.whyNotPublishable ?? [])
+  ];
+  const publishable = result.publishable ?? (
+    result.status === "done" &&
+    result.hasDiff === true &&
+    worktreeStatus.clean &&
+    verificationIssues.length === 0
+  );
   fs.writeFileSync(
     pathname,
     JSON.stringify(
       {
         ...result,
         worktreeStatus,
+        publishable,
+        whyNotPublishable: whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [],
         latestWorkerSummary: result.summary,
         summary: buildAggregateSummary(result)
       },
@@ -1197,6 +1324,12 @@ async function runVerificationCommands(commands: string[], cwd: string, packageM
   }
 
   return results;
+}
+
+function verificationFailureIssues(results: VerificationCommandResult[]): string[] {
+  return results
+    .filter((result) => !result.passed)
+    .map((result) => `Wrapper verification failed: ${result.command} (exit ${result.exitCode})`);
 }
 
 function shellQuote(value: string): string {

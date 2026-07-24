@@ -29,8 +29,12 @@ export async function withRunEvents<T>(action: () => Promise<T>): Promise<T> {
   return await runEventContext.run(true, action);
 }
 
+export function isRunEventsEnabled(): boolean {
+  return runEventContext.getStore() === true;
+}
+
 export function emitRunEvent(event: RunEvent): void {
-  if (runEventContext.getStore() !== true) {
+  if (!isRunEventsEnabled()) {
     return;
   }
 
