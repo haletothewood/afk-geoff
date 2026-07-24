@@ -285,6 +285,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         ...(this.config.runner.command ? { commandOverride: this.config.runner.command } : {}),
         ...(workModel ? { model: workModel } : {})
       });
+      const headBeforeWorker = await getGitHead(worktreePath);
 
       const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
       const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
@@ -437,6 +438,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         phase,
         stage: "post-worker"
       });
+      const headBeforeAfkCommit = await getGitHead(worktreePath);
+      const workerCommit = headBeforeAfkCommit !== headBeforeWorker
+        ? { created: true, sha: headBeforeAfkCommit, source: "worker" as const }
+        : undefined;
 
       // Commit changes from this iteration before running verification and review.
       const commit = await this.git.commitAll({
@@ -447,8 +452,20 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           ? `afk: ${input.workItem.title}`
           : `afk: ${input.workItem.title} (fix ${iteration - 1})`
       });
-      commits.push({ iteration, phase, created: commit.created, ...(commit.sha ? { sha: commit.sha } : {}) });
-      console.log(`[commit] iteration ${iteration}: ${commit.created ? commit.sha ?? "created" : "no changes"}`);
+      if (workerCommit) {
+        commits.push({ iteration, phase, ...workerCommit });
+      }
+      if (commit.created) {
+        commits.push({ iteration, phase, created: true, source: "afk", ...(commit.sha ? { sha: commit.sha } : {}) });
+      }
+      if (!workerCommit && !commit.created) {
+        commits.push({ iteration, phase, created: false });
+      }
+      const commitSummary = [
+        workerCommit ? `worker commit ${workerCommit.sha}` : undefined,
+        commit.created ? `afk commit ${commit.sha ?? "created"}` : undefined
+      ].filter(Boolean).join("; ") || "no changes";
+      console.log(`[commit] iteration ${iteration}: ${commitSummary}`);
 
       // ------------------------------------------------------------------
       // Verification
@@ -958,6 +975,7 @@ interface CommitPhaseSummary {
   phase: string;
   created: boolean;
   sha?: string;
+  source?: "worker" | "afk";
 }
 
 interface GeneratedArtifactSummary {
@@ -1250,6 +1268,11 @@ async function getGitDiff(worktreePath: string, baseBranch: string): Promise<str
   } catch {
     return "(diff unavailable)";
   }
+}
+
+async function getGitHead(worktreePath: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: worktreePath });
+  return stdout.trim();
 }
 
 async function resolvePackageManager(cwd: string): Promise<PackageManagerResolution> {

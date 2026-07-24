@@ -294,6 +294,40 @@ describe("afk CLI — run command", () => {
     expect(output).toContain("pnpm-workspace.yaml");
   });
 
+  it("Given the worker creates a commit, when AFK records the run, then final result counts that commit", async () => {
+    const fixture = await createFixture(tempDir, {
+      writeWorktreeChange: false,
+      runnerScriptSuffix: [
+        'fs.writeFileSync(path.join(process.cwd(), "worker-owned.txt"), "done\\n");',
+        'execFileSync("git", ["add", "worker-owned.txt"], { cwd: process.cwd() });',
+        'execFileSync("git", ["commit", "-m", "Worker owned change"], { cwd: process.cwd() });'
+      ].join("\n")
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", backend!.id]);
+    });
+
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      commits: Array<{ created: boolean; sha?: string; source?: string }>;
+      summary: string;
+    };
+    const workerCommit = finalResult.commits.find((commit) => commit.source === "worker");
+
+    expect(workerCommit).toEqual(expect.objectContaining({ created: true, source: "worker" }));
+    expect(workerCommit?.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(finalResult.summary).toContain("1 commit");
+    expect(output).toContain("[commit] iteration 1: worker commit");
+  });
+
   it("Given GitHub publishing is enabled, when run file is used with --pr, then it opens a pull request and prints the review URL", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
