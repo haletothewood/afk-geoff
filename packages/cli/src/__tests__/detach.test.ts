@@ -7,6 +7,7 @@ describe("afk CLI — detached run command", () => {
   const originalCwd = process.cwd();
   const originalPath = process.env.PATH ?? "";
   const originalGhToken = process.env.GH_TOKEN;
+  const originalExecArgv = [...process.execArgv];
   let tempDir = "";
 
   beforeEach(() => {
@@ -16,6 +17,7 @@ describe("afk CLI — detached run command", () => {
   afterEach(() => {
     process.chdir(originalCwd);
     process.env.PATH = originalPath;
+    process.execArgv.splice(0, process.execArgv.length, ...originalExecArgv);
 
     if (originalGhToken === undefined) {
       delete process.env.GH_TOKEN;
@@ -66,6 +68,34 @@ describe("afk CLI — detached run command", () => {
     expect(launchCalls).toHaveLength(1);
     expect(launchCalls[0]?.env.AFK_DETACH_RUN_ID).toBe(detachedRun?.id);
     expect(launchCalls[0]?.argv).toContain(backend!.id);
+  });
+
+  it("Given the CLI is running through a TypeScript loader, when run --detach is used, then the child keeps the loader args", async () => {
+    const launchCalls: Array<{ argv: string[] }> = [];
+    process.execArgv.splice(0, process.execArgv.length, "--import", "file:///tmp/afk-test-tsx-loader.mjs");
+    const fixture = await createFixture(tempDir, {
+      detachLauncher: (argv) => {
+        launchCalls.push({ argv });
+        return { pid: 0 };
+      }
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id, "--detach"]);
+
+    expect(launchCalls).toHaveLength(1);
+    expect(launchCalls[0]?.argv.slice(0, 4)).toEqual([
+      process.execPath,
+      "--import",
+      "file:///tmp/afk-test-tsx-loader.mjs",
+      process.argv[1]
+    ]);
   });
 
   it("Given detached launcher startup fails, when run --detach is used, then the run and work item are marked failed", async () => {

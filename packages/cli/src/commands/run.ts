@@ -425,6 +425,7 @@ export async function runWorkItemDetached(
   launchEnv.AFK_DETACH_STDERR_PATH = detachStderrPath;
   const launchArgv: string[] = [
     process.execPath,
+    ...process.execArgv,
     process.argv[1] ?? "afk",
     "run",
     workItemId,
