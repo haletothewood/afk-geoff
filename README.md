@@ -145,6 +145,8 @@ The CLI is the first stable control surface for other tools. Long term, commands
 
 For the full agent-facing protocol, see [docs/orchestrator-contract.md](docs/orchestrator-contract.md).
 
+For a minimal parent-process implementation, see [examples/orchestrator](examples/orchestrator).
+
 Priority command contracts:
 
 - `afk doctor --json`
