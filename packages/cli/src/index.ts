@@ -31,6 +31,7 @@ import { downloadRemoteArtifact, listRemoteArtifacts, printRemoteArtifactDownloa
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
 import { formatErrorMessage } from "./cli-utils.js";
+import { emitRunEvent, isRunEventLine, withRunEvents } from "./run-events.js";
 import type { CliDependencies, RunOutcome } from "./types.js";
 
 const executionBackendChoices = ["local-docker", "local-process"] as const;
@@ -328,10 +329,13 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
       if (options.json) {
         try {
-          const outcome = await runForJson(runAction);
-          printJson({ command: "run", ok: true, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome });
+          const outcome = await runForJson(async () => await withRunEvents(async () => {
+            emitRunEvent({ event: "run_requested", target, ...(value ? { value } : {}) });
+            return await runAction();
+          }), { allowRunEvents: true });
+          printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome }, { compact: true });
         } catch (error) {
-          printJson({ command: "run", ok: false, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, error: { message: formatErrorMessage(error) } });
+          printJson({ kind: "run_result", command: "run", ok: false, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, error: { message: formatErrorMessage(error) } }, { compact: true });
           throw error;
         }
       } else {
@@ -408,9 +412,14 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   await program.parseAsync(argv);
 }
 
-async function runForJson<T>(action: () => Promise<T>): Promise<T> {
+async function runForJson<T>(action: () => Promise<T>, options: { allowRunEvents?: boolean } = {}): Promise<T> {
   const originalLog = console.log;
-  console.log = () => {};
+  console.log = (...args: unknown[]) => {
+    const line = args.map((arg) => String(arg)).join(" ");
+    if (options.allowRunEvents && isRunEventLine(line)) {
+      originalLog(line);
+    }
+  };
   try {
     return await action();
   } finally {
@@ -418,8 +427,8 @@ async function runForJson<T>(action: () => Promise<T>): Promise<T> {
   }
 }
 
-function printJson(payload: unknown): void {
-  console.log(JSON.stringify(payload, null, 2));
+function printJson(payload: unknown, options: { compact?: boolean } = {}): void {
+  console.log(JSON.stringify(payload, null, options.compact ? 0 : 2));
 }
 
 function printRunOutcome(outcome: {

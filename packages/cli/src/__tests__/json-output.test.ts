@@ -23,7 +23,7 @@ describe("afk CLI — JSON output", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("Given run file --pr --json, when the run completes, then stdout is one machine-readable payload", async () => {
+  it("Given run file --pr --json, when the run completes, then stdout streams events and ends with the result payload", async () => {
     const githubMirror = new MockGitHubMirror();
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
@@ -34,7 +34,10 @@ describe("afk CLI — JSON output", () => {
     const output = await captureConsole(async () => {
       await fixture.cli(["run", "file", "brief.md", "--pr", "--backend", "local-docker", "--json"]);
     });
-	    const payload = JSON.parse(output) as {
+    const payloads = parseNdjson(output);
+    const events = payloads.filter((payload) => payload.kind === "run_event");
+    const payload = payloads.at(-1) as {
+      kind: string;
 	      command: string;
 	      ok: boolean;
 	      backend: string;
@@ -47,6 +50,20 @@ describe("afk CLI — JSON output", () => {
       prUrl: string;
     };
 
+    expect(events.map((event) => event.event)).toEqual(
+      expect.arrayContaining([
+        "run_requested",
+        "run_started",
+        "worker_started",
+        "worker_completed",
+        "verification_started",
+        "verification_completed",
+        "review_started",
+        "review_completed",
+        "run_completed"
+      ])
+    );
+    expect(payload.kind).toBe("run_result");
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(true);
 	    expect(payload.backend).toBe("local-docker");
@@ -70,7 +87,9 @@ describe("afk CLI — JSON output", () => {
 	    const output = await captureConsole(async () => {
 	      await fixture.cli(["run", "file", "brief.md", "--detach", "--json"]);
 	    });
-	    const payload = JSON.parse(output) as {
+	    const payloads = parseNdjson(output);
+	    const payload = payloads.at(-1) as {
+        kind: string;
 	      command: string;
 	      ok: boolean;
 	      detached: boolean;
@@ -82,6 +101,9 @@ describe("afk CLI — JSON output", () => {
 	      worktreePath: string;
 	    };
 
+      expect(payloads[0]?.kind).toBe("run_event");
+      expect(payloads[0]?.event).toBe("run_requested");
+      expect(payload.kind).toBe("run_result");
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(true);
 	    expect(payload.detached).toBe(true);
@@ -106,13 +128,18 @@ describe("afk CLI — JSON output", () => {
 	    const output = await captureConsoleForRejected(async () => {
 	      await fixture.cli(["run", "file", "brief.md", "--json"]);
 	    });
-	    const payload = JSON.parse(output) as {
+	    const payloads = parseNdjson(output);
+	    const payload = payloads.at(-1) as {
+        kind: string;
 	      command: string;
 	      ok: boolean;
 	      backend: string;
 	      error: { message: string };
 	    };
 
+      expect(payloads[0]?.kind).toBe("run_event");
+      expect(payloads[0]?.event).toBe("run_requested");
+      expect(payload.kind).toBe("run_result");
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(false);
 	    expect(payload.backend).toBe("local-docker");
@@ -464,6 +491,14 @@ async function captureConsoleForRejected(action: () => Promise<void>): Promise<s
   }
 
   return lines.join("\n");
+}
+
+function parseNdjson(output: string): Array<Record<string, any>> {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, any>);
 }
 
 function writeBrief(repoDir: string): void {

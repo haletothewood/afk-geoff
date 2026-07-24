@@ -273,10 +273,12 @@ describe("afk CLI — run command", () => {
     const diffNames = execFileSync("git", ["diff", "--name-only", "main..HEAD"], { cwd: run!.worktreePath, encoding: "utf8" });
     const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
       generatedArtifacts: Array<{ stage: string; paths: string[] }>;
+      worktreeStatus: { clean: boolean; shortStatus: string };
     };
 
     expect(status).not.toContain("tsconfig.tsbuildinfo");
     expect(diffNames).not.toContain("tsconfig.tsbuildinfo");
+    expect(finalResult.worktreeStatus.clean).toBe(true);
     expect(finalResult.generatedArtifacts).toEqual([
       expect.objectContaining({ stage: "post-worker", paths: ["tsconfig.tsbuildinfo"] })
     ]);

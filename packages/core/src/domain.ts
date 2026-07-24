@@ -63,6 +63,22 @@ export interface RunProgress {
   message: string;
   iteration: number;
   updatedAt: string;
+  runId?: string;
+  workItemId?: string;
+  branchName?: string;
+  worktreePath?: string;
+  runDir?: string;
+  startedAt?: string;
+  elapsedSeconds?: number;
+  workerPid?: number;
+  currentCommand?: string;
+  currentLogPaths?: {
+    stdout?: string;
+    stderr?: string;
+  };
+  lastEvent?: string;
+  dirtyStatus?: string;
+  generatedArtifacts?: string[];
 }
 
 export interface ChangeRequest {

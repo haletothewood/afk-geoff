@@ -20,9 +20,10 @@ Now:
 - explicit execution mode resolution before work starts
 - configurable runner/model selection for work and review phases
 - bounded autonomous review gate before completion
+- machine-readable run events and final results for external orchestrators
 
 Next:
-- machine-readable command output for external orchestrators
+- tighter remote execution and source/publisher adapters
 
 Later:
 - explicit backend selection, remote execution backends, and broader source/publisher adapters
@@ -154,7 +155,22 @@ Priority command contracts:
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`
 
-Current JSON support covers those commands and emits a single JSON payload on stdout so harnesses can capture preflight checks, ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. `doctor`, `run`, and `follow-up` payloads include `ok: true` on success and `ok: false` with failure details before exiting nonzero on failure.
+Current JSON support covers those commands so harnesses can capture preflight checks, ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. Most JSON commands emit one JSON payload on stdout.
+
+`afk run --json` is intentionally NDJSON: it streams one compact JSON object per lifecycle event, then emits a final `kind: "run_result"` object as the last line. That lets a Slack bot, scheduler, CI job, or higher-level agent framework update its own status without waiting for the worker to finish.
+
+Example event stream:
+
+```json
+{"kind":"run_event","event":"run_started","runId":"run_...","workItemId":"wi_..."}
+{"kind":"run_event","event":"worker_started","iteration":1,"phase":"work"}
+{"kind":"run_event","event":"review_issues","iteration":1,"issueCount":2}
+{"kind":"run_event","event":"fix_started","iteration":2,"phase":"fix"}
+{"kind":"run_event","event":"run_completed","status":"done","finalResultPath":".afk/runs/run_.../final-result.json"}
+{"kind":"run_result","command":"run","ok":true,"runId":"run_...","status":"completed"}
+```
+
+`doctor`, `run`, and `follow-up` payloads include `ok: true` on success and `ok: false` with failure details before exiting nonzero on failure. Each local run also writes `.afk/runs/<run-id>/progress.json`, which includes the current phase, iteration, elapsed seconds, command/log paths, worktree status, and latest event for polling orchestrators.
 
 Execution backend selection is explicit on run commands:
 

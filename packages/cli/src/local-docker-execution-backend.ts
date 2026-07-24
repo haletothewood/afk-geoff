@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress, WorkspaceRuntime } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
@@ -21,6 +21,7 @@ import {
 } from "@afk-geoff/shared";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
+import { emitRunEvent } from "./run-events.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -179,13 +180,28 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const resultContainerPath = path.join(runtimeRunDir, "result.json");
     const hostResultPath = path.join(runDir, "result.json");
     const progressPath = path.join(runDir, "progress.json");
+    const runStartedAt = new Date().toISOString();
+    const progressBase = {
+      runId,
+      workItemId: input.workItem.id,
+      branchName,
+      worktreePath,
+      runDir,
+      startedAt: runStartedAt
+    };
 
     const extraEnv = {
       ...runnerProcessEnv(this.runner, path.join(runtimeRunDir, "runner-home")),
       ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
     };
 
-    writeProgress(progressPath, { phase: "starting", message: "Worker started", iteration: 0, updatedAt: new Date().toISOString() });
+    writeProgress(progressPath, buildProgress(progressBase, {
+      phase: "starting",
+      message: "Worker started",
+      iteration: 0,
+      lastEvent: "run_started"
+    }));
+    emitRunEvent({ event: "run_started", runId, workItemId: input.workItem.id, branchName, worktreePath, runDir });
 
     let lastWorkerResult: import("@afk-geoff/shared").WorkerResult | undefined;
     let reviewIssues: string[] = [];
@@ -216,12 +232,12 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         console.log(`[fix-${iteration - 1}] ${runnerLabel}${workModel ? `, model: ${workModel}` : ""}`);
       }
 
-      writeProgress(progressPath, {
+      writeProgress(progressPath, buildProgress(progressBase, {
         phase,
         message: isFollowUp && isFirstIteration ? "Follow-up agent running" : isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
         iteration,
-        updatedAt: new Date().toISOString()
-      });
+        lastEvent: `${phase}_started`
+      }));
 
       // Build the appropriate prompt for this phase.
       const promptFilename = isFollowUp && isFirstIteration ? "follow-up-prompt.md" : isFirstIteration ? "prompt.md" : `fix-prompt-${iteration}.md`;
@@ -265,6 +281,23 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
       const stderrPath = path.join(runDir, `${phase}-stderr-${iteration}.log`);
       console.log(`[${phase}] iteration ${iteration}: worker running (logs: ${path.basename(stdoutPath)}, ${path.basename(stderrPath)})`);
+      emitRunEvent({
+        event: phase === "fix" ? "fix_started" : "worker_started",
+        runId,
+        workItemId: input.workItem.id,
+        iteration,
+        phase,
+        command: formatInvocation(invocation.command, invocation.args),
+        resultPath: path.join(runDir, `${phase}-result-${iteration}.json`)
+      });
+      writeProgress(progressPath, buildProgress(progressBase, {
+        phase,
+        message: isFollowUp && isFirstIteration ? "Follow-up agent running" : isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
+        iteration,
+        currentCommand: formatInvocation(invocation.command, invocation.args),
+        currentLogPaths: { stdout: stdoutPath, stderr: stderrPath },
+        lastEvent: phase === "fix" ? "fix_started" : "worker_started"
+      }));
       const stopStatusTicker = startStatusTicker({
         label: `[${phase}] iteration ${iteration}`,
         progressPath,
@@ -277,7 +310,13 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const heartbeatInterval = setInterval(() => {
         try {
           const current = readProgress(progressPath);
-          writeProgress(progressPath, { ...current, updatedAt: new Date().toISOString() });
+          const processInfo = readWorkerProcessIfExists(runDir);
+          writeProgress(progressPath, {
+            ...current,
+            updatedAt: new Date().toISOString(),
+            elapsedSeconds: secondsSince(current.startedAt ?? runStartedAt),
+            ...(processInfo?.pid ? { workerPid: processInfo.pid } : {})
+          });
         } catch {
           // ignore heartbeat errors
         }
@@ -304,11 +343,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }
 
       if (!fs.existsSync(hostResultPath)) {
+        const summary = `No result.json found (exit code ${exitCode}, iteration ${iteration})`;
         await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, {
-          status: "failed",
-          summary: `No result.json found (exit code ${exitCode}, iteration ${iteration})`
-        });
+        await this.store.updateRun(runId, { status: "failed", summary });
+        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
         throw new Error(`Worker did not produce result.json for ${input.workItem.id} (iteration ${iteration})`);
       }
 
@@ -316,11 +354,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       try {
         agentResult = workerResultSchema.parse(parseJsonWithRecovery(fs.readFileSync(hostResultPath, "utf8")));
       } catch (err) {
+        const summary = `Agent produced malformed result.json (iteration ${iteration})`;
         await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, {
-          status: "failed",
-          summary: `Agent produced malformed result.json (iteration ${iteration})`
-        });
+        await this.store.updateRun(runId, { status: "failed", summary });
+        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
         throw new Error(`Agent produced malformed result.json for ${input.workItem.id} (iteration ${iteration}): ${String(err)}`);
       }
       const phaseResultPath = path.join(runDir, `${phase}-result-${iteration}.json`);
@@ -333,6 +370,16 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         resultPath: phaseResultPath
       });
       console.log(`[${phase}] iteration ${iteration}: ${agentResult.status} - ${agentResult.summary}`);
+      emitRunEvent({
+        event: "worker_completed",
+        runId,
+        workItemId: input.workItem.id,
+        iteration,
+        phase,
+        status: agentResult.status,
+        message: agentResult.summary,
+        resultPath: phaseResultPath
+      });
 
       if (agentResult.status === "blocked" || agentResult.status === "failed") {
         await this.store.updateWorkItemStatus(input.workItem.id, agentResult.status);
@@ -351,6 +398,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: agentResult.status,
+          message: agentResult.summary,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
         });
         return {
           status: agentResult.status,
@@ -386,12 +444,13 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       // ------------------------------------------------------------------
       // Verification
       // ------------------------------------------------------------------
-      writeProgress(progressPath, {
+      writeProgress(progressPath, buildProgress(progressBase, {
         phase: "verify",
         message: `Running verification (iteration ${iteration})`,
         iteration,
-        updatedAt: new Date().toISOString()
-      });
+        lastEvent: "verification_started"
+      }));
+      emitRunEvent({ event: "verification_started", runId, workItemId: input.workItem.id, iteration, phase: "verify" });
 
       const verificationResults = await runVerificationCommands(input.verification, worktreePath, packageManager);
       verificationSummaries.push({
@@ -405,8 +464,26 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       if (verificationResults.length > 0) {
         const passed = verificationResults.filter((result) => result.passed).length;
         console.log(`[verify] iteration ${iteration}: ${passed}/${verificationResults.length} passed`);
+        emitRunEvent({
+          event: "verification_completed",
+          runId,
+          workItemId: input.workItem.id,
+          iteration,
+          phase: "verify",
+          status: passed === verificationResults.length ? "passed" : "failed",
+          message: `${passed}/${verificationResults.length} passed`
+        });
       } else {
         console.log(`[verify] iteration ${iteration}: no verification commands configured`);
+        emitRunEvent({
+          event: "verification_completed",
+          runId,
+          workItemId: input.workItem.id,
+          iteration,
+          phase: "verify",
+          status: "skipped",
+          message: "no verification commands configured"
+        });
       }
       await recordGeneratedArtifactCleanup({
         git: this.git,
@@ -420,12 +497,12 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       // ------------------------------------------------------------------
       // Review
       // ------------------------------------------------------------------
-      writeProgress(progressPath, {
+      writeProgress(progressPath, buildProgress(progressBase, {
         phase: "review",
         message: `Review agent running (iteration ${iteration})`,
         iteration,
-        updatedAt: new Date().toISOString()
-      });
+        lastEvent: "review_started"
+      }));
 
       const gitDiff = await getGitDiff(worktreePath, this.config.baseBranch);
       const reviewResultPath = path.join(runDir, `review-result-${iteration}.json`);
@@ -452,6 +529,23 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const reviewStdoutPath = path.join(runDir, `review-stdout-${iteration}.log`);
       const reviewStderrPath = path.join(runDir, `review-stderr-${iteration}.log`);
       console.log(`[review] iteration ${iteration}: reviewer running (logs: ${path.basename(reviewStdoutPath)}, ${path.basename(reviewStderrPath)})`);
+      emitRunEvent({
+        event: "review_started",
+        runId,
+        workItemId: input.workItem.id,
+        iteration,
+        phase: "review",
+        command: formatInvocation(reviewInvocation.command, reviewInvocation.args),
+        resultPath: reviewResultPath
+      });
+      writeProgress(progressPath, buildProgress(progressBase, {
+        phase: "review",
+        message: `Review agent running (iteration ${iteration})`,
+        iteration,
+        currentCommand: formatInvocation(reviewInvocation.command, reviewInvocation.args),
+        currentLogPaths: { stdout: reviewStdoutPath, stderr: reviewStderrPath },
+        lastEvent: "review_started"
+      }));
       const stopReviewStatusTicker = startStatusTicker({
         label: `[review] iteration ${iteration}`,
         progressPath,
@@ -476,6 +570,16 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           status: "failed",
           summary: `Review agent process failed to start (iteration ${iteration}): ${String(err)}`
         });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "failed",
+          message: `Review agent process failed (iteration ${iteration})`,
+          branchName,
+          worktreePath,
+          runDir
+        });
         return {
           status: "failed",
           summary: `Review agent process failed (iteration ${iteration})`,
@@ -490,6 +594,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})`;
         await this.store.updateWorkItemStatus(input.workItem.id, "failed");
         await this.store.updateRun(runId, { status: "failed", summary });
+        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
         return {
           status: "failed",
           summary,
@@ -507,6 +612,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         const summary = `Review agent produced malformed output (iteration ${iteration})`;
         await this.store.updateWorkItemStatus(input.workItem.id, "failed");
         await this.store.updateRun(runId, { status: "failed", summary });
+        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
         return {
           status: "failed",
           summary,
@@ -522,6 +628,18 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         resultPath: reviewResultPath
       });
       console.log(`[review] iteration ${iteration}: ${reviewResult.verdict}${reviewResult.issues?.length ? ` (${reviewResult.issues.length} issue${reviewResult.issues.length === 1 ? "" : "s"})` : ""}`);
+      emitRunEvent({
+        event: reviewResult.verdict === "ISSUES" ? "review_issues" : "review_completed",
+        runId,
+        workItemId: input.workItem.id,
+        iteration,
+        phase: "review",
+        verdict: reviewResult.verdict,
+        issueCount: reviewResult.issues?.length ?? 0,
+        ...(reviewResult.issues?.length ? { issues: reviewResult.issues } : {}),
+        ...(reviewResult.blockerReason ? { message: reviewResult.blockerReason } : {}),
+        resultPath: reviewResultPath
+      });
 
       if (reviewResult.verdict === "PASS") {
         // Quality gate passed — proceed to publish.
@@ -543,6 +661,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "blocked",
+          message: reason,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
         });
         return {
           status: "blocked",
@@ -571,6 +700,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "blocked",
+          message: capSummary,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
         });
         return {
           status: "blocked",
@@ -614,6 +754,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         worktreePath,
         hasDiff: false
       });
+      emitRunEvent({
+        event: "run_completed",
+        runId,
+        workItemId: input.workItem.id,
+        status: "done",
+        message: finalResult.summary,
+        branchName,
+        worktreePath,
+        runDir,
+        finalResultPath: path.join(runDir, "final-result.json")
+      });
       return {
         status: "done",
         summary: finalResult.summary,
@@ -645,6 +796,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       branchName,
       worktreePath,
       hasDiff: true
+    });
+    emitRunEvent({
+      event: "run_completed",
+      runId,
+      workItemId: input.workItem.id,
+      status: "done",
+      message: finalResult.summary,
+      branchName,
+      worktreePath,
+      runDir,
+      finalResultPath: path.join(runDir, "final-result.json")
     });
 
     return {
@@ -698,6 +860,13 @@ interface GeneratedArtifactSummary {
   paths: string[];
 }
 
+type ProgressBase = Pick<RunProgress, "runId" | "workItemId" | "branchName" | "worktreePath" | "runDir" | "startedAt">;
+
+interface WorktreeStatusSummary {
+  clean: boolean;
+  shortStatus: string;
+}
+
 interface PackageManagerResolution {
   shellPrelude?: string;
   warning?: string;
@@ -716,11 +885,13 @@ function writeFinalRunResult(pathname: string, result: {
   worktreePath: string;
   hasDiff?: boolean;
 }): void {
+  const worktreeStatus = readWorktreeStatus(result.worktreePath);
   fs.writeFileSync(
     pathname,
     JSON.stringify(
       {
         ...result,
+        worktreeStatus,
         latestWorkerSummary: result.summary,
         summary: buildAggregateSummary(result)
       },
@@ -796,6 +967,39 @@ async function recordGeneratedArtifactCleanup(input: {
     paths
   });
   console.log(`[cleanup] ${input.stage}: removed generated artifact${paths.length === 1 ? "" : "s"} ${paths.join(", ")}`);
+  emitRunEvent({
+    event: "generated_artifacts_cleaned",
+    iteration: input.iteration,
+    phase: input.phase,
+    paths
+  });
+}
+
+function buildProgress(base: ProgressBase, progress: Omit<RunProgress, keyof ProgressBase | "updatedAt" | "elapsedSeconds">): RunProgress {
+  return {
+    ...base,
+    ...progress,
+    updatedAt: new Date().toISOString(),
+    elapsedSeconds: secondsSince(base.startedAt ?? new Date().toISOString()),
+    ...(base.worktreePath ? { dirtyStatus: readWorktreeStatus(base.worktreePath).shortStatus } : {})
+  };
+}
+
+function formatInvocation(command: string, args: string[]): string {
+  return [command, ...args].join(" ");
+}
+
+function readWorktreeStatus(worktreePath: string): WorktreeStatusSummary {
+  try {
+    const shortStatus = execFileSync("git", ["status", "--short"], {
+      cwd: worktreePath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return { clean: shortStatus.length === 0, shortStatus };
+  } catch {
+    return { clean: false, shortStatus: "(git status unavailable)" };
+  }
 }
 
 function startStatusTicker(input: {
