@@ -10,6 +10,8 @@ For the shortest operational path, start with [Agent Orchestrator Quickstart](ag
 
 Treat AFK as a backend worker, not as an interactive assistant.
 
+An orchestrator must invoke the AFK CLI. A Codex/Claude subagent or persona named "Geoff" is not an AFK worker unless it was started through `afk run ...`.
+
 The orchestrator should:
 
 1. Check readiness with `afk doctor --json`.

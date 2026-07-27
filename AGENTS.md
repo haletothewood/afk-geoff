@@ -15,8 +15,9 @@ Software craftsmanship standards are centralized in `CRAFTSMANSHIP.md`.
 
 ## AFK Orchestrator Protocol
 - AFK Geoff is intended to be a boringly reliable execution layer for other agents, bots, schedulers, CI jobs, and harnesses.
+- AFK orchestration means invoking the AFK CLI; do not substitute Codex subagents, Claude subagents, or a persona named "Geoff" for `afk run ...`.
 - When acting as an orchestrator or helping another agent use AFK, read `docs/orchestrator-contract.md` first.
-- Prefer machine-readable commands: `afk doctor --json`, `afk run file <brief.md> --detach --json`, `afk runs --json`, and `afk watch <runId> --json`.
+- Prefer machine-readable commands: `afk doctor --json`, `afk run file <brief.md> --detach --json`, `afk watch <runId> --json`, and `afk handoff <runId> --json`.
 - Treat `final-result.json` as the authoritative completion artifact; do not declare success from terminal prose alone.
 - Report `runId`, `workItemId`, branch, final verdict, publishability, verification status, and artifact paths.
 

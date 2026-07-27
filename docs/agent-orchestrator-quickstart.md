@@ -4,6 +4,44 @@ Use this when another agent session, harness, scheduler, Slack bot, Linear bot, 
 
 AFK is the execution substrate. The orchestrator chooses the work, starts a run, watches progress, and uses the handoff payload to decide what to do next.
 
+## Non-Negotiable Rule
+
+Using AFK Geoff means invoking the AFK CLI.
+
+Do not replace AFK with:
+
+- a Codex subagent
+- a Claude subagent
+- a generic task tool
+- manual edits in the target repo
+- a persona named "Geoff"
+
+A valid AFK run creates a `runId`, a `.afk/runs/<runId>/` directory, and usually a `.afk/worktrees/<runId>/` worktree. If no `afk run ...` command was executed, no AFK worker was spawned.
+
+## 0. Locate The AFK CLI
+
+First, choose the command prefix the orchestrator will use for every AFK command.
+
+If `afk` is on `PATH`:
+
+```bash
+afk() { command afk "$@"; }
+```
+
+If `afk` is not on `PATH`, use this checkout directly:
+
+```bash
+afk() { /opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" "$@"; }
+```
+
+Then run:
+
+```bash
+afk doctor --json
+```
+
+All command examples below assume that shell function or an equivalent `afk` executable is available.
+
 ## 1. Confirm The Target Repo
 
 Run these from the target repository, not from the AFK Geoff repository:
