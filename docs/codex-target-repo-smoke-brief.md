@@ -89,17 +89,24 @@ Run the generated smoke runner through AFK. Do not make source changes.
 /opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" doctor --json
 ```
 
-6. Run the smoke brief.
+6. Run the smoke brief in detached mode.
 
 ```bash
-/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" run file brief.md --json
+/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" run file brief.md --detach --json
 ```
 
-7. Inspect AFK results.
+Capture the `runId` from the final `run_result` JSON line.
+
+7. Watch the detached run to a terminal state.
 
 ```bash
-/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" status --json
-/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" runs --json
+/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" watch <runId> --json
+```
+
+8. Inspect AFK results.
+
+```bash
+/opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" inspect <runId> --json
 ```
 
 ## Report
@@ -107,9 +114,15 @@ Run the generated smoke runner through AFK. Do not make source changes.
 Report:
 
 - whether `doctor --json` returned `ok: true`
-- whether `run file brief.md --json` returned `ok: true`
+- whether `run file brief.md --detach --json` returned `ok: true`
+- whether `watch <runId> --json` returned `ok: true`
 - the `runId`
+- the `workItemId`
+- the branch name
 - the generated `worktreePath`
+- the publishability verdict from `inspect --json`
+- the review verdict and verification status from `inspect --json`
+- the final-result path from `inspect --json`
 - any failure message
 - whether the repo ended with uncommitted changes
 

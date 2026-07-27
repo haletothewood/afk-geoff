@@ -12,6 +12,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const afkBin = readOption("--afk", process.env.AFK_BIN ?? "afk");
 const cwd = path.resolve(readOption("--cwd", process.cwd()));
 const briefPath = readOption("--brief", args.find((arg) => !arg.startsWith("--")) ?? "brief.md");
+const requirePullRequest = args.includes("--pr");
 
 try {
   await main();
@@ -23,6 +24,7 @@ try {
 async function main() {
   console.log(`[orchestrator] repo: ${cwd}`);
   console.log(`[orchestrator] brief: ${briefPath}`);
+  console.log(`[orchestrator] require PR: ${String(requirePullRequest)}`);
 
   const doctor = await runJsonCommand(afkCommand("doctor", "--json"));
   if (!doctor.ok) {
@@ -30,7 +32,8 @@ async function main() {
   }
   console.log(`[orchestrator] doctor ok (${doctor.backend})`);
 
-  const kickoff = await runNdjsonCommand(afkCommand("run", "file", briefPath, "--detach", "--json"), {
+  const runArgs = ["run", "file", briefPath, "--detach", "--json", ...(requirePullRequest ? ["--pr"] : [])];
+  const kickoff = await runNdjsonCommand(afkCommand(...runArgs), {
     onEvent: (event) => logRunEvent(event)
   });
   const runResult = kickoff.at(-1);
@@ -157,6 +160,9 @@ function printSuccessSummary(watchResult, inspection) {
   console.log(`  verification: ${derived.verificationStatus ?? "unknown"}`);
   console.log(`  commits: ${derived.createdCommitCount ?? 0}`);
   console.log(`  worktree clean: ${String(derived.worktreeClean ?? finalResult.worktreeStatus?.clean)}`);
+  if (inspection.pullRequest?.url ?? watchResult.prUrl ?? finalResult.prUrl) {
+    console.log(`  PR: ${inspection.pullRequest?.url ?? watchResult.prUrl ?? finalResult.prUrl}`);
+  }
   console.log(`  final result: ${inspection.paths?.finalResultPath ?? "unknown"}`);
 }
 
@@ -175,12 +181,12 @@ function formatError(error) {
 }
 
 function printUsage() {
-  console.log(`Usage: node examples/orchestrator/run-detached.mjs --brief brief.md [--cwd /repo] [--afk afk]
+  console.log(`Usage: node examples/orchestrator/run-detached.mjs --brief brief.md [--cwd /repo] [--afk afk] [--pr]
 
 Runs AFK Geoff as a backend worker:
   1. afk doctor --json
-  2. afk run file <brief> --detach --json
+  2. afk run file <brief> --detach --json [--pr]
   3. afk watch <runId> --json
-  4. read final-result.json
+  4. afk inspect <runId> --json
 `);
 }

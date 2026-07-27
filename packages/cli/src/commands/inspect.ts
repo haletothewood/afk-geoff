@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { RunRecord } from "@afk-geoff/core";
+import type { ExternalRef, RunRecord } from "@afk-geoff/core";
 import { getRunDiagnostics } from "../run-diagnostics.js";
 import type { CliContext } from "../types.js";
 
@@ -18,6 +18,7 @@ export interface RunInspection {
     };
   };
   finalResult?: Record<string, unknown>;
+  pullRequest?: ExternalRef;
   derived: {
     complete: boolean;
     publishable?: boolean;
@@ -42,6 +43,7 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
   const resultPath = path.join(run.runDir, "result.json");
   const finalResultPath = path.join(run.runDir, "final-result.json");
   const finalResult = readJsonObject(finalResultPath);
+  const pullRequest = await ctx.store.getExternalRefForEntity("work_item", run.workItemId, "pull_request");
 
   return {
     run,
@@ -54,6 +56,7 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
       ...(diagnostics.detachLogPaths ? { detachLogPaths: diagnostics.detachLogPaths } : {})
     },
     ...(finalResult ? { finalResult } : {}),
+    ...(pullRequest ? { pullRequest } : {}),
     derived: deriveInspection(run, diagnostics, finalResult)
   };
 }
@@ -67,6 +70,9 @@ export async function printRunInspection(ctx: CliContext, runId: string): Promis
   console.log(`Verification: ${inspection.derived.verificationStatus}`);
   console.log(`Created commits: ${inspection.derived.createdCommitCount ?? 0}`);
   console.log(`Worktree clean: ${inspection.derived.worktreeClean === undefined ? "unknown" : String(inspection.derived.worktreeClean)}`);
+  if (inspection.pullRequest?.url) {
+    console.log(`Pull request: ${inspection.pullRequest.url}`);
+  }
   console.log(`Final result: ${inspection.paths.finalResultPath}`);
 }
 

@@ -18,6 +18,16 @@ node /path/to/afk-geoff/examples/orchestrator/run-detached.mjs \
   --brief brief.md
 ```
 
+Add `--pr` when the orchestrator should require AFK to publish a pull request as the handoff boundary:
+
+```bash
+node /path/to/afk-geoff/examples/orchestrator/run-detached.mjs \
+  --afk /path/to/afk-geoff/packages/cli/bin/afk.js \
+  --cwd /path/to/target-repo \
+  --brief brief.md \
+  --pr
+```
+
 For a credential-free local smoke test in a target repo:
 
 ```bash

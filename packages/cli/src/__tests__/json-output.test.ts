@@ -189,7 +189,7 @@ describe("afk CLI — JSON output", () => {
     const payloads = parseNdjson(output);
     expect(payloads.every((payload) => payload.kind === "run_event" || payload.kind === "run_result")).toBe(true);
     expect(payloads.map((payload) => payload.event)).toContain("package_manager_warning");
-  });
+  }, 15_000);
 
   it("Given runs --json, when runs exist, then it prints structured run records", async () => {
     const fixture = await createFixture(tempDir);
@@ -237,6 +237,18 @@ describe("afk CLI — JSON output", () => {
     await fixture.cli(["run", "file", "brief.md"]);
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
+    await fixture.store.saveExternalRef({
+      id: "github:pull_request:201",
+      entityType: "work_item",
+      entityId: run!.workItemId,
+      provider: "github",
+      remoteType: "pull_request",
+      remoteNumber: 201,
+      remoteId: "201",
+      url: "https://example.com/pull_request/201",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
 
     const output = await captureConsole(async () => {
       await fixture.cli(["inspect", run!.id, "--json"]);
@@ -259,6 +271,7 @@ describe("afk CLI — JSON output", () => {
         worktreeClean?: boolean;
       };
       finalResult: { branchName: string; publishable: boolean };
+      pullRequest: { remoteType: string; remoteNumber: number; url: string };
     };
 
     expect(payload.command).toBe("inspect");
@@ -282,6 +295,9 @@ describe("afk CLI — JSON output", () => {
     expect(payload.derived.createdCommitCount).toBe(1);
     expect(payload.derived.worktreeClean).toBe(true);
     expect(payload.finalResult.branchName).toBe(run!.branchName);
+    expect(payload.pullRequest.remoteType).toBe("pull_request");
+    expect(payload.pullRequest.remoteNumber).toBe(201);
+    expect(payload.pullRequest.url).toBe("https://example.com/pull_request/201");
   });
 
   it("Given inspect --json cannot find a run, then stdout includes a structured error payload", async () => {

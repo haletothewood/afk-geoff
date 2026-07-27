@@ -58,6 +58,17 @@ afk follow-up <workItemId> --json
 
 `follow-up` addresses actionable review comments on an AFK-created pull request and pushes commits to the same branch.
 
+For detached orchestrators, combine the local detached flow with `--pr`:
+
+```bash
+afk doctor --json
+afk run file brief.md --detach --pr --json
+afk watch <runId> --json
+afk inspect <runId> --json
+```
+
+After `watch` completes, use `inspect` to decide whether the run is publishable and to report the branch, review verdict, verification status, artifact paths, and `pullRequest.url` when one was opened.
+
 ## Command Contracts
 
 Stable orchestration commands should include `ok` on success or failure and structured error details on failure.
@@ -136,7 +147,7 @@ Important artifacts:
 
 When present, prefer `finalResultPath` over `resultPath`; `resultPath` may describe only the last worker phase.
 
-`inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
+`inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, an optional `pullRequest` external ref, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
 
 `runs --json` and `status --json` include a `diagnostics` object for run records. Use it to detect common detached-worker states without guessing:
 
