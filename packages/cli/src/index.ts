@@ -38,6 +38,7 @@ import type { CliDependencies, RunOutcome } from "./types.js";
 
 const executionBackendChoices = ["local-docker", "local-process"] as const;
 const submitBackendChoices = ["github-actions"] as const;
+const githubActionsBackend = "github-actions";
 
 export type { CliDependencies };
 
@@ -122,6 +123,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       });
       printJson({
         command: "status",
+        ok: true,
         backend: ctx.executionBackendKind,
         ...(workItemId ? { workItemId } : {}),
         ...snapshot,
@@ -264,20 +266,18 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { workflow: string; limit: string; json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
-      const limit = Number(options.limit);
-      if (!Number.isInteger(limit) || limit <= 0) {
-        throw new Error("--limit must be a positive integer");
-      }
 
       if (options.json) {
         try {
+          const limit = parsePositiveInteger(options.limit, "--limit");
           const snapshot = await runForJson(async () => await listRemoteRuns(ctx, { workflowId: options.workflow, limit }));
-          printJson({ command: "remote-runs", ok: true, ...snapshot });
+          printJson({ command: "remote-runs", ok: true, backend: githubActionsBackend, ...snapshot });
         } catch (error) {
-          printJson({ command: "remote-runs", ok: false, workflowId: options.workflow, error: { message: formatErrorMessage(error) } });
+          printJson({ command: "remote-runs", ok: false, backend: githubActionsBackend, workflowId: options.workflow, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
+        const limit = parsePositiveInteger(options.limit, "--limit");
         await printRemoteRuns(ctx, { workflowId: options.workflow, limit });
       }
     });
@@ -289,23 +289,20 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .action(async (runId: string, options: { limit: string; json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
-      const limit = Number(options.limit);
-      if (!Number.isInteger(limit) || limit <= 0) {
-        throw new Error("--limit must be a positive integer");
-      }
-      if (!/^\d+$/.test(runId)) {
-        throw new Error("runId must be a GitHub Actions numeric run id");
-      }
 
       if (options.json) {
         try {
+          const limit = parsePositiveInteger(options.limit, "--limit");
+          assertNumericId(runId, "runId", "GitHub Actions numeric run id");
           const snapshot = await runForJson(async () => await listRemoteArtifacts(ctx, { runId, limit }));
-          printJson({ command: "remote-artifacts", ok: true, ...snapshot });
+          printJson({ command: "remote-artifacts", ok: true, backend: githubActionsBackend, ...snapshot });
         } catch (error) {
-          printJson({ command: "remote-artifacts", ok: false, runId, error: { message: formatErrorMessage(error) } });
+          printJson({ command: "remote-artifacts", ok: false, backend: githubActionsBackend, runId, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
+        const limit = parsePositiveInteger(options.limit, "--limit");
+        assertNumericId(runId, "runId", "GitHub Actions numeric run id");
         await printRemoteArtifacts(ctx, { runId, limit });
       }
     });
@@ -317,20 +314,19 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .action(async (artifactId: string, options: { output?: string; json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
-      if (!/^\d+$/.test(artifactId)) {
-        throw new Error("artifactId must be a GitHub Actions numeric artifact id");
-      }
 
       if (options.json) {
         try {
+          assertNumericId(artifactId, "artifactId", "GitHub Actions numeric artifact id");
           const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
           const result = await runForJson(async () => await downloadRemoteArtifact(ctx, downloadOptions));
-          printJson({ command: "remote-download", ok: true, ...result });
+          printJson({ command: "remote-download", ok: true, backend: githubActionsBackend, ...result });
         } catch (error) {
-          printJson({ command: "remote-download", ok: false, artifactId, error: { message: formatErrorMessage(error) } });
+          printJson({ command: "remote-download", ok: false, backend: githubActionsBackend, artifactId, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
+        assertNumericId(artifactId, "artifactId", "GitHub Actions numeric artifact id");
         const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
         await printRemoteArtifactDownload(ctx, downloadOptions);
       }
@@ -509,6 +505,20 @@ async function runForJson<T>(action: () => Promise<T>, options: { allowRunEvents
 
 function printJson(payload: unknown, options: { compact?: boolean } = {}): void {
   console.log(JSON.stringify(payload, null, options.compact ? 0 : 2));
+}
+
+function parsePositiveInteger(value: string, optionName: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${optionName} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function assertNumericId(value: string, name: string, description: string): void {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a ${description}`);
+  }
 }
 
 function printRunOutcome(outcome: {

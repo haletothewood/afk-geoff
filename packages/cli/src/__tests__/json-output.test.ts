@@ -622,6 +622,7 @@ describe("afk CLI — JSON output", () => {
     });
     const payload = JSON.parse(output) as {
       command: string;
+      ok: boolean;
       backend: string;
       workItemId: string;
       requirements: unknown[];
@@ -631,6 +632,8 @@ describe("afk CLI — JSON output", () => {
     };
 
     expect(payload.command).toBe("status");
+    expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("local-docker");
     expect(payload.workItemId).toBe(run!.workItemId);
     expect(payload.requirements).toHaveLength(1);
     expect(payload.workItems).toHaveLength(1);
@@ -835,12 +838,14 @@ describe("afk CLI — JSON output", () => {
     const payload = JSON.parse(output) as {
       command: string;
       ok: boolean;
+      backend: string;
       workflowId: string;
       runs: Array<{ id: string; status: string; conclusion: string; url: string }>;
     };
 
     expect(payload.command).toBe("remote-runs");
     expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("github-actions");
     expect(payload.workflowId).toBe("afk-run.yml");
     expect(payload.runs).toEqual([
       {
@@ -855,6 +860,27 @@ describe("afk CLI — JSON output", () => {
         updatedAt: "2026-01-01T00:01:00Z"
       }
     ]);
+  });
+
+  it("Given remote-runs --json has an invalid limit, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir, { githubEnabled: true });
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["remote-runs", "--limit", "0", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      workflowId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("remote-runs");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("github-actions");
+    expect(payload.workflowId).toBe("afk-run.yml");
+    expect(payload.error.message).toBe("--limit must be a positive integer");
   });
 
   it("Given remote-artifacts --json, when a workflow run has artifacts, then it lists artifact metadata", async () => {
@@ -883,12 +909,14 @@ describe("afk CLI — JSON output", () => {
     const payload = JSON.parse(output) as {
       command: string;
       ok: boolean;
+      backend: string;
       runId: string;
       artifacts: Array<{ id: string; name: string; archiveDownloadUrl: string }>;
     };
 
     expect(payload.command).toBe("remote-artifacts");
     expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("github-actions");
     expect(payload.runId).toBe("123");
     expect(payload.artifacts).toEqual([
       {
@@ -903,6 +931,27 @@ describe("afk CLI — JSON output", () => {
         expiresAt: "2026-04-01T00:02:00Z"
       }
     ]);
+  });
+
+  it("Given remote-artifacts --json has a non-numeric run id, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir, { githubEnabled: true });
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["remote-artifacts", "run_123", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("remote-artifacts");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("github-actions");
+    expect(payload.runId).toBe("run_123");
+    expect(payload.error.message).toBe("runId must be a GitHub Actions numeric run id");
   });
 
   it("Given remote-download --json, when an artifact exists, then it saves the artifact ZIP and reports the path", async () => {
@@ -920,6 +969,7 @@ describe("afk CLI — JSON output", () => {
     const payload = JSON.parse(output) as {
       command: string;
       ok: boolean;
+      backend: string;
       artifactId: string;
       outputPath: string;
       bytes: number;
@@ -927,10 +977,32 @@ describe("afk CLI — JSON output", () => {
 
     expect(payload.command).toBe("remote-download");
     expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("github-actions");
     expect(payload.artifactId).toBe("456");
     expect(payload.outputPath).toBe(outputPath);
     expect(payload.bytes).toBe(9);
     expect(fs.readFileSync(outputPath, "utf8")).toBe("zip-bytes");
+  });
+
+  it("Given remote-download --json has a non-numeric artifact id, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir, { githubEnabled: true });
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["remote-download", "artifact_456", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      artifactId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("remote-download");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("github-actions");
+    expect(payload.artifactId).toBe("artifact_456");
+    expect(payload.error.message).toBe("artifactId must be a GitHub Actions numeric artifact id");
   });
 });
 
