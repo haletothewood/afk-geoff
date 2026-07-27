@@ -414,7 +414,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           commits,
           generatedArtifacts,
           branchName,
-          worktreePath
+          worktreePath,
+          baseBranch: this.config.baseBranch
         });
         emitRunEvent({
           event: "run_completed",
@@ -705,6 +706,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
               generatedArtifacts,
               branchName,
               worktreePath,
+              baseBranch: this.config.baseBranch,
               hasDiff: true,
               publishable: false,
               whyNotPublishable: verificationIssues
@@ -749,7 +751,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           commits,
           generatedArtifacts,
           branchName,
-          worktreePath
+          worktreePath,
+          baseBranch: this.config.baseBranch
         });
         emitRunEvent({
           event: "run_completed",
@@ -788,7 +791,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           commits,
           generatedArtifacts,
           branchName,
-          worktreePath
+          worktreePath,
+          baseBranch: this.config.baseBranch
         });
         emitRunEvent({
           event: "run_completed",
@@ -838,6 +842,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         generatedArtifacts,
         branchName,
         worktreePath,
+        baseBranch: this.config.baseBranch,
         hasDiff: true,
         publishable: false,
         whyNotPublishable: [`Dirty worktree: ${finalWorktreeStatus.shortStatus}`]
@@ -880,6 +885,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         generatedArtifacts,
         branchName,
         worktreePath,
+        baseBranch: this.config.baseBranch,
         hasDiff: false,
         publishable: false,
         whyNotPublishable: ["No changes relative to the base branch"]
@@ -925,6 +931,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       generatedArtifacts,
       branchName,
       worktreePath,
+      baseBranch: this.config.baseBranch,
       hasDiff: true,
       publishable: true
     });
@@ -1015,6 +1022,7 @@ function writeFinalRunResult(pathname: string, result: {
   generatedArtifacts: GeneratedArtifactSummary[];
   branchName: string;
   worktreePath: string;
+  baseBranch?: string;
   hasDiff?: boolean;
   publishable?: boolean;
   whyNotPublishable?: string[];
@@ -1036,6 +1044,14 @@ function writeFinalRunResult(pathname: string, result: {
     worktreeStatus.clean &&
     verificationIssues.length === 0
   );
+  const uniqueWhyNotPublishable = whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [];
+  const evidencePacket = buildEvidencePacket({
+    ...result,
+    worktreeStatus,
+    publishable,
+    whyNotPublishable: uniqueWhyNotPublishable,
+    changedFiles: readChangedFiles(result.worktreePath, result.baseBranch)
+  });
   fs.writeFileSync(
     pathname,
     JSON.stringify(
@@ -1043,7 +1059,9 @@ function writeFinalRunResult(pathname: string, result: {
         ...result,
         worktreeStatus,
         publishable,
-        whyNotPublishable: whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [],
+        whyNotPublishable: uniqueWhyNotPublishable,
+        publishabilityBlockers: evidencePacket.publishability.blockers,
+        evidencePacket,
         latestWorkerSummary: result.summary,
         summary: buildAggregateSummary(result)
       },
@@ -1051,6 +1069,175 @@ function writeFinalRunResult(pathname: string, result: {
       2
     )
   );
+}
+
+interface EvidencePacket {
+  changedFiles: string[];
+  commits: Array<{ iteration: number; phase: string; sha?: string; source?: "worker" | "afk" }>;
+  verification: {
+    status: "passed" | "failed" | "skipped";
+    commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+  };
+  review: {
+    verdict: string;
+    passCount: number;
+    issueCount: number;
+    addressedIssueCount: number;
+    remainingIssues: string[];
+  };
+  publishability: {
+    publishable: boolean;
+    blockers: Array<{ category: "product" | "verification" | "environment" | "review" | "worktree" | "publishing"; message: string }>;
+  };
+  understandingBrief: {
+    keyFilesChanged: string[];
+    importantDesignDecisions: string[];
+    inspectFirst: string[];
+  };
+  recommendedHumanAction: "publish" | "retry" | "narrow_scope" | "fix_environment" | "inspect";
+}
+
+function buildEvidencePacket(result: {
+  status: string;
+  summary: string;
+  workerResults: WorkerPhaseSummary[];
+  reviewResults: ReviewPhaseSummary[];
+  verificationSummaries: VerificationPhaseSummary[];
+  commits: CommitPhaseSummary[];
+  generatedArtifacts: GeneratedArtifactSummary[];
+  worktreeStatus: WorktreeStatusSummary;
+  publishable: boolean;
+  whyNotPublishable: string[];
+  changedFiles: string[];
+}): EvidencePacket {
+  const verificationCommands = result.verificationSummaries.flatMap((summary) => summary.results);
+  const verificationStatus = verificationCommands.length === 0
+    ? "skipped"
+    : verificationCommands.every((command) => command.passed) ? "passed" : "failed";
+  const latestReview = result.reviewResults.at(-1);
+  const remainingIssues = latestReview?.verdict === "ISSUES" ? latestReview.issues ?? [] : [];
+  const reviewIssueCount = result.reviewResults.reduce((count, review) => count + (review.issues?.length ?? 0), 0);
+  const blockerMessages = result.whyNotPublishable.length > 0 ? result.whyNotPublishable : result.status === "blocked" ? [result.summary] : [];
+  const blockers = blockerMessages.map((message) => ({
+    category: classifyPublishabilityBlocker(message),
+    message
+  }));
+  const changedFiles = result.changedFiles.slice(0, 20);
+
+  return {
+    changedFiles: result.changedFiles,
+    commits: result.commits
+      .filter((commit) => commit.created)
+      .map((commit) => ({
+        iteration: commit.iteration,
+        phase: commit.phase,
+        ...(commit.sha ? { sha: commit.sha } : {}),
+        ...(commit.source ? { source: commit.source } : {})
+      })),
+    verification: {
+      status: verificationStatus,
+      commands: verificationCommands
+    },
+    review: {
+      verdict: latestReview?.verdict ?? "UNKNOWN",
+      passCount: result.reviewResults.filter((review) => review.verdict === "PASS").length,
+      issueCount: reviewIssueCount,
+      addressedIssueCount: Math.max(0, reviewIssueCount - remainingIssues.length),
+      remainingIssues
+    },
+    publishability: {
+      publishable: result.publishable,
+      blockers
+    },
+    understandingBrief: {
+      keyFilesChanged: changedFiles,
+      importantDesignDecisions: deriveImportantDesignDecisions(result),
+      inspectFirst: changedFiles.slice(0, 5)
+    },
+    recommendedHumanAction: recommendHumanAction(result.publishable, blockers, latestReview?.verdict)
+  };
+}
+
+function deriveImportantDesignDecisions(result: {
+  summary: string;
+  workerResults: WorkerPhaseSummary[];
+  reviewResults: ReviewPhaseSummary[];
+  verificationSummaries: VerificationPhaseSummary[];
+}): string[] {
+  const decisions = [
+    result.summary,
+    ...result.workerResults.slice(-2).map((worker) => worker.summary)
+  ].filter((decision, index, all) => decision.length > 0 && all.indexOf(decision) === index);
+
+  if (result.reviewResults.length > 1) {
+    decisions.push(`Review loop required ${result.reviewResults.length} passes before final verdict ${result.reviewResults.at(-1)?.verdict ?? "UNKNOWN"}.`);
+  }
+
+  const verificationCount = result.verificationSummaries.reduce((count, summary) => count + summary.results.length, 0);
+  if (verificationCount === 0) {
+    decisions.push("No verification commands were configured for this run.");
+  }
+
+  return decisions.slice(0, 5);
+}
+
+function classifyPublishabilityBlocker(message: string): EvidencePacket["publishability"]["blockers"][number]["category"] {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("verification failed") || normalized.includes("test") || normalized.includes("typecheck")) {
+    return "verification";
+  }
+  if (normalized.includes("env") || normalized.includes("docker") || normalized.includes("node") || normalized.includes("module") || normalized.includes("dependency")) {
+    return "environment";
+  }
+  if (normalized.includes("review") || normalized.includes("blocked")) {
+    return "review";
+  }
+  if (normalized.includes("dirty worktree") || normalized.includes("worktree")) {
+    return "worktree";
+  }
+  if (normalized.includes("publish") || normalized.includes("pull request") || normalized.includes("github")) {
+    return "publishing";
+  }
+  return "product";
+}
+
+function recommendHumanAction(
+  publishable: boolean,
+  blockers: EvidencePacket["publishability"]["blockers"],
+  reviewVerdict: string | undefined
+): EvidencePacket["recommendedHumanAction"] {
+  if (publishable) {
+    return "publish";
+  }
+  if (blockers.some((blocker) => blocker.category === "environment")) {
+    return "fix_environment";
+  }
+  if (reviewVerdict === "ISSUES" || blockers.some((blocker) => blocker.category === "verification" || blocker.category === "review")) {
+    return "retry";
+  }
+  if (blockers.some((blocker) => blocker.category === "product")) {
+    return "narrow_scope";
+  }
+  return "inspect";
+}
+
+function readChangedFiles(worktreePath: string, baseBranch: string | undefined): string[] {
+  if (!baseBranch) {
+    return [];
+  }
+
+  try {
+    return execFileSync("git", ["diff", "--name-only", baseBranch, "HEAD"], {
+      cwd: worktreePath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function buildAggregateSummary(result: {

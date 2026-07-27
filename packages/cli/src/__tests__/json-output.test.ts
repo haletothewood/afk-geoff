@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig } from "./test-helpers.js";
+import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
 
 describe("afk CLI — JSON output", () => {
   const originalCwd = process.cwd();
@@ -270,7 +270,20 @@ describe("afk CLI — JSON output", () => {
         createdCommitCount?: number;
         worktreeClean?: boolean;
       };
-      finalResult: { branchName: string; publishable: boolean };
+      evidencePacket: {
+        changedFiles: string[];
+        verification: { status: string; commands: Array<{ command: string; passed: boolean; exitCode: number }> };
+        review: { verdict: string; passCount: number; issueCount: number; addressedIssueCount: number; remainingIssues: string[] };
+        publishability: { publishable: boolean; blockers: Array<{ category: string; message: string }> };
+        understandingBrief: { keyFilesChanged: string[]; importantDesignDecisions: string[]; inspectFirst: string[] };
+        recommendedHumanAction: string;
+      };
+      finalResult: {
+        branchName: string;
+        publishable: boolean;
+        publishabilityBlockers: Array<{ category: string; message: string }>;
+        evidencePacket: { recommendedHumanAction: string };
+      };
       pullRequest: { remoteType: string; remoteNumber: number; url: string };
     };
 
@@ -295,6 +308,25 @@ describe("afk CLI — JSON output", () => {
     expect(payload.derived.createdCommitCount).toBe(1);
     expect(payload.derived.worktreeClean).toBe(true);
     expect(payload.finalResult.branchName).toBe(run!.branchName);
+    expect(payload.finalResult.publishabilityBlockers).toEqual([]);
+    expect(payload.finalResult.evidencePacket.recommendedHumanAction).toBe("publish");
+    expect(payload.evidencePacket.changedFiles).toContain("implemented.txt");
+    expect(payload.evidencePacket.verification).toEqual({
+      status: "passed",
+      commands: [{ command: "node -e \"process.exit(0)\"", passed: true, exitCode: 0 }]
+    });
+    expect(payload.evidencePacket.review).toEqual({
+      verdict: "PASS",
+      passCount: 1,
+      issueCount: 0,
+      addressedIssueCount: 0,
+      remainingIssues: []
+    });
+    expect(payload.evidencePacket.publishability).toEqual({ publishable: true, blockers: [] });
+    expect(payload.evidencePacket.understandingBrief.keyFilesChanged).toContain("implemented.txt");
+    expect(payload.evidencePacket.understandingBrief.inspectFirst).toContain("implemented.txt");
+    expect(payload.evidencePacket.understandingBrief.importantDesignDecisions).toContain("Completed work item");
+    expect(payload.evidencePacket.recommendedHumanAction).toBe("publish");
     expect(payload.pullRequest.remoteType).toBe("pull_request");
     expect(payload.pullRequest.remoteNumber).toBe(201);
     expect(payload.pullRequest.url).toBe("https://example.com/pull_request/201");
@@ -361,6 +393,13 @@ describe("afk CLI — JSON output", () => {
       runDir: string;
       finalResultPath: string;
       worktreePath: string;
+      evidencePacket: {
+        changedFiles: string[];
+        verification: { status: string };
+        review: { verdict: string };
+        publishability: { publishable: boolean; blockers: Array<{ category: string; message: string }> };
+        recommendedHumanAction: string;
+      };
     };
 
     expect(payload.command).toBe("handoff");
@@ -381,6 +420,47 @@ describe("afk CLI — JSON output", () => {
     expect(payload.runDir).toBe(run!.runDir);
     expect(payload.finalResultPath).toBe(path.join(run!.runDir, "final-result.json"));
     expect(payload.worktreePath).toBe(run!.worktreePath);
+    expect(payload.evidencePacket.changedFiles).toContain("implemented.txt");
+    expect(payload.evidencePacket.verification.status).toBe("passed");
+    expect(payload.evidencePacket.review.verdict).toBe("PASS");
+    expect(payload.evidencePacket.publishability).toEqual({ publishable: true, blockers: [] });
+    expect(payload.evidencePacket.recommendedHumanAction).toBe("publish");
+  });
+
+  it("Given handoff --json for an environment-blocked run, then evidence separates the blocker category", async () => {
+    const fixture = await createFixture(tempDir);
+    writeBrief(fixture.repoDir, { verification: ["node -e \"process.exit(0)\""] });
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "BLOCKED", blockerReason: "Missing required env var EXAMPLE_API_KEY" }
+    ]);
+
+    await fixture.cli(["run", "file", "brief.md"]);
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      recommendedAction: string;
+      publishable: boolean;
+      reviewVerdict: string;
+      verificationStatus: string;
+      evidencePacket: {
+        publishability: { publishable: boolean; blockers: Array<{ category: string; message: string }> };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(payload.recommendedAction).toBe("report_failure");
+    expect(payload.publishable).toBe(false);
+    expect(payload.reviewVerdict).toBe("BLOCKED");
+    expect(payload.verificationStatus).toBe("passed");
+    expect(payload.evidencePacket.publishability).toEqual({
+      publishable: false,
+      blockers: [{ category: "environment", message: "Missing required env var EXAMPLE_API_KEY" }]
+    });
+    expect(payload.evidencePacket.recommendedHumanAction).toBe("fix_environment");
   });
 
   it("Given handoff --json cannot find a run, then stdout includes a structured error payload", async () => {

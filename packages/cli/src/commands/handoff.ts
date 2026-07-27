@@ -23,6 +23,7 @@ export interface RunHandoff {
   runDir: string;
   finalResultPath: string;
   worktreePath?: string;
+  evidencePacket?: Record<string, unknown>;
   summary?: string;
 }
 
@@ -53,6 +54,7 @@ export async function getRunHandoff(ctx: CliContext, runId: string): Promise<Run
     runDir: paths.runDir,
     finalResultPath: paths.finalResultPath,
     ...(paths.worktreePath ? { worktreePath: paths.worktreePath } : {}),
+    ...(inspection.evidencePacket ? { evidencePacket: inspection.evidencePacket } : {}),
     ...(run.summary ? { summary: run.summary } : {})
   };
 }
@@ -68,6 +70,9 @@ export async function printRunHandoff(ctx: CliContext, runId: string): Promise<v
   console.log(`Publishable: ${handoff.publishable === undefined ? "unknown" : String(handoff.publishable)}`);
   console.log(`Review: ${handoff.reviewVerdict ?? "unknown"}`);
   console.log(`Verification: ${handoff.verificationStatus}`);
+  if (typeof handoff.evidencePacket?.recommendedHumanAction === "string") {
+    console.log(`Recommended human action: ${handoff.evidencePacket.recommendedHumanAction}`);
+  }
   console.log(`Final result: ${handoff.finalResultPath}`);
 }
 

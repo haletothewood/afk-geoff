@@ -18,6 +18,7 @@ export interface RunInspection {
     };
   };
   finalResult?: Record<string, unknown>;
+  evidencePacket?: Record<string, unknown>;
   pullRequest?: ExternalRef;
   derived: {
     complete: boolean;
@@ -43,6 +44,7 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
   const resultPath = path.join(run.runDir, "result.json");
   const finalResultPath = path.join(run.runDir, "final-result.json");
   const finalResult = readJsonObject(finalResultPath);
+  const evidencePacket = isObject(finalResult?.evidencePacket) ? finalResult.evidencePacket : undefined;
   const pullRequest = await ctx.store.getExternalRefForEntity("work_item", run.workItemId, "pull_request");
 
   return {
@@ -56,6 +58,7 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
       ...(diagnostics.detachLogPaths ? { detachLogPaths: diagnostics.detachLogPaths } : {})
     },
     ...(finalResult ? { finalResult } : {}),
+    ...(evidencePacket ? { evidencePacket } : {}),
     ...(pullRequest ? { pullRequest } : {}),
     derived: deriveInspection(run, diagnostics, finalResult)
   };
@@ -70,6 +73,9 @@ export async function printRunInspection(ctx: CliContext, runId: string): Promis
   console.log(`Verification: ${inspection.derived.verificationStatus}`);
   console.log(`Created commits: ${inspection.derived.createdCommitCount ?? 0}`);
   console.log(`Worktree clean: ${inspection.derived.worktreeClean === undefined ? "unknown" : String(inspection.derived.worktreeClean)}`);
+  if (typeof inspection.evidencePacket?.recommendedHumanAction === "string") {
+    console.log(`Recommended human action: ${inspection.evidencePacket.recommendedHumanAction}`);
+  }
   if (inspection.pullRequest?.url) {
     console.log(`Pull request: ${inspection.pullRequest.url}`);
   }

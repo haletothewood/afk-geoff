@@ -7,6 +7,9 @@ Trajectory lens:
 - Humans, scripts, CI jobs, bots, and higher-level agent frameworks should be able to drive the same core loop.
 - The target loop is: work source -> isolated autonomous implementation run -> verification -> PR -> review/follow-up run -> machine-readable status.
 - Execution modes are operator profiles for run posture, not free-form personas.
+- AFK owns the inner execution loop; humans and orchestrators own the outer loop: constraints, evidence review, verdict, and accountability.
+- Autonomy should expand only as far as verification and evidence quality can support it.
+- Back pressure is a product feature: AFK should block, narrow, retry, or report failure when evidence is insufficient rather than treating speed as success.
 
 Priority meanings:
 - `P0`: next features to build because they materially improve day-to-day usability or reliability
@@ -34,9 +37,21 @@ Why next:
 Why third:
 - AFK should make it obvious whether a run is local or remote
 
-### 4. Optional GitHub Actions backend
+### 4. Evidence packet and outer-loop handoff
 
 Why fourth:
+- the handoff should make human ownership cheap enough to scale
+- operators need a compact evidence boundary: what changed, why it is safe, what failed, and what decision is recommended
+
+### 5. Work admission and back pressure
+
+Why fifth:
+- AFK should reject or narrow work before execution when scope, constraints, or verification are too weak
+- queue throughput should be controlled by evidence quality, not just agent availability
+
+### 6. Optional GitHub Actions backend
+
+Why sixth:
 - once the command contract is stable, GitHub-backed repos can use CI for the cleanest unattended "work source in, PR out" path
 
 ## Recently Landed
@@ -90,9 +105,27 @@ Scope:
 - keep human-readable output as the default
 - cover doctor preflight, errors, and detached/background runs with the same structured contract
 
+### 3. Evidence packet and outer-loop handoff
+
+Why:
+- AFK should make the boundary between autonomous work and human decision explicit
+- humans should receive enough evidence to decide publish, retry, narrow, or reject without reconstructing the whole run
+- non-publishable runs should explain whether the blocker is product behavior, verification coverage, environment setup, review findings, or publishing infrastructure
+
+Scope:
+- extend `final-result.json`, `inspect --json`, and `handoff --json` with an evidence packet
+- include changed files, commits, verification commands and outcomes, review verdicts, addressed issues, remaining risks, and recommended human action
+- separate product failures from environment/setup failures in `whyNotPublishable`
+- include an "understanding brief" for reviewers: key files changed, important design decisions, and what to inspect first
+- keep the compact handoff useful for bots while preserving richer diagnostics in inspect/final artifacts
+
+Notes:
+- this operationalizes the "lit factory" boundary: AFK can run the inner loop, but the operator owns the outer-loop verdict
+- evidence quality should be treated as a prerequisite for publishing, not as optional run commentary
+
 ## P1
 
-### 3. Explicit backend selection
+### 4. Explicit backend selection
 
 Why:
 - AFK should make it obvious whether a run is local or remote
@@ -104,7 +137,25 @@ Scope:
 - report the resolved backend in JSON command output
 - leave unsupported remote backend names invalid until those backends exist
 
-### 4. Optional GitHub Actions backend
+### 5. Work admission and back pressure
+
+Why:
+- agents can produce more output than humans can review
+- brownfield tasks with weak context or missing checks should not enter the same queue as well-scoped, cheaply verifiable work
+- AFK should make orchestration tax visible before a run consumes time
+
+Scope:
+- classify incoming work before execution: `ready`, `needs_constraints`, `needs_tests`, `too_large`, or `blocked_by_environment`
+- require or recommend verification commands for non-trivial code changes
+- surface missing evidence as a queue/back-pressure reason instead of discovering it only after implementation
+- time-box unactionable work and ask for a narrower brief when scope expands
+- report queue health with counts by admission status and blocker reason
+
+Notes:
+- this is not a replacement for human judgment; it is a way to route attention to the right decisions earlier
+- successful automation should reduce comprehension debt by producing smaller, better-evidenced changes
+
+### 6. Optional GitHub Actions backend
 
 Why:
 - for GitHub-backed repos, the cleanest unattended path is often “issue in, PR out” from CI instead of the local machine
@@ -124,7 +175,7 @@ Scope:
 
 ## P2
 
-### 5. More source adapters
+### 7. More source adapters
 
 Candidates:
 - GitLab issue source
@@ -134,24 +185,35 @@ Candidates:
 - Slack command source
 - GitHub App webhook source
 
-### 6. More publishing adapters
+### 8. More publishing adapters
 
 Candidates:
 - GitLab merge request publisher
 - Bitbucket pull request publisher
 - local patch or branch summary publisher
 
-### 7. More execution backends
+### 9. More execution backends
 
 Candidates:
 - GitLab CI
 - Azure Pipelines
 - CircleCI
 
-### 8. Runner usage accounting
+### 10. Runner usage accounting
 
 Why:
 - token and cost visibility can be useful, but it should not block core usability work
 
 Scope:
 - capture token usage only if the configured runner exposes it reliably
+
+### 11. Comprehension debt tracking
+
+Why:
+- autonomous runs can widen the gap between code produced and code understood
+- teams need lightweight signals that show when generated changes are becoming expensive to own
+
+Scope:
+- track change size, touched ownership areas, review iterations, and verification gaps as comprehension-risk signals
+- include comprehension-risk notes in handoff artifacts for medium/high-risk runs
+- prefer smaller follow-up briefs when a run crosses configurable size or complexity thresholds
