@@ -77,9 +77,10 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
       stderrOffset = printNewLogContent("stderr.log", stderrOffset, "[stderr]");
     }
 
-    // Display progress update when it changes.
-    const progress = readRunProgress(run.runDir);
-    if (progress && progress.updatedAt !== lastProgressUpdatedAt) {
+    const emitProgressIfChanged = (progress: ReturnType<typeof readRunProgress>): boolean => {
+      if (!progress || progress.updatedAt === lastProgressUpdatedAt) {
+        return false;
+      }
       lastProgressUpdatedAt = progress.updatedAt;
       if (options.json) {
         emitRunEvent({
@@ -93,10 +94,48 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
       } else {
         console.log(`[progress] phase=${progress.phase} iteration=${progress.iteration} ${progress.message}`);
       }
+      return true;
+    };
+
+    let progress = readRunProgress(run.runDir);
+    const progressChangedBeforePoll = emitProgressIfChanged(progress);
+
+    // Test hook: allow callers to mutate state between poll and status check.
+    if (dependencies.onAfterPoll) {
+      await dependencies.onAfterPoll();
     }
 
-    // Warn once if the heartbeat is stale.
-    if (progress && !staleWarningShown) {
+    progress = readRunProgress(run.runDir);
+    const progressChangedAfterPoll = emitProgressIfChanged(progress);
+
+    // Re-query the run to detect terminal state transitions.
+    const updatedRuns = await ctx.store.listRuns();
+    const currentRun = updatedRuns.find((r) => r.id === runId);
+    const currentStatus = currentRun?.status ?? "failed";
+
+    if (isTerminal(currentStatus)) {
+      // Drain any remaining output written just before completion.
+      if (!options.json) {
+        stdoutOffset = printNewLogContent("stdout.log", stdoutOffset, "[stdout]");
+        stderrOffset = printNewLogContent("stderr.log", stderrOffset, "[stderr]");
+        console.log(`Run ${runId} ${currentStatus}${currentRun?.summary ? `: ${currentRun.summary}` : ""}`);
+      } else if (currentRun) {
+        emitRunEvent(toWatchEvent("run_completed", currentRun));
+      }
+      return currentRun ? toWatchOutcome(currentRun) : {
+        runId,
+        workItemId: run.workItemId,
+        status: "failed",
+        mode: run.mode,
+        runDir: run.runDir,
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+        ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
+      };
+    }
+
+    // Warn once if the heartbeat is stale, but do not emit a stale warning on
+    // the same poll cycle where progress has just advanced.
+    if (progress && !staleWarningShown && !progressChangedBeforePoll && !progressChangedAfterPoll) {
       const heartbeatAgeMs = Date.now() - new Date(progress.updatedAt).getTime();
       if (heartbeatAgeMs > heartbeatStaleMs) {
         const staleSeconds = Math.round(heartbeatAgeMs / 1000);
@@ -124,36 +163,6 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
         console.log(`Run ${runId} failed: ${detachedFailure.summary ?? "Detached worker exited before completion"}`);
       }
       return toWatchOutcome(detachedFailure);
-    }
-
-    // Test hook: allow callers to mutate state between poll and status check.
-    if (dependencies.onAfterPoll) {
-      await dependencies.onAfterPoll();
-    }
-
-    // Re-query the run to detect terminal state transitions.
-    const updatedRuns = await ctx.store.listRuns();
-    const currentRun = updatedRuns.find((r) => r.id === runId);
-    const currentStatus = currentRun?.status ?? "failed";
-
-    if (isTerminal(currentStatus)) {
-      // Drain any remaining output written just before completion.
-      if (!options.json) {
-        stdoutOffset = printNewLogContent("stdout.log", stdoutOffset, "[stdout]");
-        stderrOffset = printNewLogContent("stderr.log", stderrOffset, "[stderr]");
-        console.log(`Run ${runId} ${currentStatus}${currentRun?.summary ? `: ${currentRun.summary}` : ""}`);
-      } else if (currentRun) {
-        emitRunEvent(toWatchEvent("run_completed", currentRun));
-      }
-      return currentRun ? toWatchOutcome(currentRun) : {
-        runId,
-        workItemId: run.workItemId,
-        status: "failed",
-        mode: run.mode,
-        runDir: run.runDir,
-        ...(run.branchName ? { branchName: run.branchName } : {}),
-        ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
-      };
     }
 
     await delay(pollIntervalMs);

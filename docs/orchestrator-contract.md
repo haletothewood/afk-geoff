@@ -14,7 +14,7 @@ The orchestrator should:
 2. Start a run with a structured command.
 3. Capture the returned `runId`, `workItemId`, `branchName`, paths, and optional PR URL.
 4. Observe progress through JSON/NDJSON.
-5. Inspect the run or read `final-result.json` when the run completes.
+5. Inspect or hand off the run when it completes.
 6. Decide whether to publish, report, retry, or escalate.
 
 The orchestrator should not scrape human-readable terminal prose.
@@ -29,6 +29,7 @@ afk run file brief.md --detach --json
 afk runs --json
 afk watch <runId> --json
 afk inspect <runId> --json
+afk handoff <runId> --json
 ```
 
 `run --detach --json` returns quickly with the pre-created run identifiers. `watch --json` can then be used by a bot, scheduler, or parent agent to stream status until the run reaches a terminal state.
@@ -65,9 +66,10 @@ afk doctor --json
 afk run file brief.md --detach --pr --json
 afk watch <runId> --json
 afk inspect <runId> --json
+afk handoff <runId> --json
 ```
 
-After `watch` completes, use `inspect` to decide whether the run is publishable and to report the branch, review verdict, verification status, artifact paths, and `pullRequest.url` when one was opened.
+After `watch` completes, use `handoff` for the bot-facing final summary or `inspect` for the richer diagnostic payload. The handoff summary includes the branch, review verdict, verification status, artifact paths, recommended action, and `pullRequest.url` when one was opened.
 
 ## Command Contracts
 
@@ -82,6 +84,7 @@ Primary commands:
 - `afk runs --json`
 - `afk watch <runId> --json`
 - `afk inspect <runId> --json`
+- `afk handoff <runId> --json`
 - `afk status [workItemId] --json`
 - `afk follow-up <workItemId> --json`
 - `afk submit issue <github-issue-url> --backend github-actions --json`
@@ -149,6 +152,8 @@ When present, prefer `finalResultPath` over `resultPath`; `resultPath` may descr
 
 `inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, an optional `pullRequest` external ref, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
 
+`handoff <runId> --json` returns a compact final summary for bots and parent agents. It includes `recommendedAction`, which is `publish` for a completed publishable run, `retry` for a failed run, `investigate` for an incomplete or still-running run, and `report_failure` for a completed non-publishable run.
+
 `runs --json` and `status --json` include a `diagnostics` object for run records. Use it to detect common detached-worker states without guessing:
 
 - `detachProcessPid` and `detachProcessAlive`
@@ -167,5 +172,5 @@ When another agent session is asked to use AFK Geoff:
 2. Use JSON commands by default.
 3. Run `doctor --json` before starting work.
 4. Prefer `run file <brief.md> --detach --json` plus `watch --json` for orchestration demos.
-5. Use `inspect <runId> --json` or read `final-result.json` before declaring success.
+5. Use `handoff <runId> --json` for the final report, or `inspect <runId> --json` for detailed diagnostics, before declaring success.
 6. Report branch, run id, final verdict, verification, publishability, and artifact paths.

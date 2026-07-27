@@ -11,6 +11,7 @@ import { getStatusSnapshot, printStatus } from "./commands/status.js";
 import { showEntity } from "./commands/show.js";
 import { listRunRecords, printRuns } from "./commands/runs.js";
 import { inspectRun, printRunInspection } from "./commands/inspect.js";
+import { getRunHandoff, printRunHandoff } from "./commands/handoff.js";
 import { printRunLogs } from "./commands/logs.js";
 import { watchRun } from "./commands/watch.js";
 import {
@@ -182,6 +183,29 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       } else {
         await autoSync(ctx);
         await printRunInspection(ctx, runId);
+      }
+    });
+
+  program
+    .command("handoff")
+    .argument("<runId>", "Run id")
+    .option("--json", "Print machine-readable JSON")
+    .action(async (runId: string, options: { json?: boolean }) => {
+      const ctx = await openContext(commandCwd, dependencies);
+      if (options.json) {
+        try {
+          const handoff = await runForJson(async () => {
+            await autoSync(ctx);
+            return await getRunHandoff(ctx, runId);
+          });
+          printJson({ command: "handoff", ok: true, backend: ctx.executionBackendKind, ...handoff });
+        } catch (error) {
+          printJson({ command: "handoff", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        await autoSync(ctx);
+        await printRunHandoff(ctx, runId);
       }
     });
 

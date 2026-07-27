@@ -59,8 +59,8 @@ async function main() {
     return;
   }
 
-  const inspection = await runJsonCommand(afkCommand("inspect", runResult.runId, "--json"));
-  printSuccessSummary(watchResult, inspection);
+  const handoff = await runJsonCommand(afkCommand("handoff", runResult.runId, "--json"));
+  printSuccessSummary(watchResult, handoff);
 }
 
 function readOption(name, fallback) {
@@ -149,21 +149,20 @@ function logRunEvent(event) {
   console.log(parts.join(" "));
 }
 
-function printSuccessSummary(watchResult, inspection) {
-  const finalResult = inspection.finalResult ?? {};
-  const derived = inspection.derived ?? {};
+function printSuccessSummary(watchResult, handoff) {
   console.log("[orchestrator] completed");
   console.log(`  run: ${watchResult.runId}`);
-  console.log(`  branch: ${derived.branchName ?? finalResult.branchName ?? watchResult.branchName ?? "unknown"}`);
-  console.log(`  publishable: ${String(derived.publishable ?? finalResult.publishable)}`);
-  console.log(`  review: ${derived.reviewVerdict ?? "unknown"}`);
-  console.log(`  verification: ${derived.verificationStatus ?? "unknown"}`);
-  console.log(`  commits: ${derived.createdCommitCount ?? 0}`);
-  console.log(`  worktree clean: ${String(derived.worktreeClean ?? finalResult.worktreeStatus?.clean)}`);
-  if (inspection.pullRequest?.url ?? watchResult.prUrl ?? finalResult.prUrl) {
-    console.log(`  PR: ${inspection.pullRequest?.url ?? watchResult.prUrl ?? finalResult.prUrl}`);
+  console.log(`  action: ${handoff.recommendedAction ?? "investigate"}`);
+  console.log(`  branch: ${handoff.branchName ?? watchResult.branchName ?? "unknown"}`);
+  console.log(`  publishable: ${String(handoff.publishable)}`);
+  console.log(`  review: ${handoff.reviewVerdict ?? "unknown"}`);
+  console.log(`  verification: ${handoff.verificationStatus ?? "unknown"}`);
+  console.log(`  commits: ${handoff.createdCommitCount ?? 0}`);
+  console.log(`  worktree clean: ${String(handoff.worktreeClean)}`);
+  if (handoff.pullRequest?.url ?? watchResult.prUrl) {
+    console.log(`  PR: ${handoff.pullRequest?.url ?? watchResult.prUrl}`);
   }
-  console.log(`  final result: ${inspection.paths?.finalResultPath ?? "unknown"}`);
+  console.log(`  final result: ${handoff.finalResultPath ?? "unknown"}`);
 }
 
 function printFailureSummary(watchResult) {
@@ -187,6 +186,6 @@ Runs AFK Geoff as a backend worker:
   1. afk doctor --json
   2. afk run file <brief> --detach --json [--pr]
   3. afk watch <runId> --json
-  4. afk inspect <runId> --json
+  4. afk handoff <runId> --json
 `);
 }

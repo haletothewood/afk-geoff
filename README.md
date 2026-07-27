@@ -156,11 +156,12 @@ Priority command contracts:
 - `afk remote-download <github-actions-artifact-id> --json`
 - `afk run file <path> --pr --json`
 - `afk inspect <run-id> --json`
+- `afk handoff <run-id> --json`
 - `afk status <work-item-id> --json`
 - `afk follow-up <work-item-id> --json`
 - `afk runs --json`
 
-Current JSON support covers those commands so harnesses can capture preflight checks, ids, statuses, branch names, worktree paths, PR URLs, and structured error messages directly. Most JSON commands emit one JSON payload on stdout.
+Current JSON support covers those commands so harnesses can capture preflight checks, ids, statuses, branch names, worktree paths, PR URLs, recommended next actions, and structured error messages directly. Most JSON commands emit one JSON payload on stdout.
 
 `afk run --json` is intentionally NDJSON: it streams one compact JSON object per lifecycle event, then emits a final `kind: "run_result"` object as the last line. That lets a Slack bot, scheduler, CI job, or higher-level agent framework update its own status without waiting for the worker to finish.
 

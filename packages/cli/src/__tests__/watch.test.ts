@@ -161,10 +161,15 @@ describe("afk CLI — watch command", () => {
     const runId = "run_watch_stale";
     let resolveStore: ((store: SqliteStateStore) => void) | undefined;
     const storePromise = new Promise<SqliteStateStore>((resolve) => { resolveStore = resolve; });
+    let pollCount = 0;
 
     const fixture = await createFixture(tempDir, {
       watchPollIntervalMs: 0,
       onAfterPoll: async () => {
+        pollCount += 1;
+        if (pollCount < 3) {
+          return;
+        }
         const store = await storePromise;
         await store.updateRun(runId, { status: "completed", summary: "Recovered" });
       }
@@ -205,5 +210,64 @@ describe("afk CLI — watch command", () => {
 
     expect(output).toContain("Warning: heartbeat stale");
     expect(output).toContain("run_watch_stale completed");
+  });
+
+  it("Given stale progress is refreshed during a poll, when watch is used, then it suppresses the stale warning", async () => {
+    const runId = "run_watch_refreshed";
+    let resolveStore: ((store: SqliteStateStore) => void) | undefined;
+    const storePromise = new Promise<SqliteStateStore>((resolve) => { resolveStore = resolve; });
+    let pollCount = 0;
+
+    const fixture = await createFixture(tempDir, {
+      watchPollIntervalMs: 0,
+      onAfterPoll: async () => {
+        pollCount += 1;
+        const store = await storePromise;
+        if (pollCount === 1) {
+          fs.writeFileSync(
+            path.join(fixture.repoDir, ".afk", "runs", runId, "progress.json"),
+            JSON.stringify({ phase: "review", message: "Review agent running", iteration: 1, updatedAt: new Date().toISOString() }, null, 2)
+          );
+          return;
+        }
+        await store.updateRun(runId, { status: "completed", summary: "Recovered" });
+      }
+    });
+    resolveStore!(fixture.store);
+
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      branchName: "afk/watch-refreshed",
+      worktreePath: path.join(fixture.repoDir, ".afk", "worktrees", runId),
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(
+      path.join(runDir, "progress.json"),
+      JSON.stringify({ phase: "running", message: "Stuck", iteration: 1, updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString() }, null, 2)
+    );
+
+    rewriteConfig(fixture.repoDir, { githubEnabled: false, timeouts: { runTimeoutMs: 24 * 60 * 60 * 1000, heartbeatStaleMs: 1 } });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["watch", runId]);
+    });
+
+    expect(output).not.toContain("Warning: heartbeat stale");
+    expect(output).toContain("Review agent running");
+    expect(output).toContain("run_watch_refreshed completed");
   });
 });

@@ -321,6 +321,89 @@ describe("afk CLI — JSON output", () => {
     expect(payload.error.message).toBe("Run run_missing not found");
   });
 
+  it("Given handoff --json, when a publishable run has a pull request, then it prints a bot-friendly summary", async () => {
+    const fixture = await createFixture(tempDir);
+    writeBrief(fixture.repoDir, { verification: ["node -e \"process.exit(0)\""] });
+    await fixture.cli(["run", "file", "brief.md"]);
+    const [run] = await fixture.store.listRuns();
+    expect(run).toBeDefined();
+    await fixture.store.saveExternalRef({
+      id: "github:pull_request:202",
+      entityType: "work_item",
+      entityId: run!.workItemId,
+      provider: "github",
+      remoteType: "pull_request",
+      remoteNumber: 202,
+      remoteId: "202",
+      url: "https://example.com/pull_request/202",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      workItemId: string;
+      status: string;
+      recommendedAction: string;
+      branchName: string;
+      pullRequest: { remoteNumber: number; url: string };
+      publishable: boolean;
+      reviewVerdict: string;
+      verificationStatus: string;
+      createdCommitCount: number;
+      worktreeClean: boolean;
+      runDir: string;
+      finalResultPath: string;
+      worktreePath: string;
+    };
+
+    expect(payload.command).toBe("handoff");
+    expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.runId).toBe(run!.id);
+    expect(payload.workItemId).toBe(run!.workItemId);
+    expect(payload.status).toBe("completed");
+    expect(payload.recommendedAction).toBe("publish");
+    expect(payload.branchName).toBe(run!.branchName);
+    expect(payload.pullRequest.remoteNumber).toBe(202);
+    expect(payload.pullRequest.url).toBe("https://example.com/pull_request/202");
+    expect(payload.publishable).toBe(true);
+    expect(payload.reviewVerdict).toBe("PASS");
+    expect(payload.verificationStatus).toBe("passed");
+    expect(payload.createdCommitCount).toBe(1);
+    expect(payload.worktreeClean).toBe(true);
+    expect(payload.runDir).toBe(run!.runDir);
+    expect(payload.finalResultPath).toBe(path.join(run!.runDir, "final-result.json"));
+    expect(payload.worktreePath).toBe(run!.worktreePath);
+  });
+
+  it("Given handoff --json cannot find a run, then stdout includes a structured error payload", async () => {
+    const fixture = await createFixture(tempDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["handoff", "run_missing", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      runId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("handoff");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.runId).toBe("run_missing");
+    expect(payload.error.message).toBe("Run run_missing not found");
+  });
+
   it("Given watch --json observes a completed run, then stdout contains a run event and final watch result", async () => {
     const fixture = await createFixture(tempDir);
     writeBrief(fixture.repoDir);
