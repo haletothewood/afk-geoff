@@ -2,12 +2,18 @@
   "name": "afk-geoff",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "afk": "./packages/cli/bin/afk.js"
   },
   "packageManager": "pnpm@10.20.0",
   "scripts": {
     "afk": "node --import tsx ./packages/cli/src/index.ts",
+    "build": "tsc --build tsconfig.build.json",
+    "clean": "tsc --build tsconfig.build.json --clean",
+    "pack:cli": "pnpm build && pnpm --filter @afk-geoff/cli pack --pack-destination \"$PWD/dist-pack\"",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "test:developer-workflow": "node --import tsx ./scripts/developer-workflow-smoke.ts"

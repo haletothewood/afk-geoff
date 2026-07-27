@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.package.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/__tests__/**"],
+  "references": [
+    { "path": "../adapter-github" },
+    { "path": "../adapter-local-git" },
+    { "path": "../adapter-sqlite" },
+    { "path": "../core" },
+    { "path": "../runner-claude" },
+    { "path": "../runner-codex" },
+    { "path": "../runtime-docker" },
+    { "path": "../shared" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core/tsconfig.json" },
+    { "path": "./packages/shared/tsconfig.json" },
+    { "path": "./packages/adapter-local-git/tsconfig.json" },
+    { "path": "./packages/adapter-sqlite/tsconfig.json" },
+    { "path": "./packages/adapter-github/tsconfig.json" },
+    { "path": "./packages/runtime-docker/tsconfig.json" },
+    { "path": "./packages/runner-claude/tsconfig.json" },
+    { "path": "./packages/runner-codex/tsconfig.json" },
+    { "path": "./packages/cli/tsconfig.json" }
+  ]
+}

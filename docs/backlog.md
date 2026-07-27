@@ -73,6 +73,7 @@ Why fifth:
 - `.afk/` local state ignored by git
 - PR follow-up branch reuse, same-PR push, structured actionable review comment details, and verification reporting
 - more consistent JSON envelopes for status and GitHub Actions remote commands
+- production package build surface with compiled exports, declaration files, Node engine metadata, and a packable CLI tarball
 
 ## P0
 

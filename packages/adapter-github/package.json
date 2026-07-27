@@ -1,9 +1,23 @@
 {
   "name": "@afk-geoff/adapter-github",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/tsconfig.tsbuildinfo"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@afk-geoff/core": "workspace:*",
     "@afk-geoff/shared": "workspace:*",

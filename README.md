@@ -66,6 +66,18 @@ does not match that declaration, use `corepack pnpm ...` or `/opt/homebrew/bin/p
 so native dependencies such as `better-sqlite3` are installed for the Node version
 you actually run.
 
+## Package Build
+
+The root workspace is private, but each `packages/*` project is publishable. Packages build to `dist/`, expose declaration files, and the CLI bin runs the compiled entry point.
+
+```bash
+pnpm build
+node packages/cli/bin/afk.js --help
+pnpm pack:cli
+```
+
+`pnpm pack:cli` builds the workspace and produces an installable `@afk-geoff/cli` tarball whose internal workspace dependencies are rewritten to the package version.
+
 This creates:
 
 - `.afk/config.yaml`
@@ -213,7 +225,7 @@ If `.afk/config.yaml` already exists, this command only adds `.github/workflows/
 
 The workflow checks the target repo out into `target/`, checks AFK Geoff out into `afk-geoff/`, installs AFK's dependencies, and invokes that checkout's CLI against the target repo. Override the AFK source at dispatch time with `--afk-repository` and `--afk-ref` when testing a branch.
 
-For a local prototype before packaging is formalized, you can run this checkout's bin directly from another repo:
+When testing this checkout directly from another repo, run the compiled bin:
 
 ```bash
 "/absolute/path/to/AFK Geoff/packages/cli/bin/afk.js" init --with-github-actions

@@ -1,19 +1,9 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { runCli } from "../dist/index.js";
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
-const packageRoot = path.resolve(dirname, "..");
-const entry = path.resolve(dirname, "../src/index.ts");
-const tsxLoader = pathToFileURL(path.resolve(dirname, "../node_modules/tsx/dist/loader.mjs")).href;
-const result = spawnSync(process.execPath, ["--import", tsxLoader, entry, ...process.argv.slice(2)], {
-  cwd: packageRoot,
-  env: {
-    ...process.env,
-    AFK_CWD: process.cwd()
-  },
-  stdio: "inherit"
+process.env.AFK_CWD = process.cwd();
+
+runCli().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
 });
-
-process.exit(result.status ?? 1);

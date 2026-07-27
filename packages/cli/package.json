@@ -1,12 +1,28 @@
 {
   "name": "@afk-geoff/cli",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "afk": "./bin/afk.js"
   },
-  "exports": "./src/index.ts",
+  "main": "./dist/index.js",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin",
+    "dist",
+    "!dist/tsconfig.tsbuildinfo"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@afk-geoff/adapter-github": "workspace:*",
     "@afk-geoff/adapter-local-git": "workspace:*",
@@ -16,7 +32,6 @@
     "@afk-geoff/runner-codex": "workspace:*",
     "@afk-geoff/runtime-docker": "workspace:*",
     "@afk-geoff/shared": "workspace:*",
-    "commander": "^14.0.1",
-    "tsx": "^4.20.5"
+    "commander": "^14.0.1"
   }
 }
