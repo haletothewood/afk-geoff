@@ -4,6 +4,7 @@ dist
 coverage
 .pnpm-store
 .vitest
+.afk/
 # Koi PAI files
 .codex/
 scratchpad.md
