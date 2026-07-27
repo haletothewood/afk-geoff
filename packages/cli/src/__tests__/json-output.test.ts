@@ -654,7 +654,8 @@ describe("afk CLI — JSON output", () => {
     ];
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
-      githubMirror
+      githubMirror,
+      verification: ["node -e \"process.exit(0)\""]
     });
     writeBrief(fixture.repoDir);
 
@@ -675,6 +676,10 @@ describe("afk CLI — JSON output", () => {
       prUrl: string;
       actionableReviewComments: Array<{ id: string; location: string; body: string; path?: string; line?: number }>;
       addressedReviewComments: number;
+      verification: {
+        status: string;
+        commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+      };
     };
 
     expect(payload.command).toBe("follow-up");
@@ -694,6 +699,10 @@ describe("afk CLI — JSON output", () => {
       }
     ]);
     expect(payload.addressedReviewComments).toBe(1);
+    expect(payload.verification).toEqual({
+      status: "passed",
+      commands: [{ command: "node -e \"process.exit(0)\"", passed: true, exitCode: 0 }]
+    });
     expect(output).not.toContain("Addressed 1 review comment");
   });
 

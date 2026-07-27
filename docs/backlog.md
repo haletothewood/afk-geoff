@@ -25,7 +25,7 @@ These are the next features to build in order.
 Why now:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
 - this closes the loop from implementation run to reviewer-directed follow-up on the same PR
-- the remaining gap is direct verification reporting from `follow-up --json`
+- the remaining gap is documenting the follow-up contract and deciding whether follow-up should inherit brief-local verification
 
 ### 2. Finish machine-readable orchestration contract
 
@@ -71,7 +71,7 @@ Why fifth:
 - bounded autonomous review gate loop
 - evidence packet and outer-loop handoff in `final-result.json`, `inspect --json`, and `handoff --json`
 - `.afk/` local state ignored by git
-- PR follow-up branch reuse, same-PR push, and structured actionable review comment details
+- PR follow-up branch reuse, same-PR push, structured actionable review comment details, and verification reporting
 - more consistent JSON envelopes for status and GitHub Actions remote commands
 
 ## P0
@@ -87,7 +87,9 @@ Scope:
 - done: run against the existing PR branch rather than creating a new branch
 - done: push follow-up commits to the same PR
 - done: report addressed review comment details in human output and `follow-up --json`
-- next: report what verification ran directly in `follow-up --json`
+- done: report what project-level verification ran directly in `follow-up --json`
+- next: document the follow-up JSON contract
+- next: decide whether follow-up should inherit verification from the original execution brief
 
 Notes:
 - scope the first version to AFK-created pull requests

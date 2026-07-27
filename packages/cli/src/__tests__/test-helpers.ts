@@ -12,6 +12,7 @@ import { runCli } from "../index.js";
 export interface FixtureOptions {
   githubEnabled?: boolean;
   writeWorktreeChange?: boolean;
+  verification?: string[];
   runnerScriptSuffix?: string;
   githubMirror?: MockGitHubMirror;
   githubIssueWorkSource?: WorkSource<string>;
@@ -78,7 +79,10 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
   };
 
   await runCli(["node", "afk", "init"], dependencies);
-  rewriteConfig(repoDir, { githubEnabled: options.githubEnabled ?? false });
+  rewriteConfig(repoDir, {
+    githubEnabled: options.githubEnabled ?? false,
+    ...(options.verification ? { verification: options.verification } : {})
+  });
 
   if (options.githubEnabled || options.githubIssueWorkSource) {
     process.env.GH_TOKEN = "test-token";
@@ -131,7 +135,7 @@ export async function firstRequirement(store: SqliteStateStore): Promise<Require
   return requirement;
 }
 
-export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; runnerModel?: string; runnerReviewModel?: string; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
+export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; runnerModel?: string; runnerReviewModel?: string; verification?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
   const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
@@ -146,7 +150,7 @@ export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean
   if (options.runnerReviewModel !== undefined) {
     config.runner.review = { model: options.runnerReviewModel };
   }
-  config.verification = [];
+  config.verification = options.verification ?? [];
   if (options.timeouts) {
     config.timeouts = options.timeouts;
   }

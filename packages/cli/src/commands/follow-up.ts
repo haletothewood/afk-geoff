@@ -1,8 +1,9 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { PullRequestReviewSource } from "@afk-geoff/core";
 import { buildFallbackSourceComment } from "../cli-utils.js";
 import { latestRunForWorkItem, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
-import type { CliContext, ReviewCommentSummary, RunOutcome } from "../types.js";
+import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
@@ -63,6 +64,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
 
   if (result.status === "blocked" || result.status === "failed") {
     const run = await latestRunForWorkItem(ctx, workItem.id);
+    const verification = readVerificationSummary(run?.runDir);
     return {
       workItemId: workItem.id,
       ...(run
@@ -72,6 +74,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
             ...(run.branchName ? { branchName: run.branchName } : {}),
             ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
             actionableReviewComments,
+            ...(verification ? { verification } : {}),
             ...(pullRef.url ? { prUrl: pullRef.url } : {})
           }
         : { status: result.status, actionableReviewComments, ...(pullRef.url ? { prUrl: pullRef.url } : {}) })
@@ -91,6 +94,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     await ctx.store.updateRun(followUpRun.id, { status: "completed", summary: result.summary });
   }
   await refreshRequirementStatuses(ctx);
+  const verification = readVerificationSummary(followUpRun?.runDir);
 
   const prUrl = pullRef.url;
   const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary, ...(prUrl ? { prUrl } : {}) });
@@ -118,6 +122,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     branchName: result.branchName ?? branchName,
     actionableReviewComments,
     addressedReviewComments: reviewComments.length,
+    ...(verification ? { verification } : {}),
     ...(prUrl ? { prUrl } : {})
   };
 }
@@ -148,4 +153,78 @@ function normalizeReviewComment(comment: { id: string; body: string; path?: stri
 
 function formatReviewComment(comment: ReviewCommentSummary): string {
   return `[${comment.id}] ${comment.location}: ${comment.body}`;
+}
+
+function readVerificationSummary(runDir: string | undefined): VerificationSummary | undefined {
+  if (!runDir) {
+    return undefined;
+  }
+
+  const finalResultPath = path.join(runDir, "final-result.json");
+  if (!fs.existsSync(finalResultPath)) {
+    return undefined;
+  }
+
+  const finalResult = readJsonObject(finalResultPath);
+  const evidencePacket = isObject(finalResult?.evidencePacket) ? finalResult.evidencePacket : undefined;
+  const evidenceVerification = isObject(evidencePacket?.verification) ? evidencePacket.verification : undefined;
+  const evidenceStatus = typeof evidenceVerification?.status === "string" ? evidenceVerification.status : undefined;
+  const evidenceCommands = getVerificationCommands(evidenceVerification?.commands);
+
+  if (isVerificationStatus(evidenceStatus)) {
+    return {
+      status: evidenceStatus,
+      commands: evidenceCommands
+    };
+  }
+
+  const verificationSummaries = getArray<Record<string, unknown>>(finalResult?.verificationSummaries);
+  const commands = verificationSummaries.flatMap((summary) => getVerificationCommands(summary.results));
+  if (commands.length === 0) {
+    return { status: "skipped", commands: [] };
+  }
+
+  return {
+    status: commands.every((command) => command.passed) ? "passed" : "failed",
+    commands
+  };
+}
+
+function readJsonObject(filename: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filename, "utf8")) as unknown;
+    return isObject(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getVerificationCommands(value: unknown): VerificationSummary["commands"] {
+  return getArray<Record<string, unknown>>(value).flatMap((command) => {
+    if (
+      typeof command.command !== "string" ||
+      typeof command.passed !== "boolean" ||
+      typeof command.exitCode !== "number"
+    ) {
+      return [];
+    }
+
+    return [{
+      command: command.command,
+      passed: command.passed,
+      exitCode: command.exitCode
+    }];
+  });
+}
+
+function getArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isVerificationStatus(value: string | undefined): value is VerificationSummary["status"] {
+  return value === "passed" || value === "failed" || value === "skipped" || value === "unknown";
 }

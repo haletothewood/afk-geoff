@@ -66,6 +66,7 @@ export interface RunOutcome {
   prUrl?: string;
   actionableReviewComments?: ReviewCommentSummary[];
   addressedReviewComments?: number;
+  verification?: VerificationSummary;
   backend?: ExecutionBackendKind;
 }
 
@@ -75,6 +76,11 @@ export interface ReviewCommentSummary {
   body: string;
   path?: string;
   line?: number;
+}
+
+export interface VerificationSummary {
+  status: "passed" | "failed" | "skipped" | "unknown";
+  commands: Array<{ command: string; passed: boolean; exitCode: number }>;
 }
 
 export interface DetachedRunOptions {
