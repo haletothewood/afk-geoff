@@ -639,7 +639,7 @@ describe("afk CLI — JSON output", () => {
     expect(payload.nextActions).toEqual(["- All work items are complete"]);
   });
 
-  it("Given follow-up --json, when review comments exist, then it reports the same PR and addressed comment count", async () => {
+  it("Given follow-up --json, when review comments exist, then it reports the same PR and actionable comment details", async () => {
     const githubMirror = new MockGitHubMirror();
     githubMirror.reviewComments = [
       {
@@ -661,28 +661,38 @@ describe("afk CLI — JSON output", () => {
     const output = await captureConsole(async () => {
       await fixture.cli(["follow-up", initialRun!.workItemId, "--json"]);
     });
-	    const payload = JSON.parse(output) as {
-	      command: string;
-	      ok: boolean;
-	      backend: string;
-	      workItemId: string;
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      workItemId: string;
       runId: string;
       status: string;
       branchName: string;
       prUrl: string;
+      actionableReviewComments: Array<{ id: string; location: string; body: string; path?: string; line?: number }>;
       addressedReviewComments: number;
     };
 
-	    expect(payload.command).toBe("follow-up");
-	    expect(payload.ok).toBe(true);
-	    expect(payload.backend).toBe("local-docker");
+    expect(payload.command).toBe("follow-up");
+    expect(payload.ok).toBe(true);
+    expect(payload.backend).toBe("local-docker");
     expect(payload.workItemId).toBe(initialRun!.workItemId);
     expect(payload.status).toBe("completed");
     expect(payload.branchName).toBe(initialRun!.branchName);
     expect(payload.prUrl).toBe("https://example.com/pull_request/201");
+    expect(payload.actionableReviewComments).toEqual([
+      {
+        id: "comment_1",
+        location: "src/app.ts:12",
+        body: "Please add error handling.",
+        path: "src/app.ts",
+        line: 12
+      }
+    ]);
     expect(payload.addressedReviewComments).toBe(1);
-	    expect(output).not.toContain("Addressed 1 review comment");
-	  });
+    expect(output).not.toContain("Addressed 1 review comment");
+  });
 
   it("Given follow-up --json has no review comments, then stdout includes a structured error payload", async () => {
 	    const githubMirror = new MockGitHubMirror();

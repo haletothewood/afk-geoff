@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { PullRequestReviewSource } from "@afk-geoff/core";
 import { buildFallbackSourceComment } from "../cli-utils.js";
 import { latestRunForWorkItem, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
-import type { CliContext, RunOutcome } from "../types.js";
+import type { CliContext, ReviewCommentSummary, RunOutcome } from "../types.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
@@ -35,7 +35,8 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     repo: ctx.remote.repo,
     pullNumber: pullRef.remoteNumber
   });
-  const reviewComments = comments.map(formatReviewComment);
+  const actionableReviewComments = comments.map(normalizeReviewComment);
+  const reviewComments = actionableReviewComments.map(formatReviewComment);
 
   if (reviewComments.length === 0) {
     throw new Error(`Pull request ${pullRef.remoteNumber} has no actionable review comments.`);
@@ -69,9 +70,11 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
             runId: run.id,
             status: result.status,
             ...(run.branchName ? { branchName: run.branchName } : {}),
-            ...(run.worktreePath ? { worktreePath: run.worktreePath } : {})
+            ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
+            actionableReviewComments,
+            ...(pullRef.url ? { prUrl: pullRef.url } : {})
           }
-        : { status: result.status })
+        : { status: result.status, actionableReviewComments, ...(pullRef.url ? { prUrl: pullRef.url } : {}) })
     };
   }
 
@@ -92,6 +95,9 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   const prUrl = pullRef.url;
   const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: "done", summary: result.summary, ...(prUrl ? { prUrl } : {}) });
   console.log(`Addressed ${reviewComments.length} review comment(s) on PR #${pullRef.remoteNumber}`);
+  for (const comment of actionableReviewComments) {
+    console.log(`- ${comment.id} ${comment.location}`);
+  }
   if (result.hasDiff) {
     console.log(`Pushed follow-up to ${prUrl ?? `PR #${pullRef.remoteNumber}`}`);
   } else {
@@ -110,6 +116,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
         }
       : { status: "completed" }),
     branchName: result.branchName ?? branchName,
+    actionableReviewComments,
     addressedReviewComments: reviewComments.length,
     ...(prUrl ? { prUrl } : {})
   };
@@ -128,7 +135,17 @@ function asPullRequestReviewSource(value: unknown): PullRequestReviewSource | un
   return undefined;
 }
 
-function formatReviewComment(comment: { id: string; body: string; path?: string; line?: number }): string {
+function normalizeReviewComment(comment: { id: string; body: string; path?: string; line?: number }): ReviewCommentSummary {
   const location = comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ""}` : "PR review";
-  return `[${comment.id}] ${location}: ${comment.body}`;
+  return {
+    id: comment.id,
+    location,
+    body: comment.body,
+    ...(comment.path ? { path: comment.path } : {}),
+    ...(typeof comment.line === "number" ? { line: comment.line } : {})
+  };
+}
+
+function formatReviewComment(comment: ReviewCommentSummary): string {
+  return `[${comment.id}] ${comment.location}: ${comment.body}`;
 }

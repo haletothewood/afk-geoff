@@ -64,8 +64,17 @@ export interface RunOutcome {
   finalResultPath?: string;
   finalVerdict?: string;
   prUrl?: string;
+  actionableReviewComments?: ReviewCommentSummary[];
   addressedReviewComments?: number;
   backend?: ExecutionBackendKind;
+}
+
+export interface ReviewCommentSummary {
+  id: string;
+  location: string;
+  body: string;
+  path?: string;
+  line?: number;
 }
 
 export interface DetachedRunOptions {

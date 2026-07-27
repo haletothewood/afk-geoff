@@ -72,6 +72,7 @@ describe("afk CLI — PR follow-up command", () => {
     expect(followUpRun?.status).toBe("completed");
     expect(githubMirror.pullRequestRequests).toHaveLength(1);
     expect(output).toContain("Addressed 1 review comment(s)");
+    expect(output).toContain("- comment_1 src/app.ts:12");
     expect(output).toContain("Pushed follow-up");
   });
 
