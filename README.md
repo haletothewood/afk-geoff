@@ -143,6 +143,8 @@ pnpm afk follow-up <work-item-id>
 
 The CLI is the first stable control surface for other tools. Long term, commands should be easy for external orchestrators to call without scraping human-readable logs.
 
+For the quick operational path, see [docs/agent-orchestrator-quickstart.md](docs/agent-orchestrator-quickstart.md).
+
 For the full agent-facing protocol, see [docs/orchestrator-contract.md](docs/orchestrator-contract.md).
 
 For a minimal parent-process implementation, see [examples/orchestrator](examples/orchestrator).

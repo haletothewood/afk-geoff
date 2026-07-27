@@ -4,6 +4,8 @@ AFK Geoff is designed to be called by another orchestrator: an agent framework, 
 
 The orchestrator chooses the work and observes the result. AFK Geoff performs the isolated execution loop.
 
+For the shortest operational path, start with [Agent Orchestrator Quickstart](agent-orchestrator-quickstart.md).
+
 ## Operating Model
 
 Treat AFK as a backend worker, not as an interactive assistant.
@@ -168,7 +170,7 @@ When present, prefer `finalResultPath` over `resultPath`; `resultPath` may descr
 
 When another agent session is asked to use AFK Geoff:
 
-1. Read this document first.
+1. Read [Agent Orchestrator Quickstart](agent-orchestrator-quickstart.md), then this document when contract details matter.
 2. Use JSON commands by default.
 3. Run `doctor --json` before starting work.
 4. Prefer `run file <brief.md> --detach --json` plus `watch --json` for orchestration demos.
