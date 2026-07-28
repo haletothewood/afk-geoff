@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/afk-geoff-icon.png" alt="AFK Geoff icon" width="180">
+</p>
+
 # afk-geoff
 
 AFK Geoff is a boringly reliable execution layer for agentic repo work: it turns briefs from humans or orchestrators into isolated runs, verified changes, pull requests, and follow-up commits.
