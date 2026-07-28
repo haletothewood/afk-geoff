@@ -1,12 +1,13 @@
 {
   "name": "afk-geoff",
   "version": "0.1.0",
+  "description": "A boringly reliable execution layer for autonomous coding agents, with isolated runs, verification, review, and PR handoff.",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "afk": "./bin/afk.js"
+    "afk": "bin/afk.js"
   },
   "main": "./dist/bundle/index.js",
   "exports": "./dist/bundle/index.js",
