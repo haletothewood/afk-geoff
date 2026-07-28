@@ -5,6 +5,7 @@ export * from "./execution-mode.js";
 export * from "./failure.js";
 export * from "./ids.js";
 export * from "./json.js";
+export * from "./package-manager.js";
 export * from "./prompts.js";
 export * from "./process.js";
 export * from "./schemas.js";
