@@ -1,6 +1,6 @@
 {
   "name": "afk-geoff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A boringly reliable execution layer for autonomous coding agents, with isolated runs, verification, review, and PR handoff.",
   "type": "module",
   "engines": {
