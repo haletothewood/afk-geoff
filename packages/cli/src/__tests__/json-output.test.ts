@@ -69,6 +69,27 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(true);
 	    expect(payload.backend).toBe("local-docker");
+    expect(Object.keys(payload).sort()).toEqual([
+      "backend",
+      "branchName",
+      "command",
+      "detached",
+      "finalResultPath",
+      "finalVerdict",
+      "kind",
+      "ok",
+      "prUrl",
+      "requirePullRequest",
+      "requirementId",
+      "resultPath",
+      "runDir",
+      "runId",
+      "status",
+      "target",
+      "value",
+      "workItemId",
+      "worktreePath"
+    ]);
     expect(payload.workItemId).toMatch(/^wi_/);
     expect(payload.requirementId).toMatch(/^req_/);
     expect(payload.runId).toMatch(/^run_/);
@@ -111,6 +132,24 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(true);
 	    expect(payload.detached).toBe(true);
+      expect(Object.keys(payload).sort()).toEqual([
+        "backend",
+        "branchName",
+        "command",
+        "detachLogPaths",
+        "detached",
+        "kind",
+        "ok",
+        "requirePullRequest",
+        "requirementId",
+        "runDir",
+        "runId",
+        "status",
+        "target",
+        "value",
+        "workItemId",
+        "worktreePath"
+      ]);
 	    expect(payload.workItemId).toMatch(/^wi_/);
 	    expect(payload.requirementId).toMatch(/^req_/);
 	    expect(payload.runId).toMatch(/^run_/);
@@ -125,6 +164,45 @@ describe("afk CLI — JSON output", () => {
 	    expect(output).not.toContain("Imported execution brief");
 	    expect(output).not.toContain("pnpm afk status");
 	  });
+
+  it("Given run --detach --json cannot launch the worker, then stdout ends with the detached failure envelope", async () => {
+    const fixture = await createFixture(tempDir, {
+      detachLauncher: () => {
+        throw new Error("spawn failed");
+      }
+    });
+    writeBrief(fixture.repoDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--detach", "--json"]);
+    });
+    const payload = parseNdjson(output).at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      backend: string;
+      detached: boolean;
+      error: { message: string };
+    };
+
+    expect(payload.kind).toBe("run_result");
+    expect(payload.command).toBe("run");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.detached).toBe(true);
+    expect(payload.error.message).toBe("Detached launch failed: spawn failed");
+    expect(Object.keys(payload).sort()).toEqual([
+      "backend",
+      "command",
+      "detached",
+      "error",
+      "kind",
+      "ok",
+      "requirePullRequest",
+      "target",
+      "value"
+    ]);
+  });
 
 	  it("Given run --json fails before execution, then stdout includes a structured error payload", async () => {
 	    const fixture = await createFixture(tempDir);
@@ -152,6 +230,17 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.command).toBe("run");
 	    expect(payload.ok).toBe(false);
 	    expect(payload.backend).toBe("local-docker");
+      expect(Object.keys(payload).sort()).toEqual([
+        "backend",
+        "command",
+        "detached",
+        "error",
+        "kind",
+        "ok",
+        "requirePullRequest",
+        "target",
+        "value"
+      ]);
 	    expect(payload.error.message).toContain("Preflight failed (runner):");
 	    expect(payload.error.message).toContain("__afk_nonexistent_json_runner__");
 	    expect(await fixture.store.listRuns()).toHaveLength(0);
@@ -180,6 +269,18 @@ describe("afk CLI — JSON output", () => {
     expect(payload.kind).toBe("run_result");
     expect(payload.command).toBe("run");
     expect(payload.ok).toBe(false);
+    expect(Object.keys(payload).sort()).toEqual([
+      "backend",
+      "command",
+      "detached",
+      "error",
+      "kind",
+      "ok",
+      "requirePullRequest",
+      "target",
+      "terminalFailure",
+      "value"
+    ]);
     expect(payload.terminalFailure).toEqual({
       category: "publishing",
       message: "Post-run publication failed: simulated PR failure"
@@ -188,6 +289,42 @@ describe("afk CLI — JSON output", () => {
       category: "publishing",
       message: "simulated PR failure"
     });
+  });
+
+  it("Given run --json cannot load configuration, then stdout still contains a structured result envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    fs.writeFileSync(configPath, "version: 2\n");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--json"]);
+    });
+    const payloads = parseNdjson(output);
+    const payload = payloads.at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      backend: null;
+      error: { message: string };
+    };
+
+    expect(payloads).toHaveLength(1);
+    expect(payload.kind).toBe("run_result");
+    expect(payload.command).toBe("run");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.error.message).toContain("version");
+    expect(Object.keys(payload).sort()).toEqual([
+      "backend",
+      "command",
+      "detached",
+      "error",
+      "kind",
+      "ok",
+      "requirePullRequest",
+      "target",
+      "value"
+    ]);
   });
 
   it("Given package-manager mismatch during run --json, then stdout remains strict NDJSON", async () => {
