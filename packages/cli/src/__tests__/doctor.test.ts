@@ -169,9 +169,13 @@ describe("afk CLI — doctor command", () => {
 
   it("Given GitHub is enabled without repository coordinates, when doctor --json runs, then it reports the repository precondition", async () => {
     const fixture = await createFixture(tempDir);
+    const fakeGhPath = path.join(tempDir, "bin", "gh");
+    fs.writeFileSync(fakeGhPath, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(fakeGhPath, 0o755);
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
     const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
     config.github = { enabled: true };
+    config.execution = { backend: "local-process" };
     fs.writeFileSync(configPath, YAML.stringify(config));
 
     const output = await captureConsoleForRejected(async () => {
@@ -183,11 +187,16 @@ describe("afk CLI — doctor command", () => {
     };
 
     expect(payload.ok).toBe(false);
-    expect(payload.checks.find((check) => check.label === "github")).toEqual({
-      label: "github",
-      ok: false,
-      error: "GitHub is enabled but origin remote owner/repo could not be resolved."
-    });
+    expect(payload.checks).toEqual([
+      { label: "git", ok: true, detail: "git" },
+      { label: "runner", ok: true, detail: "node" },
+      { label: "gh", ok: true, detail: "gh" },
+      {
+        label: "github",
+        ok: false,
+        error: "GitHub is enabled but origin remote owner/repo could not be resolved."
+      }
+    ]);
   });
 
   it("Given the local Docker backend executable is missing, when doctor --json runs, then it reports the backend-specific failure", async () => {

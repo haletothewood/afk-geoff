@@ -118,6 +118,7 @@ Doctor reports all check failures it can evaluate; it does not stop after the fi
   "checks": [
     { "label": "git", "ok": true, "detail": "git" },
     { "label": "runner", "ok": true, "detail": "codex" },
+    { "label": "gh", "ok": true, "detail": "gh" },
     {
       "label": "github",
       "ok": false,
@@ -128,6 +129,8 @@ Doctor reports all check failures it can evaluate; it does not stop after the fi
   "error": { "message": "Doctor checks failed (1 issue)" }
 }
 ```
+
+When `gh` is missing, the check in that same position is `{ "label": "gh", "ok": false, "error": "Missing gh executable: gh" }`. The repository-coordinate check is still emitted after it, so both errors appear in `failures` and the top-level message reports two issues.
 
 ## `run --json`
 
