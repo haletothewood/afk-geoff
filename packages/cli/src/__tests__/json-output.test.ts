@@ -165,6 +165,51 @@ describe("afk CLI — JSON output", () => {
 	    expect(output).not.toContain("pnpm afk status");
 	  });
 
+  it("Given a direct work-item target, when run --detach --json starts, then its result omits the requirement id", async () => {
+    const fixture = await createFixture(tempDir, {
+      detachLauncher: () => ({ pid: 0 })
+    });
+    const requirement = await fixture.capture(
+      "Add a queue-based resend workflow with AFK backend work, a blocked UI step, and a HITL review."
+    );
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["run", backend!.id, "--detach", "--json"]);
+    });
+    const payload = parseNdjson(output).at(-1) as Record<string, unknown>;
+
+    expect(payload).toMatchObject({
+      kind: "run_result",
+      command: "run",
+      ok: true,
+      target: backend!.id,
+      detached: true,
+      workItemId: backend!.id,
+      status: "running"
+    });
+    expect(payload.runId).toMatch(/^run_/);
+    expect(payload).not.toHaveProperty("requirementId");
+    expect(Object.keys(payload).sort()).toEqual([
+      "backend",
+      "branchName",
+      "command",
+      "detachLogPaths",
+      "detached",
+      "kind",
+      "ok",
+      "requirePullRequest",
+      "runDir",
+      "runId",
+      "status",
+      "target",
+      "workItemId",
+      "worktreePath"
+    ]);
+  });
+
   it("Given run --detach --json cannot launch the worker, then stdout ends with the detached failure envelope", async () => {
     const fixture = await createFixture(tempDir, {
       detachLauncher: () => {

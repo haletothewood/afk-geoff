@@ -148,7 +148,8 @@ Fields common to every `run_result` are:
 
 | Field | Foreground success | Detached kickoff success | Admission/preflight failure | Terminal execution failure |
 | --- | --- | --- | --- | --- |
-| `workItemId`, `requirementId`, `runId` | Present for imported execution briefs | Present | Absent | Absent from the result envelope; use prior events or inspection if a run was created |
+| `workItemId`, `runId` | Present | Present | Absent | Absent from the result envelope; use prior events or inspection if a run was created |
+| `requirementId` | Present for `file` and `issue` targets; absent for direct work-item targets | Present for `file` and `issue` targets; absent for direct work-item targets | Absent | Absent from the result envelope |
 | `status` | Present and terminal | Present as `running` | Absent | Absent |
 | `branchName`, `worktreePath`, `runDir` | Present for a tracked local run | Present | Absent | Absent |
 | `resultPath`, `finalResultPath` | Present for a tracked completed run | Absent because artifacts are not complete | Absent | Absent |
