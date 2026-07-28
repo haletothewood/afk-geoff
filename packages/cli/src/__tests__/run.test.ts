@@ -531,7 +531,7 @@ describe("afk CLI — run command", () => {
     expect(output).toContain("Opened PR: https://example.com/pull_request/201");
   });
 
-  it("Given post-run PR publishing fails, when run file is used with --pr, then the work item and run are marked failed instead of staying running", async () => {
+  it("Given post-run PR publishing fails, when the failed work item is retried, then reviewed evidence is reused for publishing", async () => {
     const githubMirror = new MockGitHubMirror();
     githubMirror.openPullRequestError = new Error("simulated PR failure");
     const fixture = await createFixture(tempDir, {
@@ -567,6 +567,42 @@ describe("afk CLI — run command", () => {
     expect(workItem?.status).toBe("failed");
     expect(run?.status).toBe("failed");
     expect(run?.summary).toContain("Post-run publication failed: simulated PR failure");
+
+    const promptPath = path.join(run!.runDir, "prompt.md");
+    const promptModifiedAt = fs.statSync(promptPath).mtimeMs;
+    githubMirror.openPullRequestError = undefined;
+
+    await fixture.cli(["run", workItem!.id, "--pr"]);
+
+    const [retriedRun] = await fixture.store.listRuns();
+    const [retriedWorkItem] = await fixture.items(requirement!.id);
+    const finalResult = JSON.parse(fs.readFileSync(path.join(retriedRun!.runDir, "final-result.json"), "utf8")) as {
+      recovery: {
+        reusedStages: string[];
+        retriedStages: string[];
+      };
+      evidencePacket: {
+        recovery: {
+          reusedStages: string[];
+          retriedStages: string[];
+        };
+      };
+      workerResults: Array<{ phase: string }>;
+    };
+
+    expect(await fixture.store.listRuns()).toHaveLength(1);
+    expect(retriedWorkItem?.status).toBe("done");
+    expect(retriedRun?.status).toBe("completed");
+    expect(githubMirror.pullRequestRequests).toHaveLength(1);
+    expect(fs.statSync(promptPath).mtimeMs).toBe(promptModifiedAt);
+    expect(finalResult.workerResults).toHaveLength(1);
+    expect(finalResult.recovery).toEqual(
+      expect.objectContaining({
+        reusedStages: ["work", "verification", "review"],
+        retriedStages: ["publishing"]
+      })
+    );
+    expect(finalResult.evidencePacket.recovery).toEqual(finalResult.recovery);
   });
 
   it("Given GH_TOKEN is unset but GitHub auth can be resolved, when run file is used with --pr, then publishing still works", async () => {
