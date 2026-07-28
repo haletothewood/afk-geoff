@@ -1,5 +1,6 @@
 import type { Requirement, WorkItem } from "@afk-geoff/core";
 import type { ResolvedExecutionMode } from "./execution-mode.js";
+import type { VerificationFailureCategory } from "./failure.js";
 import { formatExecutionModeSection } from "./execution-mode.js";
 
 function formatList(values: string[]): string {
@@ -136,6 +137,7 @@ export interface VerificationCommandResult {
   stdout: string;
   stderr: string;
   passed: boolean;
+  failureCategory?: VerificationFailureCategory;
 }
 
 export function buildAutonomousReviewPrompt(input: {
@@ -153,7 +155,7 @@ export function buildAutonomousReviewPrompt(input: {
       ? "No verification commands were run."
       : input.verificationResults
           .map((r) => {
-            const status = r.passed ? "PASSED" : "FAILED";
+            const status = r.passed ? "PASSED" : `FAILED: ${r.failureCategory ?? "product"}`;
             const lines = [`## ${r.command} [${status}]`];
             if (r.stdout.trim()) {
               lines.push("stdout:", r.stdout.trim());

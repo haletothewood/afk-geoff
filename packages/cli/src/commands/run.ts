@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { GitHubIssueWorkSource } from "@afk-geoff/adapter-github";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
-import { createId, deriveTitle, slugify } from "@afk-geoff/shared";
+import { createId, deriveTitle, normalizeVerificationCommands, slugify } from "@afk-geoff/shared";
 import type { Requirement } from "@afk-geoff/core";
 import { buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
@@ -46,7 +46,15 @@ export async function runTrackedWorkItem(
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
-  const verification = [...new Set([...ctx.config.verification, ...(options.verification ?? []), ...(detachedOptions.verification ?? [])])];
+  const verification = [
+    ...new Set(
+      normalizeVerificationCommands([
+        ...ctx.config.verification,
+        ...(options.verification ?? []),
+        ...(detachedOptions.verification ?? [])
+      ])
+    )
+  ];
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   const sourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
   const executionModeConfig = options.executionModeConfig ?? detachedOptions.executionModeConfig;
@@ -382,6 +390,7 @@ export async function runWorkItemDetached(
     throw new Error(`Work item ${workItemId} is not runnable (current status: ${workItem.status}).`);
   }
 
+  const verification = normalizeVerificationCommands(options.verification ?? []);
   const runId = createId("run");
   const branchName = branchNameForWorkItem(workItem.title);
   const worktreePath = path.join(ctx.paths.worktreesDir, runId);
@@ -416,7 +425,7 @@ export async function runWorkItemDetached(
 
   const launchEnv: NodeJS.ProcessEnv = { ...process.env, AFK_DETACH_RUN_ID: runId };
   const detachedOptions = JSON.stringify({
-    verification: options.verification ?? [],
+    verification,
     ...(options.issueUrl ? { issueUrl: options.issueUrl } : {}),
     ...(options.executionModeConfig ? { executionModeConfig: options.executionModeConfig } : {})
   });

@@ -131,6 +131,8 @@ Concrete implementation context, constraints, and files or behavior to inspect.
 - pnpm test -- --runInBand path/to/focused.test.ts
 ```
 
+Each verification bullet must be one explicit shell command. Resolve alternatives such as npm versus pnpm before submitting the brief; AFK rejects natural-language alternatives before creating a run.
+
 Keep the first run small. AFK works best when each brief describes one reviewable slice.
 
 ## 4. Preflight

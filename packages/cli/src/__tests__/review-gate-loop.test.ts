@@ -261,7 +261,7 @@ if (prompt.includes("# Issues to fix")) {
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
     const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
     // This command fails intentionally and should be surfaced to the review agent.
-    (config as { verification: string[] }).verification = ["node -e process.exit(1)"];
+    (config as { verification: string[] }).verification = ['node -e "process.exit(1)"'];
     fs.writeFileSync(configPath, YAML.stringify(config));
 
     const requirement = await fixture.capture("Add a queue-based resend workflow.");
@@ -282,7 +282,7 @@ if (prompt.includes("# Issues to fix")) {
     const reviewPrompt = fs.readFileSync(reviewPromptPath, "utf8");
     expect(reviewPrompt).toContain("# Verification Results");
     // The failed command should appear in the verification section.
-    expect(reviewPrompt).toContain("node -e process.exit(1)");
+    expect(reviewPrompt).toContain('node -e "process.exit(1)"');
     const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
       status: string;
       publishable: boolean;
@@ -291,8 +291,88 @@ if (prompt.includes("# Issues to fix")) {
     expect(finalResult.status).toBe("blocked");
     expect(finalResult.publishable).toBe(false);
     expect(finalResult.whyNotPublishable).toEqual(
-      expect.arrayContaining(["Verification failed: node -e process.exit(1) (exit 2)"])
+      expect.arrayContaining(['Product verification failed: node -e "process.exit(1)" (exit 1)'])
     );
+  });
+
+  it("environment verification failure: a missing tool blocks after one worker without launching a fix worker", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = ["afk-tool-that-does-not-exist --version"];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      verificationSummaries: Array<{
+        results: Array<{ command: string; failureCategory?: string }>;
+      }>;
+      evidencePacket: {
+        publishability: { blockers: Array<{ category: string; message: string }> };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work"]);
+    expect(finalResult.reviewResults).toEqual([]);
+    expect(finalResult.verificationSummaries[0]?.results[0]).toEqual(
+      expect.objectContaining({ failureCategory: "environment" })
+    );
+    expect(finalResult.evidencePacket.publishability.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "environment" })
+      ])
+    );
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("fix_environment");
+    expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-2.md"))).toBe(false);
+  });
+
+  it("verification-contract failure: malformed shell syntax blocks without launching a fix worker", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = ['node -e "process.exit(0)'];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      verificationSummaries: Array<{
+        results: Array<{ failureCategory?: string }>;
+      }>;
+      evidencePacket: {
+        publishability: { blockers: Array<{ category: string }> };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work"]);
+    expect(finalResult.reviewResults).toEqual([]);
+    expect(finalResult.verificationSummaries[0]?.results[0]?.failureCategory).toBe("verification");
+    expect(finalResult.evidencePacket.publishability.blockers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ category: "verification" })])
+    );
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("retry");
+    expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-2.md"))).toBe(false);
   });
 
   it("verification package manager: declared pnpm version is used through Corepack when PATH differs", async () => {

@@ -9,6 +9,7 @@ import {
   buildWorkerPrompt,
   buildFixWorkerPrompt,
   buildAutonomousReviewPrompt,
+  classifyVerificationFailure,
   createId,
   formatExecutionModeResolution,
   maybeReadOverride,
@@ -492,7 +493,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         results: verificationResults.map((result) => ({
           command: result.command,
           passed: result.passed,
-          exitCode: result.exitCode
+          exitCode: result.exitCode,
+          ...(result.failureCategory ? { failureCategory: result.failureCategory } : {})
         }))
       });
       if (verificationResults.length > 0) {
@@ -527,6 +529,51 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         phase,
         stage: "post-verification"
       });
+
+      const nonProductVerificationFailures = verificationResults.filter(
+        (result) => !result.passed && (result.failureCategory ?? "product") !== "product"
+      );
+      if (nonProductVerificationFailures.length > 0) {
+        const failure = nonProductVerificationFailures[0]!;
+        const categoryLabel = failure.failureCategory === "environment"
+          ? "environment"
+          : "verification contract";
+        const summary = `Run blocked by ${categoryLabel} failure: ${failure.command} (exit ${failure.exitCode})`;
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          generatedArtifacts,
+          branchName,
+          worktreePath,
+          baseBranch: this.config.baseBranch,
+          hasDiff: true,
+          publishable: false
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "blocked",
+          message: summary,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
+        });
+        return {
+          status: "blocked",
+          summary,
+          issueComment: `**AFK run blocked**\n\n${summary}`,
+          hasDiff: false
+        };
+      }
 
       // ------------------------------------------------------------------
       // Review
@@ -981,7 +1028,12 @@ interface ReviewPhaseSummary {
 
 interface VerificationPhaseSummary {
   iteration: number;
-  results: Array<{ command: string; passed: boolean; exitCode: number }>;
+  results: Array<{
+    command: string;
+    passed: boolean;
+    exitCode: number;
+    failureCategory?: import("@afk-geoff/shared").VerificationFailureCategory;
+  }>;
 }
 
 interface CommitPhaseSummary {
@@ -1031,7 +1083,15 @@ function writeFinalRunResult(pathname: string, result: {
   const verificationIssues = result.verificationSummaries.flatMap((summary) =>
     summary.results
       .filter((verification) => !verification.passed)
-      .map((verification) => `Verification failed: ${verification.command} (exit ${verification.exitCode})`)
+      .map((verification) => {
+        const category = verification.failureCategory ?? "product";
+        const label = category === "environment"
+          ? "Environment verification"
+          : category === "verification"
+            ? "Verification contract"
+            : "Product verification";
+        return `${label} failed: ${verification.command} (exit ${verification.exitCode})`;
+      })
   );
   const whyNotPublishable = [
     ...verificationIssues,
@@ -1076,7 +1136,7 @@ interface EvidencePacket {
   commits: Array<{ iteration: number; phase: string; sha?: string; source?: "worker" | "afk" }>;
   verification: {
     status: "passed" | "failed" | "skipped";
-    commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+    commands: VerificationPhaseSummary["results"];
   };
   review: {
     verdict: string;
@@ -1183,11 +1243,17 @@ function deriveImportantDesignDecisions(result: {
 
 function classifyPublishabilityBlocker(message: string): EvidencePacket["publishability"]["blockers"][number]["category"] {
   const normalized = message.toLowerCase();
-  if (normalized.includes("verification failed") || normalized.includes("test") || normalized.includes("typecheck")) {
+  if (normalized.includes("product verification")) {
+    return "product";
+  }
+  if (normalized.includes("verification contract")) {
     return "verification";
   }
   if (normalized.includes("env") || normalized.includes("docker") || normalized.includes("node") || normalized.includes("module") || normalized.includes("dependency")) {
     return "environment";
+  }
+  if (normalized.includes("verification failed") || normalized.includes("test") || normalized.includes("typecheck")) {
+    return "verification";
   }
   if (normalized.includes("review") || normalized.includes("blocked")) {
     return "review";
@@ -1529,13 +1595,20 @@ async function runVerificationCommands(commands: string[], cwd: string, packageM
       });
       results.push({ command: cmd, exitCode: 0, stdout, stderr, passed: true });
     } catch (error) {
-      const execError = error as { code?: number; stdout?: string; stderr?: string };
+      const execError = error as { code?: number | string; stdout?: string; stderr?: string };
+      const exitCode = typeof execError.code === "number" ? execError.code : 1;
+      const stderr = execError.stderr ?? "";
       results.push({
         command: cmd,
-        exitCode: typeof execError.code === "number" ? execError.code : 1,
+        exitCode,
         stdout: execError.stdout ?? "",
-        stderr: execError.stderr ?? "",
-        passed: false
+        stderr,
+        passed: false,
+        failureCategory: classifyVerificationFailure({
+          exitCode,
+          stderr,
+          ...(typeof execError.code === "string" ? { errorCode: execError.code } : {})
+        })
       });
     }
   }
@@ -1545,7 +1618,7 @@ async function runVerificationCommands(commands: string[], cwd: string, packageM
 
 function verificationFailureIssues(results: VerificationCommandResult[]): string[] {
   return results
-    .filter((result) => !result.passed)
+    .filter((result) => !result.passed && (result.failureCategory ?? "product") === "product")
     .map((result) => `Wrapper verification failed: ${result.command} (exit ${result.exitCode})`);
 }
 

@@ -142,4 +142,11 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(config.runner.command).toEqual(["opencode", "run", "{prompt}"]);
     expect(config.runner.reviewCommand).toEqual(["other-agent-review", "{prompt}"]);
   });
+
+  it("rejects ambiguous verification alternatives in project config", () => {
+    expect(() => projectConfigSchema.parse({
+      ...baseConfig(),
+      verification: ["npm install or pnpm install"]
+    })).toThrow("Verification command must be one explicit shell command");
+  });
 });

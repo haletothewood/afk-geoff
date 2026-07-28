@@ -20,34 +20,41 @@ Priority meanings:
 
 These are the next features to build in order.
 
-### 1. Finish PR comment resolution pass
+### 1. Harden verification and incremental recovery
+
+Why now:
+- malformed or ambiguous verification instructions can currently waste worker/reviewer iterations and produce unrelated repository changes
+- verifier and orchestration failures must not be treated as product-code failures
+- reviewed implementation evidence should be reusable when only verification or finalization needs to be retried
+
+### 2. Finish PR comment resolution pass
 
 Why now:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
 - this closes the loop from implementation run to reviewer-directed follow-up on the same PR
 - the remaining gap is documenting the follow-up contract and deciding whether follow-up should inherit brief-local verification
 
-### 2. Finish machine-readable orchestration contract
+### 3. Finish machine-readable orchestration contract
 
 Why next:
 - AFK's CLI should be usable as a stable backend API for another agent framework, bot, scheduler, or CI workflow
 - external orchestrators need structured IDs, URLs, status, run artifacts, and failure reasons without scraping terminal prose
 - the remaining gap is documenting and freezing the command contract once the envelopes are consistent
 
-### 3. Explicit backend selection
-
-Why third:
-- AFK should make it obvious whether a run is local or remote
-
 ### 4. Work admission and back pressure
 
-Why fourth:
+Why next:
 - AFK should reject or narrow work before execution when scope, constraints, or verification are too weak
 - queue throughput should be controlled by evidence quality, not just agent availability
 
-### 5. Optional GitHub Actions backend
+### 5. Explicit backend selection
 
-Why fifth:
+Why next:
+- AFK should make it obvious whether a run is local or remote
+
+### 6. Optional GitHub Actions backend
+
+Why later:
 - once the command contract is stable, GitHub-backed repos can use CI for the cleanest unattended "work source in, PR out" path
 
 ## Recently Landed
@@ -78,7 +85,35 @@ Why fifth:
 
 ## P0
 
-### 1. Land PR comment resolution pass
+### 1. Harden verification and incremental recovery
+
+Why:
+- verification commands are an execution contract, not prose to pass directly to a shell
+- a verifier defect should not cause a coding worker to modify an otherwise-correct repository
+- retries should preserve reviewed commits and rerun only the affected verification or finalization stages
+
+Scope:
+- done: normalize and validate verification entries from project config, execution briefs, and run options before starting a worker
+- done: reject alternatives such as npm versus pnpm with an actionable admission error; never execute natural-language connectives as shell syntax
+- next: replace raw command arrays with structured verification entries where richer policies are needed
+- select one package manager from the brief, `packageManager` metadata, and existing lockfiles, and reject accidental secondary lockfiles
+- done: classify verification outcomes as product, verification-contract, or environment failures
+- done: route only product verification failures to a coding worker; block verification-contract and environment failures before review/fix
+- next: propagate orchestrator and publishing failure categories through every terminal artifact
+- fingerprint repeated failures and stop or escalate when the same failure recurs without a relevant repository change
+- resume from existing reviewed commits and evidence when retrying verification or finalization
+- done: expose verification failure classification in `final-result.json` and its evidence packet
+- next: expose reused evidence and retried stages in `final-result.json`, inspect, and handoff output
+- done: add regression coverage proving ambiguous commands are rejected without tracked state or a worker run
+- done: add regression coverage for product, verification-contract, and environment verification routing
+- next: add regression coverage for repeated-failure loops, package-manager selection, and incremental retries
+
+Success criteria:
+- malformed verification is rejected before it consumes a worker iteration
+- verifier/orchestrator failures cannot trigger unrelated code or lockfile changes
+- a finalization retry can reuse a reviewed implementation without repeating the full worker/reviewer loop
+
+### 2. Land PR comment resolution pass
 
 Why:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
@@ -97,7 +132,7 @@ Notes:
 - scope the first version to AFK-created pull requests
 - do not auto-resolve comments in the first version
 
-### 2. Machine-readable orchestration contract
+### 3. Machine-readable orchestration contract
 
 Why:
 - AFK should be easy for another agent framework or automation harness to call as a backend worker
@@ -112,7 +147,7 @@ Scope:
 - next: document the JSON contract and freeze representative examples
 - next: cover doctor preflight edge cases with the same structured contract
 
-### 3. Work admission and back pressure
+### 4. Work admission and back pressure
 
 Why:
 - agents can produce more output than humans can review
@@ -122,6 +157,8 @@ Why:
 Scope:
 - classify incoming work before execution: `ready`, `needs_constraints`, `needs_tests`, `too_large`, or `blocked_by_environment`
 - require or recommend verification commands for non-trivial code changes
+- expand terse briefs into a visible, auditable acceptance rubric before execution
+- provide project-aware rubric profiles; for CRUD web applications, cover every requested operation, runtime validation, client/API response contracts, automated tests, build, typecheck, lint, audit, and a clean committed handoff
 - surface missing evidence as a queue/back-pressure reason instead of discovering it only after implementation
 - time-box unactionable work and ask for a narrower brief when scope expands
 - report queue health with counts by admission status and blocker reason
@@ -152,7 +189,7 @@ Notes:
 
 ## P1
 
-### 4. Explicit backend selection
+### 5. Explicit backend selection
 
 Why:
 - AFK should make it obvious whether a run is local or remote
@@ -164,7 +201,7 @@ Scope:
 - report the resolved backend in JSON command output
 - leave unsupported remote backend names invalid until those backends exist
 
-### 5. Optional GitHub Actions backend
+### 6. Optional GitHub Actions backend
 
 Why:
 - for GitHub-backed repos, the cleanest unattended path is often “issue in, PR out” from CI instead of the local machine
@@ -184,7 +221,7 @@ Scope:
 
 ## P2
 
-### 6. More source adapters
+### 7. More source adapters
 
 Candidates:
 - GitLab issue source
@@ -194,29 +231,35 @@ Candidates:
 - Slack command source
 - GitHub App webhook source
 
-### 7. More publishing adapters
+### 8. More publishing adapters
 
 Candidates:
 - GitLab merge request publisher
 - Bitbucket pull request publisher
 - local patch or branch summary publisher
 
-### 8. More execution backends
+### 9. More execution backends
 
 Candidates:
 - GitLab CI
 - Azure Pipelines
 - CircleCI
 
-### 9. Runner usage accounting
+### 10. Runner usage accounting
 
 Why:
 - token and cost visibility can be useful, but it should not block core usability work
 
 Scope:
 - capture token usage only if the configured runner exposes it reliably
+- distinguish agent sessions and workflow stages from underlying model inference calls
+- record end-to-end and per-stage duration for brief expansion, work, review, fixes, verification, finalization, and retries
+- report cached and uncached input, output, and reasoning tokens separately when available
+- include the outer orchestration turn and brief-expansion overhead in end-to-end workflow totals
+- attribute retry time and token cost to a structured retry cause
+- document which runner metrics are operational estimates rather than directly comparable billing units
 
-### 10. Comprehension debt tracking
+### 11. Comprehension debt tracking
 
 Why:
 - autonomous runs can widen the gap between code produced and code understood
