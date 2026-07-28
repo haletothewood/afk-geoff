@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress, WorkspaceRuntime } from "@afk-geoff/core";
@@ -218,6 +219,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const verificationSummaries: VerificationPhaseSummary[] = [];
     const commits: CommitPhaseSummary[] = [];
     const generatedArtifacts: GeneratedArtifactSummary[] = [];
+    let previousVerificationFailure: FailureObservation | undefined;
+    let previousReviewFailure: FailureObservation | undefined;
     const packageManager = await resolvePackageManager(worktreePath);
     if (packageManager.warning) {
       if (isRunEventsEnabled()) {
@@ -470,6 +473,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       if (!workerCommit && !commit.created) {
         commits.push({ iteration, phase, created: false });
       }
+      const headAfterIteration = await getGitHead(worktreePath);
       const commitSummary = [
         workerCommit ? `worker commit ${workerCommit.sha}` : undefined,
         commit.created ? `afk commit ${commit.sha ?? "created"}` : undefined
@@ -573,6 +577,64 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           issueComment: `**AFK run blocked**\n\n${summary}`,
           hasDiff: false
         };
+      }
+
+      const productVerificationFailures = verificationResults.filter(
+        (result) => !result.passed && (result.failureCategory ?? "product") === "product"
+      );
+      if (productVerificationFailures.length > 0) {
+        const fingerprint = fingerprintVerificationFailures(productVerificationFailures);
+        if (
+          previousVerificationFailure?.fingerprint === fingerprint &&
+          previousVerificationFailure.head === headAfterIteration
+        ) {
+          const repeatedFailure: RepeatedFailureSummary = {
+            kind: "verification",
+            fingerprint,
+            firstIteration: previousVerificationFailure.iteration,
+            repeatedIteration: iteration,
+            unchangedHead: headAfterIteration
+          };
+          const summary = `Repeated verification failure on unchanged commit ${headAfterIteration.slice(0, 12)}; stopping after iteration ${iteration}`;
+          await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+          await this.store.updateRun(runId, { status: "completed", summary });
+          writeFinalRunResult(path.join(runDir, "final-result.json"), {
+            runId,
+            status: "blocked",
+            summary,
+            workerResults,
+            reviewResults,
+            verificationSummaries,
+            commits,
+            generatedArtifacts,
+            repeatedFailure,
+            branchName,
+            worktreePath,
+            baseBranch: this.config.baseBranch,
+            hasDiff: await this.git.hasDiffAgainst({ cwd: worktreePath, baseBranch: this.config.baseBranch }),
+            publishable: false
+          });
+          emitRunEvent({
+            event: "run_completed",
+            runId,
+            workItemId: input.workItem.id,
+            status: "blocked",
+            message: summary,
+            branchName,
+            worktreePath,
+            runDir,
+            finalResultPath: path.join(runDir, "final-result.json")
+          });
+          return {
+            status: "blocked",
+            summary,
+            issueComment: `**AFK run blocked**\n\n${summary}`,
+            hasDiff: false
+          };
+        }
+        previousVerificationFailure = { fingerprint, head: headAfterIteration, iteration };
+      } else {
+        previousVerificationFailure = undefined;
       }
 
       // ------------------------------------------------------------------
@@ -723,6 +785,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       });
 
       if (reviewResult.verdict === "PASS") {
+        previousReviewFailure = undefined;
         const verificationIssues = verificationFailureIssues(verificationResults);
         if (verificationIssues.length > 0) {
           console.log(`[verify] iteration ${iteration}: forcing fix because wrapper verification failed`);
@@ -822,6 +885,59 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
       // verdict === "ISSUES" — prepare for a fix iteration.
       reviewIssues = reviewResult.issues?.length ? reviewResult.issues : ["Unspecified issues found by review"];
+      const reviewFingerprint = fingerprintReviewIssues(reviewIssues);
+      if (
+        previousReviewFailure?.fingerprint === reviewFingerprint &&
+        previousReviewFailure.head === headAfterIteration
+      ) {
+        const repeatedFailure: RepeatedFailureSummary = {
+          kind: "review",
+          fingerprint: reviewFingerprint,
+          firstIteration: previousReviewFailure.iteration,
+          repeatedIteration: iteration,
+          unchangedHead: headAfterIteration
+        };
+        const summary = `Repeated review failure on unchanged commit ${headAfterIteration.slice(0, 12)}; stopping after iteration ${iteration}`;
+        const repeatedIssues = reviewIssues.map((issue) => `Repeated review issue: ${issue}`);
+        const issueList = reviewIssues.map((issue) => `- ${issue}`).join("\n");
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          generatedArtifacts,
+          repeatedFailure,
+          branchName,
+          worktreePath,
+          baseBranch: this.config.baseBranch,
+          hasDiff: await this.git.hasDiffAgainst({ cwd: worktreePath, baseBranch: this.config.baseBranch }),
+          publishable: false,
+          whyNotPublishable: repeatedIssues
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "blocked",
+          message: summary,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
+        });
+        return {
+          status: "blocked",
+          summary,
+          issueComment: `**AFK run blocked**\n\n${summary}\n\nPending issues:\n${issueList}`,
+          hasDiff: false
+        };
+      }
+      previousReviewFailure = { fingerprint: reviewFingerprint, head: headAfterIteration, iteration };
 
       if (iteration >= MAX_ITERATIONS) {
         const capSummary = `Iteration cap (${MAX_ITERATIONS}) reached without passing review`;
@@ -1051,6 +1167,20 @@ interface GeneratedArtifactSummary {
   paths: string[];
 }
 
+interface FailureObservation {
+  fingerprint: string;
+  head: string;
+  iteration: number;
+}
+
+interface RepeatedFailureSummary {
+  kind: "verification" | "review";
+  fingerprint: string;
+  firstIteration: number;
+  repeatedIteration: number;
+  unchangedHead: string;
+}
+
 type ProgressBase = Pick<RunProgress, "runId" | "workItemId" | "branchName" | "worktreePath" | "runDir" | "startedAt">;
 
 interface WorktreeStatusSummary {
@@ -1072,6 +1202,7 @@ function writeFinalRunResult(pathname: string, result: {
   verificationSummaries: VerificationPhaseSummary[];
   commits: CommitPhaseSummary[];
   generatedArtifacts: GeneratedArtifactSummary[];
+  repeatedFailure?: RepeatedFailureSummary;
   branchName: string;
   worktreePath: string;
   baseBranch?: string;
@@ -1620,6 +1751,30 @@ function verificationFailureIssues(results: VerificationCommandResult[]): string
   return results
     .filter((result) => !result.passed && (result.failureCategory ?? "product") === "product")
     .map((result) => `Wrapper verification failed: ${result.command} (exit ${result.exitCode})`);
+}
+
+function fingerprintVerificationFailures(results: VerificationCommandResult[]): string {
+  const failures = results
+    .map((result) => [
+      result.failureCategory ?? "product",
+      result.command.trim(),
+      String(result.exitCode),
+      normalizeFailureText(result.stderr)
+    ].join("\u0000"))
+    .sort();
+  return fingerprintFailureParts(failures);
+}
+
+function fingerprintReviewIssues(issues: string[]): string {
+  return fingerprintFailureParts(issues.map(normalizeFailureText).sort());
+}
+
+function fingerprintFailureParts(parts: string[]): string {
+  return createHash("sha256").update(parts.join("\u0001")).digest("hex").slice(0, 16);
+}
+
+function normalizeFailureText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function shellQuote(value: string): string {
