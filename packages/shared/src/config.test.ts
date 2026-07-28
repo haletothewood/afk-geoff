@@ -149,4 +149,22 @@ describe("projectConfigSchema — runner model fields", () => {
       verification: ["npm install or pnpm install"]
     })).toThrow("Verification command must be one explicit shell command");
   });
+
+  it("normalizes legacy verification strings into structured entries", () => {
+    const config = projectConfigSchema.parse({
+      ...baseConfig(),
+      verification: ["`pnpm typecheck`"]
+    });
+
+    expect(config.verification).toEqual([{ command: "pnpm typecheck" }]);
+  });
+
+  it("accepts structured verification entries", () => {
+    const config = projectConfigSchema.parse({
+      ...baseConfig(),
+      verification: [{ command: "`pnpm test`" }]
+    });
+
+    expect(config.verification).toEqual([{ command: "pnpm test" }]);
+  });
 });

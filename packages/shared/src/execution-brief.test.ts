@@ -107,8 +107,8 @@ describe("parseExecutionBriefMarkdown — execution mode fields", () => {
 
     const result = parseExecutionBriefMarkdown(brief);
     expect(result.verification).toEqual([
-      "pnpm exec vitest --run app/admin/invites/__tests__/bulkInvites.test.ts",
-      "pnpm run typecheck"
+      { command: "pnpm exec vitest --run app/admin/invites/__tests__/bulkInvites.test.ts" },
+      { command: "pnpm run typecheck" }
     ]);
   });
 

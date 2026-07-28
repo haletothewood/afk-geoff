@@ -233,8 +233,8 @@ describe("afk CLI — detached run command", () => {
     const runs = await fixture.store.listRuns();
     expect(runs.some((run) => run.status === "running")).toBe(true);
     expect(launchCalls).toHaveLength(1);
-    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: string[]; issueUrl?: string };
-    expect(detachedOptions.verification).toEqual(["pnpm typecheck"]);
+    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: Array<{ command: string }>; issueUrl?: string };
+    expect(detachedOptions.verification).toEqual([{ command: "pnpm typecheck" }]);
     expect(detachedOptions.issueUrl).toBe("https://github.com/acme/demo/issues/77");
   });
 
@@ -248,7 +248,10 @@ describe("afk CLI — detached run command", () => {
             workItemTitle: "Run from issue in detach mode",
             workItemBody: "Execute a hand-authored GitHub issue body.",
             acceptanceCriteria: ["The runner can import a GitHub issue body"],
-            verification: ["pnpm typecheck", "pnpm test -- packages/cli/src/index.test.ts"],
+            verification: [
+              { command: "pnpm typecheck" },
+              { command: "pnpm test -- packages/cli/src/index.test.ts" }
+            ],
             issueUrl: "https://github.com/acme/demo/issues/42"
           };
         }
@@ -262,8 +265,11 @@ describe("afk CLI — detached run command", () => {
     await fixture.cli(["run", "issue", "https://github.com/acme/demo/issues/42", "--detach"]);
 
     expect(launchCalls).toHaveLength(1);
-    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: string[]; issueUrl?: string };
-    expect(detachedOptions.verification).toEqual(["pnpm typecheck", "pnpm test -- packages/cli/src/index.test.ts"]);
+    const detachedOptions = JSON.parse(launchCalls[0]!.env.AFK_DETACH_RUN_OPTIONS ?? "{}") as { verification?: Array<{ command: string }>; issueUrl?: string };
+    expect(detachedOptions.verification).toEqual([
+      { command: "pnpm typecheck" },
+      { command: "pnpm test -- packages/cli/src/index.test.ts" }
+    ]);
     expect(detachedOptions.issueUrl).toBe("https://github.com/acme/demo/issues/42");
   });
 
