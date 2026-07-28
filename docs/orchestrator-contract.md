@@ -146,6 +146,17 @@ Each failed wrapper-verification command records a `failureCategory`:
 
 Only product failures are actionable by a coding worker. Verification-contract and environment failures remain visible in `verificationSummaries`, `whyNotPublishable`, and the evidence packet, which recommends correcting the contract or environment before retrying.
 
+Terminal AFK and result-publishing failures use a separate `terminalFailure` object:
+
+```json
+{
+  "category": "orchestrator",
+  "message": "Detached worker process 1234 exited before completing run artifacts"
+}
+```
+
+The category is `orchestrator` for AFK lifecycle or finalization failures and `publishing` when opening or updating the external result fails. AFK persists the same object with the run and exposes it through `final-result.json`, its evidence packet, watch events and results, status, inspect, and handoff. Human-readable views print the category alongside the message. A successful retry removes the prior terminal failure.
+
 Before creating a run, AFK resolves one package manager from `packageManager` metadata, recognized lockfiles, and verification commands. Conflicting managers or secondary lockfiles are admission errors and do not create tracked run state.
 
 AFK fingerprints product-verification failures and reviewer issue sets. If the same fingerprint recurs on the same Git commit after a fix attempt, AFK stops before consuming another worker iteration. The terminal `final-result.json` includes `repeatedFailure` with the failure kind, fingerprint, first and repeated iterations, and unchanged commit SHA.

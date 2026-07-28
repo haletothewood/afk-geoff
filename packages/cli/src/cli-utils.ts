@@ -2,13 +2,41 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { HydratedWorkItem, Requirement, RunProgress } from "@afk-geoff/core";
+import { failureCategories } from "@afk-geoff/core";
+import type { HydratedWorkItem, Requirement, RunProgress, TerminalFailure } from "@afk-geoff/core";
 import type { CliContext, WorkerProcessInfo } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
 export function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function attachTerminalFailure(error: unknown, terminalFailure: TerminalFailure): Error & { terminalFailure: TerminalFailure } {
+  const classifiedError = error instanceof Error ? error : new Error(String(error));
+  return Object.assign(classifiedError, { terminalFailure });
+}
+
+export function terminalFailureFromError(error: unknown): TerminalFailure | undefined {
+  if (!(error instanceof Error) || !("terminalFailure" in error)) {
+    return undefined;
+  }
+  const terminalFailure = error.terminalFailure;
+  if (
+    typeof terminalFailure !== "object"
+    || terminalFailure === null
+    || !("category" in terminalFailure)
+    || !("message" in terminalFailure)
+    || typeof terminalFailure.category !== "string"
+    || !failureCategories.includes(terminalFailure.category as TerminalFailure["category"])
+    || typeof terminalFailure.message !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    category: terminalFailure.category as TerminalFailure["category"],
+    message: terminalFailure.message
+  };
 }
 
 export function delay(ms: number): Promise<void> {

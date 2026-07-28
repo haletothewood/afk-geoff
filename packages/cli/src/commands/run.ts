@@ -14,7 +14,7 @@ import {
   type VerificationEntryInput
 } from "@afk-geoff/shared";
 import type { ExecutionBackendResult, Requirement, VerificationEntry } from "@afk-geoff/core";
-import { buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
+import { attachTerminalFailure, buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import { MarkdownFileWorkSource, resolveBriefPath } from "../file-work-source.js";
@@ -85,20 +85,22 @@ export async function runTrackedWorkItem(
     }
   } catch (error) {
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
-    if (!latestRun || latestRun.status === "running") {
-      await markWorkItemRunFailed(ctx, workItem.id, `Worker execution failed: ${formatErrorMessage(error)}`);
-    } else {
-      await refreshRequirementStatuses(ctx);
-    }
+    const failureSummary = latestRun?.status === "failed" && latestRun.summary
+      ? latestRun.summary
+      : `Worker execution failed: ${formatErrorMessage(error)}`;
+    await markWorkItemRunFailed(ctx, workItem.id, failureSummary);
     await tryPostSourceUpdate(sourceUpdater, {
       status: "failed",
-      summary: `Worker execution failed: ${formatErrorMessage(error)}`,
-      issueComment: `**AFK run failed**\n\nWorker execution failed: ${formatErrorMessage(error)}`
+      summary: failureSummary,
+      issueComment: `**AFK run failed**\n\n${failureSummary}`
     });
     throw error;
   }
 
   if (result.status === "blocked" || result.status === "failed") {
+    if (result.status === "failed") {
+      await markWorkItemRunFailed(ctx, workItem.id, result.summary);
+    }
     const issueComment = result.issueComment.trim() || buildFallbackSourceComment({ status: result.status, summary: result.summary });
     await tryPostSourceUpdate(sourceUpdater, { status: result.status, summary: result.summary, issueComment });
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -171,8 +173,17 @@ export async function runTrackedWorkItem(
     await tryPostSourceUpdate(sourceUpdater, { status: "done", summary: result.summary, issueComment: issueCommentNoPr });
     return buildRunOutcome(workItem.id, latestRun, { status: "completed" });
   } catch (error) {
-    await markWorkItemRunFailed(ctx, workItem.id, `Post-run publication failed: ${formatErrorMessage(error)}`);
-    throw error;
+    const terminalFailure = {
+      category: "publishing" as const,
+      message: `Post-run publication failed: ${formatErrorMessage(error)}`
+    };
+    await markWorkItemRunFailed(
+      ctx,
+      workItem.id,
+      terminalFailure.message,
+      terminalFailure.category
+    );
+    throw attachTerminalFailure(error, terminalFailure);
   }
 }
 
@@ -254,12 +265,16 @@ function recordRecoveryMetadata(runDir: string, recovery: RecoveryMetadata): voi
   if (!finalResult) {
     return;
   }
+  const { terminalFailure: _terminalFailure, ...completedFinalResult } = finalResult;
   const evidencePacket = isJsonRecord(finalResult.evidencePacket)
-    ? { ...finalResult.evidencePacket, recovery }
+    ? (() => {
+        const { terminalFailure: _evidenceTerminalFailure, ...completedEvidencePacket } = finalResult.evidencePacket;
+        return { ...completedEvidencePacket, recovery };
+      })()
     : { recovery };
   fs.writeFileSync(
     finalResultPath,
-    JSON.stringify({ ...finalResult, recovery, evidencePacket }, null, 2)
+    JSON.stringify({ ...completedFinalResult, recovery, evidencePacket }, null, 2)
   );
 }
 
@@ -304,7 +319,8 @@ function buildRunArtifactOutcome(run: NonNullable<Awaited<ReturnType<typeof late
     runDir: run.runDir,
     resultPath: path.join(run.runDir, "result.json"),
     finalResultPath,
-    ...(finalVerdict ? { finalVerdict } : {})
+    ...(finalVerdict ? { finalVerdict } : {}),
+    ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {})
   };
 }
 
@@ -569,9 +585,7 @@ export async function runWorkItemDetached(
     ({ pid } = launcher(launchArgv, launchEnv, ctx.repoRoot));
   } catch (error) {
     const message = `Detached launch failed: ${formatErrorMessage(error)}`;
-    await ctx.store.updateRun(runId, { status: "failed", summary: message });
-    await ctx.store.updateWorkItemStatus(workItem.id, "failed");
-    await refreshRequirementStatuses(ctx);
+    await markWorkItemRunFailed(ctx, workItem.id, message);
     throw new Error(message);
   }
 

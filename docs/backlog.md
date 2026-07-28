@@ -81,69 +81,62 @@ Priority meanings:
 
 These are the next features to build in order.
 
-### 1. Harden verification and incremental recovery
-
-Why now:
-- malformed or ambiguous verification instructions can currently waste worker/reviewer iterations and produce unrelated repository changes
-- verifier and orchestration failures must not be treated as product-code failures
-- reviewed implementation evidence should be reusable when only verification or finalization needs to be retried
-
-### 2. Finish PR comment resolution pass
+### 1. Finish PR comment resolution pass
 
 Why now:
 - AFK-generated pull requests should support a second execution pass driven by human review comments
 - this closes the loop from implementation run to reviewer-directed follow-up on the same PR
 - the remaining gap is documenting the follow-up contract and deciding whether follow-up should inherit brief-local verification
 
-### 3. Finish machine-readable orchestration contract
+### 2. Finish machine-readable orchestration contract
 
 Why next:
 - AFK's CLI should be usable as a stable backend API for another agent framework, bot, scheduler, or CI workflow
 - external orchestrators need structured IDs, URLs, status, run artifacts, and failure reasons without scraping terminal prose
 - the remaining gap is documenting and freezing the command contract once the envelopes are consistent
 
-### 4. Harden run lifecycle and worktree ownership
+### 3. Harden run lifecycle and worktree ownership
 
 Why next:
 - detached and future concurrent runs need explicit ownership of worktrees and worker processes
 - a run must terminate predictably when setup, the runner, verification, review, or publishing hangs
 - cleanup and recovery behaviour should be observable through the same artifacts and JSON contract as normal completion
 
-### 5. Work admission and back pressure
+### 4. Work admission and back pressure
 
 Why next:
 - AFK should reject or narrow work before execution when scope, constraints, or verification are too weak
 - queue throughput should be controlled by evidence quality, not just agent availability
 
-### 6. Finish explicit backend selection
+### 5. Finish explicit backend selection
 
 Why next:
 - AFK should make it obvious whether a run is local or remote
 
-### 7. Deepen the workspace runtime lifecycle
+### 6. Deepen the workspace runtime lifecycle
 
 Why next:
 - local process and local Docker execution should share one small, reliable runtime lifecycle
 - implementation, verification, review, and fix phases should be able to reuse prepared infrastructure without leaking orchestration policy into runtime adapters
 - a deeper workspace runtime seam is a prerequisite for safe additional isolation and remote execution adapters
 
-### 8. Define runner capabilities and typed agent events
+### 7. Define runner capabilities and typed agent events
 
 Why next:
 - runner behaviour should depend on explicit, verified capabilities rather than runner-name conditionals
 - agent stream events must remain distinct from authoritative worker results and workflow lifecycle events
 
-### 9. Harden the optional GitHub Actions backend
+### 8. Harden the optional GitHub Actions backend
 
 Why later:
 - once the command contract is stable, GitHub-backed repos can use CI for the cleanest unattended "work source in, PR out" path
 
-### 10. Add isolated workspace transfer and recovery
+### 9. Add isolated workspace transfer and recovery
 
 Why later:
 - future isolated-filesystem runtimes need a recovery-first way to transfer repository state without weakening AFK's evidence or branch model
 
-### 11. Productionize package delivery
+### 10. Productionize package delivery
 
 Why later:
 - package smoke coverage exists, but repeatable CI, versioning, provenance, and release checks are required before AFK can be treated as dependable third-party infrastructure
@@ -188,6 +181,7 @@ This sequence keeps the existing reliability work ahead of expansion while ensur
 - single-package `afk-geoff` CLI distribution with bundled internal packages, package smoke test, and custom command runner support
 - structured verification entries with backward-compatible string configuration and brief syntax
 - tag-triggered npm trusted publishing with OIDC provenance, version/source guards, and package smoke gates
+- structured orchestrator and publishing failures across terminal run records, completion artifacts, evidence, and CLI views
 
 ## P0
 
@@ -205,7 +199,7 @@ Scope:
 - done: select one package manager from `packageManager` metadata, existing lockfiles, and verification commands, and reject accidental secondary lockfiles
 - done: classify verification outcomes as product, verification-contract, or environment failures
 - done: route only product verification failures to a coding worker; block verification-contract and environment failures before review/fix
-- next: propagate orchestrator and publishing failure categories through every terminal artifact
+- done: propagate orchestrator and publishing failure categories through every terminal artifact
 - done: fingerprint repeated product-verification and review failures and stop when the same failure recurs on an unchanged commit
 - done: resume from existing reviewed commits and evidence when retrying a failed publishing/finalization stage
 - done: add an explicit verification-only retry path for reviewed, unchanged commits

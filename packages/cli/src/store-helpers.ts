@@ -1,5 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { summarizeRequirementStatus } from "@afk-geoff/core";
-import type { HydratedWorkItem, Requirement } from "@afk-geoff/core";
+import type { FailureCategory, HydratedWorkItem, Requirement, TerminalFailure } from "@afk-geoff/core";
 import { delay, processExists, readWorkerProcessInfo } from "./cli-utils.js";
 import type { CliContext } from "./types.js";
 
@@ -43,13 +45,63 @@ export async function refreshRequirementStatuses(ctx: CliContext): Promise<void>
   }
 }
 
-export async function markWorkItemRunFailed(ctx: CliContext, workItemId: string, summary: string): Promise<void> {
+export async function markWorkItemRunFailed(
+  ctx: CliContext,
+  workItemId: string,
+  summary: string,
+  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator"
+): Promise<void> {
   await ctx.store.updateWorkItemStatus(workItemId, "failed");
   const latestRun = await latestRunForWorkItem(ctx, workItemId);
   if (latestRun) {
-    await ctx.store.updateRun(latestRun.id, { status: "failed", summary });
+    await markRunFailed(ctx, latestRun, summary, category);
   }
   await refreshRequirementStatuses(ctx);
+}
+
+export async function markRunFailed(
+  ctx: CliContext,
+  run: Awaited<ReturnType<CliContext["store"]["listRuns"]>>[number],
+  summary: string,
+  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator"
+): Promise<void> {
+  const terminalFailure: TerminalFailure = { category, message: summary };
+  await ctx.store.updateRun(run.id, { status: "failed", summary, terminalFailure });
+  writeTerminalFailure(run.runDir, terminalFailure);
+}
+
+function writeTerminalFailure(runDir: string, terminalFailure: TerminalFailure): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonObject(finalResultPath) ?? {
+    status: "failed",
+    publishable: false,
+    whyNotPublishable: [terminalFailure.message]
+  };
+  const evidencePacket = isJsonObject(finalResult.evidencePacket)
+    ? { ...finalResult.evidencePacket, terminalFailure }
+    : { terminalFailure };
+
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(
+    finalResultPath,
+    JSON.stringify({ ...finalResult, terminalFailure, evidencePacket }, null, 2)
+  );
+}
+
+function readJsonObject(filename: string): Record<string, unknown> | undefined {
+  if (!fs.existsSync(filename)) {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
+    return isJsonObject(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function terminateRunWorker(runDir: string): Promise<void> {

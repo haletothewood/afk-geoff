@@ -209,6 +209,7 @@ Important fields:
 - `verificationStatus`
 - `createdCommitCount`
 - `worktreeClean`
+- `terminalFailure` when the run failed, containing `category` and `message`
 - `runDir`
 - `finalResultPath`
 - `worktreePath`

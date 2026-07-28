@@ -1,12 +1,6 @@
-export const failureCategories = [
-  "product",
-  "verification",
-  "environment",
-  "orchestrator",
-  "publishing"
-] as const;
-
-export type FailureCategory = typeof failureCategories[number];
+export { failureCategories } from "@afk-geoff/core";
+export type { FailureCategory } from "@afk-geoff/core";
+import type { FailureCategory } from "@afk-geoff/core";
 export type VerificationFailureCategory = Extract<
   FailureCategory,
   "product" | "verification" | "environment"

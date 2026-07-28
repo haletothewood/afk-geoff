@@ -3,7 +3,7 @@ import path from "node:path";
 import { evaluateNextStatus } from "@afk-geoff/core";
 import type { Requirement } from "@afk-geoff/core";
 import { processExists, readDetachedProcessInfo, readRunProgress } from "./cli-utils.js";
-import { refreshRequirementStatuses, terminateRunWorker } from "./store-helpers.js";
+import { markRunFailed, refreshRequirementStatuses, terminateRunWorker } from "./store-helpers.js";
 import type { CliContext } from "./types.js";
 
 export async function autoSync(ctx: CliContext): Promise<void> {
@@ -79,15 +79,7 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
     }
 
     if (!fs.existsSync(run.runDir)) {
-      await ctx.store.updateRun(run.id, {
-        status: "failed",
-        summary: "Run directory missing; treating interrupted run as failed"
-      });
-
-      const workItem = await ctx.store.getWorkItem(run.workItemId);
-      if (workItem?.status === "in_progress") {
-        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
-      }
+      await failReconciledRun(ctx, run, "Run directory missing; treating interrupted run as failed");
 
       continue;
     }
@@ -95,15 +87,11 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
     const detachedProcessInfo = readDetachedProcessInfo(run.runDir);
     const finalResultExists = fs.existsSync(path.join(run.runDir, "final-result.json"));
     if (detachedProcessInfo && !processExists(detachedProcessInfo.pid) && !finalResultExists) {
-      await ctx.store.updateRun(run.id, {
-        status: "failed",
-        summary: `Detached worker process ${detachedProcessInfo.pid} exited before completing run artifacts`
-      });
-
-      const workItem = await ctx.store.getWorkItem(run.workItemId);
-      if (workItem?.status === "in_progress") {
-        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
-      }
+      await failReconciledRun(
+        ctx,
+        run,
+        `Detached worker process ${detachedProcessInfo.pid} exited before completing run artifacts`
+      );
 
       continue;
     }
@@ -113,15 +101,11 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
       await terminateRunWorker(run.runDir);
       const ageSeconds = Math.round(runAgeMs / 1000);
       const limitSeconds = Math.round(runTimeoutMs / 1000);
-      await ctx.store.updateRun(run.id, {
-        status: "failed",
-        summary: `Run timeout exceeded: run active for ${ageSeconds}s (limit: ${limitSeconds}s)`
-      });
-
-      const workItem = await ctx.store.getWorkItem(run.workItemId);
-      if (workItem?.status === "in_progress") {
-        await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
-      }
+      await failReconciledRun(
+        ctx,
+        run,
+        `Run timeout exceeded: run active for ${ageSeconds}s (limit: ${limitSeconds}s)`
+      );
 
       continue;
     }
@@ -133,19 +117,27 @@ export async function reconcileLocalRuns(ctx: CliContext): Promise<void> {
         await terminateRunWorker(run.runDir);
         const ageSeconds = Math.round(heartbeatAgeMs / 1000);
         const limitSeconds = Math.round(heartbeatStaleMs / 1000);
-        await ctx.store.updateRun(run.id, {
-          status: "failed",
-          summary: `Heartbeat stale: progress not updated for ${ageSeconds}s (limit: ${limitSeconds}s)`
-        });
-
-        const workItem = await ctx.store.getWorkItem(run.workItemId);
-        if (workItem?.status === "in_progress") {
-          await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
-        }
+        await failReconciledRun(
+          ctx,
+          run,
+          `Heartbeat stale: progress not updated for ${ageSeconds}s (limit: ${limitSeconds}s)`
+        );
 
         continue;
       }
     }
+  }
+}
+
+async function failReconciledRun(
+  ctx: CliContext,
+  run: Awaited<ReturnType<CliContext["store"]["listRuns"]>>[number],
+  message: string
+): Promise<void> {
+  await markRunFailed(ctx, run, message);
+  const workItem = await ctx.store.getWorkItem(run.workItemId);
+  if (workItem?.status === "in_progress") {
+    await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
   }
 }
 

@@ -157,6 +157,39 @@ describe("afk CLI — JSON output", () => {
 	    expect(await fixture.store.listRuns()).toHaveLength(0);
 	  });
 
+  it("Given run --pr --json fails while publishing, then its terminal error is categorized", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.openPullRequestError = new Error("simulated PR failure");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    writeBrief(fixture.repoDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr", "--json"]);
+    });
+    const payload = parseNdjson(output).at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      terminalFailure?: { category: string; message: string };
+      error: { category?: string; message: string };
+    };
+
+    expect(payload.kind).toBe("run_result");
+    expect(payload.command).toBe("run");
+    expect(payload.ok).toBe(false);
+    expect(payload.terminalFailure).toEqual({
+      category: "publishing",
+      message: "Post-run publication failed: simulated PR failure"
+    });
+    expect(payload.error).toEqual({
+      category: "publishing",
+      message: "simulated PR failure"
+    });
+  });
+
   it("Given package-manager mismatch during run --json, then stdout remains strict NDJSON", async () => {
     const fixture = await createFixture(tempDir);
     const corepackLogPath = path.join(fixture.repoDir, "corepack-calls.log");
@@ -594,7 +627,8 @@ describe("afk CLI — JSON output", () => {
       ok: boolean;
       runId: string;
       status: string;
-      error: { message: string };
+      terminalFailure: { category: string; message: string };
+      error: { category: string; message: string };
     };
 
     expect(events.map((event) => event.event)).toEqual(expect.arrayContaining(["watch_started", "progress_observed", "run_failed"]));
@@ -603,12 +637,57 @@ describe("afk CLI — JSON output", () => {
     expect(result.ok).toBe(false);
     expect(result.runId).toBe(runId);
     expect(result.status).toBe("failed");
+    expect(result.terminalFailure).toEqual({
+      category: "orchestrator",
+      message: "Detached worker process 999999 exited before completing run artifacts"
+    });
+    expect(result.error.category).toBe("orchestrator");
     expect(result.error.message).toContain("Detached worker process 999999 exited before completing run artifacts");
     expect(exitCode).toBe(1);
 
     const [updatedRun] = (await fixture.store.listRuns()).filter((run) => run.id === runId);
     expect(updatedRun?.status).toBe("failed");
+    expect(updatedRun?.terminalFailure).toEqual(result.terminalFailure);
     expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("failed");
+
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(runDir, "final-result.json"), "utf8")
+    ) as {
+      terminalFailure?: { category: string; message: string };
+      evidencePacket?: {
+        terminalFailure?: { category: string; message: string };
+      };
+    };
+    expect(finalResult.terminalFailure).toEqual(result.terminalFailure);
+    expect(finalResult.evidencePacket?.terminalFailure).toEqual(result.terminalFailure);
+
+    const inspectPayload = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["inspect", runId, "--json"]);
+    })) as {
+      terminalFailure?: { category: string; message: string };
+    };
+    const handoffPayload = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["handoff", runId, "--json"]);
+    })) as {
+      terminalFailure?: { category: string; message: string };
+    };
+    const statusPayload = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["status", backend!.id, "--json"]);
+    })) as {
+      terminalFailures?: Array<{
+        runId: string;
+        workItemId: string;
+        terminalFailure: { category: string; message: string };
+      }>;
+    };
+
+    expect(inspectPayload.terminalFailure).toEqual(result.terminalFailure);
+    expect(handoffPayload.terminalFailure).toEqual(result.terminalFailure);
+    expect(statusPayload.terminalFailures).toContainEqual({
+      runId,
+      workItemId: backend!.id,
+      terminalFailure: result.terminalFailure
+    });
   });
 
   it("Given status --json, when work exists, then it prints queue and next-action state", async () => {

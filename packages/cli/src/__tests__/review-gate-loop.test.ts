@@ -152,6 +152,18 @@ describe("afk CLI — autonomous review gate loop", () => {
     const [run] = await fixture.store.listRuns();
     expect(run?.status).toBe("failed");
     expect(run?.summary).toContain("malformed");
+    expect(run?.terminalFailure).toEqual({
+      category: "orchestrator",
+      message: expect.stringContaining("malformed")
+    });
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      terminalFailure?: { category: string; message: string };
+      evidencePacket?: { terminalFailure?: { category: string; message: string } };
+    };
+    expect(finalResult.terminalFailure).toEqual(run?.terminalFailure);
+    expect(finalResult.evidencePacket?.terminalFailure).toEqual(run?.terminalFailure);
   });
 
   // -----------------------------------------------------------------------

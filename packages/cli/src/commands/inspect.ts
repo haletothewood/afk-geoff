@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExternalRef, RunRecord } from "@afk-geoff/core";
+import type { ExternalRef, RunRecord, TerminalFailure } from "@afk-geoff/core";
 import { getRunDiagnostics } from "../run-diagnostics.js";
 import type { CliContext } from "../types.js";
 
@@ -19,6 +19,7 @@ export interface RunInspection {
   };
   finalResult?: Record<string, unknown>;
   evidencePacket?: Record<string, unknown>;
+  terminalFailure?: TerminalFailure;
   pullRequest?: ExternalRef;
   derived: {
     complete: boolean;
@@ -59,6 +60,7 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
     },
     ...(finalResult ? { finalResult } : {}),
     ...(evidencePacket ? { evidencePacket } : {}),
+    ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {}),
     ...(pullRequest ? { pullRequest } : {}),
     derived: deriveInspection(run, diagnostics, finalResult)
   };
@@ -71,6 +73,9 @@ export async function printRunInspection(ctx: CliContext, runId: string): Promis
   console.log(`Publishable: ${inspection.derived.publishable === undefined ? "unknown" : String(inspection.derived.publishable)}`);
   console.log(`Review: ${inspection.derived.reviewVerdict ?? "unknown"}`);
   console.log(`Verification: ${inspection.derived.verificationStatus}`);
+  if (inspection.terminalFailure) {
+    console.log(`Terminal failure [${inspection.terminalFailure.category}]: ${inspection.terminalFailure.message}`);
+  }
   console.log(`Created commits: ${inspection.derived.createdCommitCount ?? 0}`);
   console.log(`Worktree clean: ${inspection.derived.worktreeClean === undefined ? "unknown" : String(inspection.derived.worktreeClean)}`);
   if (typeof inspection.evidencePacket?.recommendedHumanAction === "string") {

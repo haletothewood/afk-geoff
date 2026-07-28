@@ -1,4 +1,4 @@
-import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater, WorkspaceRuntime, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
+import type { AgentRunner, ExecutionBackend, IssueMirror, PullRequestReviewSource, ResultPublisher, SourceUpdater, TerminalFailure, WorkspaceRuntime, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
@@ -64,6 +64,7 @@ export interface RunOutcome {
   resultPath?: string;
   finalResultPath?: string;
   finalVerdict?: string;
+  terminalFailure?: TerminalFailure;
   prUrl?: string;
   actionableReviewComments?: ReviewCommentSummary[];
   addressedReviewComments?: number;
