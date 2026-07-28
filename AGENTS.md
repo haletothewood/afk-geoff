@@ -35,3 +35,17 @@ Software craftsmanship standards are centralized in `CRAFTSMANSHIP.md`.
 ## Verification
 - Run build/test/lint commands relevant to the touched code.
 - If checks are skipped, state what was skipped and why.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the repository's five canonical triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context domain layout. See `docs/agents/domain.md`.
