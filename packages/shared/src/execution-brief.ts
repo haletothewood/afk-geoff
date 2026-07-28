@@ -1,4 +1,5 @@
 import type { ExecutionBrief } from "@afk-geoff/core";
+import { normalizeVerificationCommands } from "./verification-command.js";
 
 export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
   const sections = parseMarkdownSections(source);
@@ -7,7 +8,7 @@ export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
   const workItemBody = getRequiredSection(sections, "Work Item Body");
   const acceptanceCriteria = parseBulletList(getRequiredSection(sections, "Acceptance Criteria"));
   const verification = sections.get("verification")
-    ? parseBulletList(sections.get("verification") ?? "", { stripMarkdownCode: true })
+    ? normalizeVerificationCommands(parseBulletList(sections.get("verification") ?? ""))
     : [];
   const issueUrl = sections.get("github issue");
 
@@ -81,20 +82,11 @@ function getRequiredSection(sections: Map<string, string>, heading: string): str
   return value;
 }
 
-function parseBulletList(source: string, options: { stripMarkdownCode?: boolean } = {}): string[] {
+function parseBulletList(source: string): string[] {
   return source
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
     .map((line) => line.slice(2).trim())
-    .map((line) => options.stripMarkdownCode ? stripMarkdownCodeFence(line) : line)
     .filter(Boolean);
-}
-
-function stripMarkdownCodeFence(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.startsWith("`") && trimmed.endsWith("`") && trimmed.length >= 2) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
 }

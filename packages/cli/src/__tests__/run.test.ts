@@ -119,6 +119,38 @@ describe("afk CLI — run command", () => {
     expect(output).toContain(`Work item ${items[0]!.id}`);
   });
 
+  it("Given an ambiguous verification alternative, when run file is used, then it is rejected before tracked state or a worker run is created", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "brief.md"),
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Add file-backed execution",
+        "",
+        "## Work Item Body",
+        "Implement direct execution from a hand-written brief file.",
+        "",
+        "## Acceptance Criteria",
+        "- The runner can import a local brief file",
+        "",
+        "## Verification",
+        "- `npm install` or `pnpm install`"
+      ].join("\n")
+    );
+
+    await expect(fixture.cli(["run", "file", "brief.md"])).rejects.toThrow(
+      "Verification command must be one explicit shell command"
+    );
+
+    expect(await fixture.store.listRequirements()).toEqual([]);
+    expect(await fixture.store.listRuns()).toEqual([]);
+  });
+
   it("Given the smoke runner profile, when run file is used, then it completes without agent credentials", async () => {
     const fixture = await createFixture(tempDir, { writeWorktreeChange: false });
     await fixture.cli(["init", "--runner-profile", "smoke"]);

@@ -111,4 +111,17 @@ describe("parseExecutionBriefMarkdown — execution mode fields", () => {
       "pnpm run typecheck"
     ]);
   });
+
+  it("rejects natural-language alternatives instead of treating them as a shell command", () => {
+    const brief = [
+      BASE_BRIEF,
+      "",
+      "## Verification",
+      "- `npm install` or `pnpm install`"
+    ].join("\n");
+
+    expect(() => parseExecutionBriefMarkdown(brief)).toThrow(
+      "Verification command must be one explicit shell command"
+    );
+  });
 });

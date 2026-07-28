@@ -138,7 +138,13 @@ Treat a run as publishable only when:
 - there is a committed diff against the base branch
 - the worktree is clean
 
-If wrapper verification fails, AFK feeds the failure into the fix loop even when the reviewer returns `PASS`. If the loop cannot clear the issue, AFK should report a blocked or failed terminal state rather than a publishable success.
+Each failed wrapper-verification command records a `failureCategory`:
+
+- `product`: a valid check found a product defect; AFK may feed it into the fix loop even when the reviewer returns `PASS`
+- `verification`: the verification contract or shell command is malformed; AFK blocks without launching a fix worker
+- `environment`: a required command, module, permission, or runtime dependency is unavailable; AFK blocks without launching a fix worker
+
+Only product failures are actionable by a coding worker. Verification-contract and environment failures remain visible in `verificationSummaries`, `whyNotPublishable`, and the evidence packet, which recommends correcting the contract or environment before retrying.
 
 ## Artifacts To Read
 
