@@ -668,7 +668,7 @@ describe("afk CLI — run command", () => {
             workItemTitle: "Run from issue",
             workItemBody: "Execute a hand-authored GitHub issue body.",
             acceptanceCriteria: ["The runner can import a GitHub issue body"],
-            verification: ["node -e \"process.exit(0)\""],
+            verification: [{ command: "node -e \"process.exit(0)\"" }],
             issueUrl: "https://github.com/acme/demo/issues/42"
           };
         }

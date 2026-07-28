@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizeVerificationCommand } from "./verification-command.js";
+import {
+  dedupeVerificationEntries,
+  normalizeVerificationEntries,
+  normalizeVerificationCommand,
+  verificationCommands
+} from "./verification-command.js";
 
 describe("normalizeVerificationCommand", () => {
   it("strips one Markdown code span from an explicit command", () => {
@@ -20,5 +25,29 @@ describe("normalizeVerificationCommand", () => {
     expect(() => normalizeVerificationCommand(command)).toThrow(
       "Verification command must be one explicit shell command"
     );
+  });
+});
+
+describe("structured verification entries", () => {
+  it("normalizes strings and entries to one domain shape", () => {
+    const entries = normalizeVerificationEntries([
+      "`pnpm typecheck`",
+      { command: "pnpm test" }
+    ]);
+
+    expect(entries).toEqual([
+      { command: "pnpm typecheck" },
+      { command: "pnpm test" }
+    ]);
+    expect(verificationCommands(entries)).toEqual(["pnpm typecheck", "pnpm test"]);
+  });
+
+  it("deduplicates entries by normalized command", () => {
+    const entries = normalizeVerificationEntries([
+      "`pnpm typecheck`",
+      { command: "pnpm typecheck" }
+    ]);
+
+    expect(dedupeVerificationEntries(entries)).toEqual([{ command: "pnpm typecheck" }]);
   });
 });

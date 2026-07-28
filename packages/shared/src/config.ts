@@ -10,6 +10,15 @@ export const executionBackendKindSchema = z.enum(["local-docker", "local-process
 export const runnerProfiles = ["claude", "codex", "smoke"] as const;
 export type RunnerProfile = typeof runnerProfiles[number];
 
+export const verificationEntrySchema = z
+  .union([
+    z.string().min(1),
+    z.object({ command: z.string().min(1) })
+  ])
+  .transform((entry) => ({
+    command: normalizeVerificationCommand(typeof entry === "string" ? entry : entry.command)
+  }));
+
 export const projectConfigSchema = z.object({
   version: z.literal(1),
   baseBranch: z.string().min(1).default("main"),
@@ -42,7 +51,7 @@ export const projectConfigSchema = z.object({
     image: z.string().min(1),
     dockerfilePath: z.string().min(1).optional()
   }),
-  verification: z.array(z.string().min(1).transform(normalizeVerificationCommand)).default([]),
+  verification: z.array(verificationEntrySchema).default([]),
   timeouts: z
     .object({
       runTimeoutMs: z.number().int().positive().default(30 * 60 * 1000),
