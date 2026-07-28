@@ -157,6 +157,16 @@ runner:
 
 One repo can use Codex while another uses Claude or a custom agent. Within a repo, set `runner.reviewCommand` when you want review to use a different command from implementation.
 
+Verification checks in `.afk/config.yaml` accept the existing string form and a structured form:
+
+```yaml
+verification:
+  - pnpm typecheck
+  - command: pnpm test
+```
+
+Both forms normalize to the same verification entry before execution. The structured form is the extension point for future per-check policy; only `command` is currently supported.
+
 Turn GitHub back on in `.afk/config.yaml` when you want source issue comments or PR publishing:
 
 ```yaml

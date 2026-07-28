@@ -1,7 +1,25 @@
+import type { VerificationEntry } from "@afk-geoff/core";
+
 const MARKDOWN_ALTERNATIVE_PATTERN = /`[^`\n]+`\s+(?:or|and\/or)\s+`[^`\n]+`/i;
+
+export type VerificationEntryInput = string | VerificationEntry;
 
 export function normalizeVerificationCommands(commands: readonly string[]): string[] {
   return commands.map((command) => normalizeVerificationCommand(command));
+}
+
+export function normalizeVerificationEntries(entries: readonly VerificationEntryInput[]): VerificationEntry[] {
+  return entries.map((entry) => ({
+    command: normalizeVerificationCommand(typeof entry === "string" ? entry : entry.command)
+  }));
+}
+
+export function dedupeVerificationEntries(entries: readonly VerificationEntry[]): VerificationEntry[] {
+  return [...new Map(entries.map((entry) => [entry.command, entry])).values()];
+}
+
+export function verificationCommands(entries: readonly VerificationEntry[]): string[] {
+  return entries.map((entry) => entry.command);
 }
 
 export function normalizeVerificationCommand(value: string): string {

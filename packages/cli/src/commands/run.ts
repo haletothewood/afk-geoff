@@ -3,8 +3,17 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { GitHubIssueWorkSource } from "@afk-geoff/adapter-github";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
-import { createId, deriveTitle, normalizeVerificationCommands, resolvePackageManagerContract, slugify } from "@afk-geoff/shared";
-import type { ExecutionBackendResult, Requirement } from "@afk-geoff/core";
+import {
+  createId,
+  dedupeVerificationEntries,
+  deriveTitle,
+  normalizeVerificationEntries,
+  resolvePackageManagerContract,
+  slugify,
+  verificationCommands,
+  type VerificationEntryInput
+} from "@afk-geoff/shared";
+import type { ExecutionBackendResult, Requirement, VerificationEntry } from "@afk-geoff/core";
 import { buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
@@ -23,7 +32,7 @@ export async function runTrackedWorkItem(
   ctx: CliContext,
   workItemId: string,
   options: {
-    verification?: string[];
+    verification?: VerificationEntryInput[];
     issueUrl?: string;
     requirePullRequest?: boolean;
     executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
@@ -46,16 +55,14 @@ export async function runTrackedWorkItem(
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
-  const verification = [
-    ...new Set(
-      normalizeVerificationCommands([
-        ...ctx.config.verification,
-        ...(options.verification ?? []),
-        ...(detachedOptions.verification ?? [])
-      ])
-    )
-  ];
-  resolvePackageManagerContract(ctx.repoRoot, verification);
+  const verification = dedupeVerificationEntries(
+    normalizeVerificationEntries([
+      ...ctx.config.verification,
+      ...(options.verification ?? []),
+      ...(detachedOptions.verification ?? [])
+    ])
+  );
+  resolvePackageManagerContract(ctx.repoRoot, verificationCommands(verification));
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   const sourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
   const executionModeConfig = options.executionModeConfig ?? detachedOptions.executionModeConfig;
@@ -365,7 +372,7 @@ export async function importExecutionBrief(
     workItemTitle: string;
     workItemBody: string;
     acceptanceCriteria: string[];
-    verification: string[];
+    verification: VerificationEntry[];
     issueUrl?: string;
   },
   options: {
@@ -423,7 +430,7 @@ async function runImportedExecutionBrief(
     workItemTitle: string;
     workItemBody: string;
     acceptanceCriteria: string[];
-    verification: string[];
+    verification: VerificationEntry[];
     issueUrl?: string;
     executionMode?: string;
     overlays?: string[];
@@ -449,7 +456,7 @@ async function runImportedExecutionBrief(
     : undefined;
 
   const runOptions: {
-    verification?: string[];
+    verification?: VerificationEntryInput[];
     issueUrl?: string;
     requirePullRequest?: boolean;
     executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
@@ -505,7 +512,7 @@ export async function runWorkItemDetached(
     throw new Error(`Work item ${workItemId} is not runnable (current status: ${workItem.status}).`);
   }
 
-  const verification = normalizeVerificationCommands(options.verification ?? []);
+  const verification = dedupeVerificationEntries(normalizeVerificationEntries(options.verification ?? []));
   const runId = createId("run");
   const branchName = branchNameForWorkItem(workItem.title);
   const worktreePath = path.join(ctx.paths.worktreesDir, runId);
@@ -690,7 +697,7 @@ function consumeDetachedRunOptionsFromEnv(): DetachedRunOptions {
     const maybeModeConfig = (parsed as { executionModeConfig?: unknown }).executionModeConfig;
 
     const verification = Array.isArray(maybeVerification)
-      ? maybeVerification.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      ? maybeVerification.filter(isVerificationEntryInput)
       : [];
     const issueUrl = typeof maybeIssueUrl === "string" && maybeIssueUrl.trim().length > 0 ? maybeIssueUrl : undefined;
     const executionModeConfig =
@@ -706,6 +713,17 @@ function consumeDetachedRunOptionsFromEnv(): DetachedRunOptions {
   } catch {
     return {};
   }
+}
+
+function isVerificationEntryInput(value: unknown): value is VerificationEntryInput {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const command = (value as { command?: unknown }).command;
+  return typeof command === "string" && command.trim().length > 0;
 }
 
 function spawnDetachedProcess(argv: string[], env: NodeJS.ProcessEnv, cwd: string): { pid: number } {
