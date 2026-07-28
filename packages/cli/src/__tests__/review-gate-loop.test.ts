@@ -255,7 +255,7 @@ if (prompt.includes("# Issues to fix")) {
   // -----------------------------------------------------------------------
   // Verification failure is not ignored
   // -----------------------------------------------------------------------
-  it("verification failure: failed verification forces fix iterations and blocks if it never passes", async () => {
+  it("verification failure: the same failure on an unchanged commit stops after one fix attempt", async () => {
     const fixture = await createFixture(tempDir);
     // Add a failing verification command to the config after fixture setup.
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
@@ -274,7 +274,7 @@ if (prompt.includes("# Issues to fix")) {
 
     const [run] = await fixture.store.listRuns();
     expect(run).toBeDefined();
-    expect(run?.summary).toBe("Iteration cap (4) reached with failing verification");
+    expect(run?.summary).toContain("Repeated verification failure");
 
     // The review prompt must include the verification results section.
     const reviewPromptPath = path.join(run!.runDir, "review-prompt-1.md");
@@ -287,12 +287,30 @@ if (prompt.includes("# Issues to fix")) {
       status: string;
       publishable: boolean;
       whyNotPublishable: string[];
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      repeatedFailure: {
+        kind: string;
+        firstIteration: number;
+        repeatedIteration: number;
+        unchangedHead: string;
+      };
     };
     expect(finalResult.status).toBe("blocked");
     expect(finalResult.publishable).toBe(false);
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work", "fix"]);
+    expect(finalResult.reviewResults).toHaveLength(1);
+    expect(finalResult.repeatedFailure).toEqual(
+      expect.objectContaining({
+        kind: "verification",
+        firstIteration: 1,
+        repeatedIteration: 2
+      })
+    );
     expect(finalResult.whyNotPublishable).toEqual(
       expect.arrayContaining(['Product verification failed: node -e "process.exit(1)" (exit 1)'])
     );
+    expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-3.md"))).toBe(false);
   });
 
   it("environment verification failure: a missing tool blocks after one worker without launching a fix worker", async () => {
@@ -449,6 +467,48 @@ if (prompt.includes("# Issues to fix")) {
     const [run] = await fixture.store.listRuns();
     expect(run?.status).toBe("completed"); // blocked runs use "completed" status in the run record
     expect(run?.summary).toContain("cap");
+  });
+
+  it("repeated review failure: the same issues on an unchanged commit stop before the iteration cap", async () => {
+    const fixture = await createFixture(tempDir);
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["The queue processor still drops retries"] },
+      { verdict: "ISSUES", issues: ["The queue processor still drops retries"] },
+      { verdict: "PASS" }
+    ]);
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      summary: string;
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      repeatedFailure: {
+        kind: string;
+        firstIteration: number;
+        repeatedIteration: number;
+      };
+    };
+
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.summary).toContain("Repeated review failure");
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work", "fix"]);
+    expect(finalResult.reviewResults).toHaveLength(2);
+    expect(finalResult.repeatedFailure).toEqual(
+      expect.objectContaining({
+        kind: "review",
+        firstIteration: 1,
+        repeatedIteration: 2
+      })
+    );
+    expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-3.md"))).toBe(false);
   });
 
   // -----------------------------------------------------------------------

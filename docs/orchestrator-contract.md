@@ -146,6 +146,8 @@ Each failed wrapper-verification command records a `failureCategory`:
 
 Only product failures are actionable by a coding worker. Verification-contract and environment failures remain visible in `verificationSummaries`, `whyNotPublishable`, and the evidence packet, which recommends correcting the contract or environment before retrying.
 
+AFK fingerprints product-verification failures and reviewer issue sets. If the same fingerprint recurs on the same Git commit after a fix attempt, AFK stops before consuming another worker iteration. The terminal `final-result.json` includes `repeatedFailure` with the failure kind, fingerprint, first and repeated iterations, and unchanged commit SHA.
+
 ## Artifacts To Read
 
 The orchestrator can use returned paths instead of guessing locations.
