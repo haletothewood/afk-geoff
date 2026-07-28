@@ -1188,7 +1188,7 @@ interface WorktreeStatusSummary {
   shortStatus: string;
 }
 
-interface PackageManagerResolution {
+export interface PackageManagerResolution {
   shellPrelude?: string;
   warning?: string;
 }
@@ -1666,7 +1666,7 @@ async function getGitHead(worktreePath: string): Promise<string> {
   return stdout.trim();
 }
 
-async function resolvePackageManager(cwd: string): Promise<PackageManagerResolution> {
+export async function resolvePackageManager(cwd: string): Promise<PackageManagerResolution> {
   const packageJsonPath = path.join(cwd, "package.json");
   if (!fs.existsSync(packageJsonPath)) {
     return {};
@@ -1707,7 +1707,7 @@ async function getPathPnpmVersion(cwd: string): Promise<string | undefined> {
   }
 }
 
-async function runVerificationCommands(commands: string[], cwd: string, packageManager: PackageManagerResolution): Promise<VerificationCommandResult[]> {
+export async function runVerificationCommands(commands: string[], cwd: string, packageManager: PackageManagerResolution): Promise<VerificationCommandResult[]> {
   const results: VerificationCommandResult[] = [];
 
   for (const cmd of commands) {
