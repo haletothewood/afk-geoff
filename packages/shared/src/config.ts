@@ -4,7 +4,7 @@ import YAML from "yaml";
 import { z } from "zod";
 import { CONFIG_FILE, DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH, PROJECT_DIR, RUNS_DIR, STATE_DB, WORKTREES_DIR, defaultProjectConfig } from "./defaults.js";
 
-export const runnerKindSchema = z.enum(["claude", "codex"]);
+export const runnerKindSchema = z.enum(["claude", "codex", "custom"]);
 export const executionBackendKindSchema = z.enum(["local-docker", "local-process"]);
 export const runnerProfiles = ["claude", "codex", "smoke"] as const;
 export type RunnerProfile = typeof runnerProfiles[number];

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { runCli } from "../dist/index.js";
+import { runCli } from "../dist/bundle/index.js";
 
 process.env.AFK_CWD = process.cwd();
 

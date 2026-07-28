@@ -34,6 +34,12 @@ If `afk` is not on `PATH`, use this checkout directly:
 afk() { /opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" "$@"; }
 ```
 
+For a one-off installed CLI in a target repo, use:
+
+```bash
+pnpm dlx afk-geoff --help
+```
+
 Then run:
 
 ```bash
@@ -81,6 +87,18 @@ git commit -m "configure afk smoke runner"
 ```
 
 Local runner profiles use the host CLI authentication that already exists on the machine. They do not require API key environment variables by default.
+
+For another agent CLI, configure a custom command in `.afk/config.yaml`:
+
+```yaml
+runner:
+  kind: custom
+  command: ["other-agent", "run", "{prompt}"]
+  reviewCommand: ["other-agent", "review", "{prompt}"]
+  requiredEnv: []
+```
+
+AFK supplies the prompt path through `{prompt}`. Use `runner.reviewCommand` when implementation and review should use different agents, such as Claude for work and Codex for review.
 
 ## 3. Create A Brief
 

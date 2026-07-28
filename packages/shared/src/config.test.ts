@@ -129,4 +129,17 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(profiled.github.enabled).toBe(false);
     expect(profiled.execution.backend).toBe("local-process");
   });
+
+  it("parses custom command runners for other agent CLIs", () => {
+    const config = projectConfigSchema.parse(baseConfig({
+      kind: "custom",
+      command: ["opencode", "run", "{prompt}"],
+      reviewCommand: ["other-agent-review", "{prompt}"],
+      requiredEnv: []
+    }));
+
+    expect(config.runner.kind).toBe("custom");
+    expect(config.runner.command).toEqual(["opencode", "run", "{prompt}"]);
+    expect(config.runner.reviewCommand).toEqual(["other-agent-review", "{prompt}"]);
+  });
 });

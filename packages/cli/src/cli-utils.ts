@@ -51,7 +51,11 @@ export function describeRunnerModel(ctx: CliContext): string {
     return modelLabel ? `Claude CLI (model: ${modelLabel})` : "Claude CLI default (no explicit model configured)";
   }
 
-  return modelLabel ? `Codex CLI (model: ${modelLabel})` : "Codex CLI default (no explicit model configured)";
+  if (ctx.runner.kind === "codex") {
+    return modelLabel ? `Codex CLI (model: ${modelLabel})` : "Codex CLI default (no explicit model configured)";
+  }
+
+  return "Custom command runner";
 }
 
 export function printLinesOrNone(lines: string[]): void {

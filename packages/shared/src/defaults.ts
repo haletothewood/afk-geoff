@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProjectConfig } from "./config.js";
@@ -9,14 +10,17 @@ export const RUNS_DIR = "runs";
 export const WORKTREES_DIR = "worktrees";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_DOCKERFILE_PATH = path.resolve(
-  moduleDir,
-  "../../../packages/shared/src/templates/default.Dockerfile"
-);
-export const DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH = path.resolve(
-  moduleDir,
-  "../../../packages/shared/src/templates/afk-run.workflow.yml"
-);
+export const DEFAULT_DOCKERFILE_PATH = resolveTemplatePath("default.Dockerfile");
+export const DEFAULT_GITHUB_ACTIONS_WORKFLOW_PATH = resolveTemplatePath("afk-run.workflow.yml");
+
+function resolveTemplatePath(filename: string): string {
+  const candidates = [
+    path.resolve(moduleDir, "../templates", filename),
+    path.resolve(moduleDir, "../../../packages/shared/src/templates", filename)
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]!;
+}
 
 export function defaultProjectConfig(): ProjectConfig {
   return {

@@ -74,6 +74,7 @@ Why fifth:
 - PR follow-up branch reuse, same-PR push, structured actionable review comment details, and verification reporting
 - more consistent JSON envelopes for status and GitHub Actions remote commands
 - production package build surface with compiled exports, declaration files, Node engine metadata, and a packable CLI tarball
+- single-package `afk-geoff` CLI distribution with bundled internal packages, package smoke test, and custom command runner support
 
 ## P0
 

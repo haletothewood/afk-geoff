@@ -1,5 +1,5 @@
 {
-  "name": "@afk-geoff/cli",
+  "name": "afk-geoff",
   "version": "0.1.0",
   "type": "module",
   "engines": {
@@ -8,30 +8,23 @@
   "bin": {
     "afk": "./bin/afk.js"
   },
-  "main": "./dist/index.js",
-  "exports": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/bundle/index.js",
+  "exports": "./dist/bundle/index.js",
+  "types": "./dist/bundle/index.d.ts",
   "files": [
     "bin",
-    "dist",
-    "!dist/tsconfig.tsbuildinfo"
+    "dist/bundle",
+    "dist/templates"
   ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node ../../scripts/build-cli-bundle.mjs",
     "prepack": "pnpm build"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@afk-geoff/adapter-github": "workspace:*",
-    "@afk-geoff/adapter-local-git": "workspace:*",
-    "@afk-geoff/adapter-sqlite": "workspace:*",
-    "@afk-geoff/core": "workspace:*",
-    "@afk-geoff/runner-claude": "workspace:*",
-    "@afk-geoff/runner-codex": "workspace:*",
-    "@afk-geoff/runtime-docker": "workspace:*",
-    "@afk-geoff/shared": "workspace:*",
+    "better-sqlite3": "^12.4.1",
     "commander": "^14.0.1"
   }
 }

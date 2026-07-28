@@ -1,4 +1,4 @@
-export type RunnerKind = "claude" | "codex";
+export type RunnerKind = "claude" | "codex" | "custom";
 export type WorkItemType = "afk" | "hitl";
 export type WorkItemStatus = "draft" | "todo" | "blocked" | "in_progress" | "hitl_pending" | "done" | "failed";
 export type RequirementStatus = "captured" | "planned" | "approved" | "completed";

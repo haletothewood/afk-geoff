@@ -54,6 +54,22 @@ flowchart LR
 
 ## Quick Start
 
+Install and register AFK in a target repository:
+
+```bash
+pnpm dlx afk-geoff init --runner-profile codex
+pnpm dlx afk-geoff doctor
+```
+
+For a repo-local dev dependency:
+
+```bash
+pnpm add -D afk-geoff
+pnpm afk init --runner-profile codex
+```
+
+For this checkout:
+
 ```bash
 git init -b main
 corepack pnpm install
@@ -68,15 +84,16 @@ you actually run.
 
 ## Package Build
 
-The root workspace is private, but each `packages/*` project is publishable. Packages build to `dist/`, expose declaration files, and the CLI bin runs the compiled entry point.
+The root workspace is private. The published package is `afk-geoff`, which bundles AFK's internal workspace packages into the CLI and keeps native/runtime dependencies as normal package dependencies.
 
 ```bash
 pnpm build
 node packages/cli/bin/afk.js --help
 pnpm pack:cli
+pnpm test:package
 ```
 
-`pnpm pack:cli` builds the workspace and produces an installable `@afk-geoff/cli` tarball whose internal workspace dependencies are rewritten to the package version.
+`pnpm pack:cli` builds the workspace and produces an installable `afk-geoff` tarball. `pnpm test:package` installs that tarball into a temporary project and verifies `afk --help` plus `afk init --runner-profile smoke`.
 
 This creates:
 
@@ -119,6 +136,26 @@ pnpm afk run file brief.md --json
 ```
 
 Local runner profiles set `execution.backend: local-process` and `github.enabled: false`, so `doctor` can pass in a plain local repo without Docker, an `origin` remote, or a GitHub token. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`, but they do not require API key environment variables by default. That lets AFK use whichever local account/session the CLI already knows about.
+
+AFK is not tied to one agent. Each repository can choose:
+
+- `afk init --runner-profile claude` for Claude CLI
+- `afk init --runner-profile codex` for Codex CLI
+- `afk init --runner-profile smoke` for a deterministic no-key smoke runner
+- `runner.kind: custom` with `runner.command` and optional `runner.reviewCommand` in `.afk/config.yaml` for another CLI agent that accepts AFK's prompt path
+
+Example custom command config:
+
+```yaml
+runner:
+  kind: custom
+  command: ["other-agent", "run", "{prompt}"]
+  reviewCommand: ["other-agent", "review", "{prompt}"]
+  requiredEnv: []
+  envAllowlist: ["GH_TOKEN"]
+```
+
+One repo can use Codex while another uses Claude or a custom agent. Within a repo, set `runner.reviewCommand` when you want review to use a different command from implementation.
 
 Turn GitHub back on in `.afk/config.yaml` when you want source issue comments or PR publishing:
 

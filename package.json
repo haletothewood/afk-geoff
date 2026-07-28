@@ -1,5 +1,5 @@
 {
-  "name": "afk-geoff",
+  "name": "afk-geoff-workspace",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,19 +11,21 @@
   "packageManager": "pnpm@10.20.0",
   "scripts": {
     "afk": "node --import tsx ./packages/cli/src/index.ts",
-    "build": "tsc --build tsconfig.build.json",
+    "build": "tsc --build tsconfig.build.json && node scripts/build-cli-bundle.mjs",
     "clean": "tsc --build tsconfig.build.json --clean",
-    "pack:cli": "pnpm build && pnpm --filter @afk-geoff/cli pack --pack-destination \"$PWD/dist-pack\"",
+    "pack:cli": "pnpm build && pnpm --filter afk-geoff pack --pack-destination \"$PWD/dist-pack\"",
+    "test:package": "pnpm pack:cli && node scripts/package-smoke.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "test:developer-workflow": "node --import tsx ./scripts/developer-workflow-smoke.ts"
   },
   "dependencies": {
-    "@afk-geoff/cli": "workspace:*"
+    "afk-geoff": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.18.7",
     "@types/better-sqlite3": "^7.6.13",
+    "esbuild": "^0.27.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",

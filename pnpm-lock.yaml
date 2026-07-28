@@ -8,7 +8,7 @@ importers:
 
   .:
     dependencies:
-      '@afk-geoff/cli':
+      afk-geoff:
         specifier: workspace:*
         version: link:packages/cli
     devDependencies:
@@ -18,6 +18,9 @@ importers:
       '@types/node':
         specifier: ^22.18.7
         version: 22.19.15
+      esbuild:
+        specifier: ^0.27.4
+        version: 0.27.4
       tsx:
         specifier: ^4.20.5
         version: 4.21.0
@@ -63,30 +66,9 @@ importers:
 
   packages/cli:
     dependencies:
-      '@afk-geoff/adapter-github':
-        specifier: workspace:*
-        version: link:../adapter-github
-      '@afk-geoff/adapter-local-git':
-        specifier: workspace:*
-        version: link:../adapter-local-git
-      '@afk-geoff/adapter-sqlite':
-        specifier: workspace:*
-        version: link:../adapter-sqlite
-      '@afk-geoff/core':
-        specifier: workspace:*
-        version: link:../core
-      '@afk-geoff/runner-claude':
-        specifier: workspace:*
-        version: link:../runner-claude
-      '@afk-geoff/runner-codex':
-        specifier: workspace:*
-        version: link:../runner-codex
-      '@afk-geoff/runtime-docker':
-        specifier: workspace:*
-        version: link:../runtime-docker
-      '@afk-geoff/shared':
-        specifier: workspace:*
-        version: link:../shared
+      better-sqlite3:
+        specifier: ^12.4.1
+        version: 12.8.0
       commander:
         specifier: ^14.0.1
         version: 14.0.3
