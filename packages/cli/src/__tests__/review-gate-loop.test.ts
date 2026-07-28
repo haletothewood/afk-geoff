@@ -313,6 +313,113 @@ if (prompt.includes("# Issues to fix")) {
     expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-3.md"))).toBe(false);
   });
 
+  it("verification retry: a reviewed unchanged commit reruns verification without another agent iteration", async () => {
+    const fixture = await createFixture(tempDir);
+    const readinessMarker = path.join(tempDir, "verification-ready");
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = [
+      `node -e 'process.exit(require("fs").existsSync(${JSON.stringify(readinessMarker)}) ? 0 : 1)'`
+    ];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const promptModifiedAt = fs.statSync(path.join(run!.runDir, "prompt.md")).mtimeMs;
+    fs.writeFileSync(readinessMarker, "ready\n");
+
+    await fixture.cli(["retry", run!.id, "--stage", "verification"]);
+
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      verificationSummaries: Array<{ recovery?: boolean }>;
+      recovery: { reusedStages: string[]; retriedStages: string[] };
+      evidencePacket: {
+        verification: { status: string };
+        recovery: { reusedStages: string[]; retriedStages: string[] };
+      };
+    };
+
+    expect(await fixture.store.listRuns()).toHaveLength(1);
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("done");
+    expect(finalResult.status).toBe("done");
+    expect(finalResult.publishable).toBe(true);
+    expect(finalResult.workerResults.map((result) => result.phase)).toEqual(["work", "fix"]);
+    expect(finalResult.reviewResults).toHaveLength(1);
+    expect(finalResult.verificationSummaries.at(-1)?.recovery).toBe(true);
+    expect(finalResult.recovery).toEqual(
+      expect.objectContaining({
+        reusedStages: ["work", "review"],
+        retriedStages: ["verification"]
+      })
+    );
+    expect(finalResult.evidencePacket.verification.status).toBe("passed");
+    expect(finalResult.evidencePacket.recovery).toEqual(finalResult.recovery);
+    expect(fs.statSync(path.join(run!.runDir, "prompt.md")).mtimeMs).toBe(promptModifiedAt);
+    expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-3.md"))).toBe(false);
+
+    const inspectOutput = await captureConsole(async () => {
+      await fixture.cli(["inspect", run!.id, "--json"]);
+    });
+    const inspection = JSON.parse(inspectOutput.trim()) as {
+      derived: { verificationStatus: string; publishable: boolean };
+      evidencePacket: { recovery: { retriedStages: string[] } };
+    };
+    expect(inspection.derived.verificationStatus).toBe("passed");
+    expect(inspection.derived.publishable).toBe(true);
+    expect(inspection.evidencePacket.recovery.retriedStages).toEqual(["verification"]);
+
+    const handoffOutput = await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    });
+    const handoff = JSON.parse(handoffOutput.trim()) as {
+      verificationStatus: string;
+      recommendedAction: string;
+      evidencePacket: { recovery: { reusedStages: string[] } };
+    };
+    expect(handoff.verificationStatus).toBe("passed");
+    expect(handoff.recommendedAction).toBe("publish");
+    expect(handoff.evidencePacket.recovery.reusedStages).toEqual(["work", "review"]);
+  });
+
+  it("verification retry safety: a commit added after review invalidates reusable evidence", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = ['node -e "process.exit(1)"'];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    fs.writeFileSync(path.join(run!.worktreePath!, "manual-change.txt"), "changed after review\n");
+    execFileSync("git", ["add", "manual-change.txt"], { cwd: run!.worktreePath! });
+    execFileSync("git", ["commit", "-m", "manual change after review"], { cwd: run!.worktreePath! });
+
+    await expect(
+      fixture.cli(["retry", run!.id, "--stage", "verification"])
+    ).rejects.toThrow("worktree HEAD changed after review");
+
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      recovery?: unknown;
+    };
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.recovery).toBeUndefined();
+  });
+
   it("environment verification failure: a missing tool blocks after one worker without launching a fix worker", async () => {
     const fixture = await createFixture(tempDir);
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");

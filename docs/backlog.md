@@ -102,15 +102,15 @@ Scope:
 - next: propagate orchestrator and publishing failure categories through every terminal artifact
 - done: fingerprint repeated product-verification and review failures and stop when the same failure recurs on an unchanged commit
 - done: resume from existing reviewed commits and evidence when retrying a failed publishing/finalization stage
-- next: add an explicit verification-only retry path for reviewed commits
+- done: add an explicit verification-only retry path for reviewed, unchanged commits
 - done: expose verification failure classification in `final-result.json` and its evidence packet
-- done: expose reused evidence and retried publishing stages in `final-result.json`, inspect, and handoff evidence
+- done: expose reused evidence and retried verification or publishing stages in `final-result.json`, inspect, and handoff evidence
 - done: add regression coverage proving ambiguous commands are rejected without tracked state or a worker run
 - done: add regression coverage for product, verification-contract, and environment verification routing
 - done: add regression coverage for repeated verification and review failure loops
 - done: add regression coverage proving a publishing retry does not repeat worker, verification, or review stages
 - done: add regression coverage for lockfile-aware package-manager selection
-- next: add regression coverage for verification-only retries
+- done: add regression coverage for verification-only retries and invalidated review evidence
 
 Success criteria:
 - malformed verification is rejected before it consumes a worker iteration

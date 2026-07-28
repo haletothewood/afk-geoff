@@ -89,7 +89,9 @@ function deriveInspection(
 ): RunInspection["derived"] {
   const reviewResults = getArray<Record<string, unknown>>(finalResult?.reviewResults);
   const verificationSummaries = getArray<Record<string, unknown>>(finalResult?.verificationSummaries);
-  const verificationResults = verificationSummaries.flatMap((summary) => getArray<Record<string, unknown>>(summary.results));
+  const verificationResults = verificationSummaries.length > 0
+    ? getArray<Record<string, unknown>>(verificationSummaries.at(-1)?.results)
+    : [];
   const commits = getArray<Record<string, unknown>>(finalResult?.commits);
   const worktreeStatus = isObject(finalResult?.worktreeStatus) ? finalResult.worktreeStatus : undefined;
   const whyNotPublishable = getStringArray(finalResult?.whyNotPublishable);

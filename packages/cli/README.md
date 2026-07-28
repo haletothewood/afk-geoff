@@ -52,6 +52,14 @@ pnpm dlx afk-geoff watch <run-id> --json
 pnpm dlx afk-geoff handoff <run-id> --json
 ```
 
+If verification repeatedly failed on a reviewed, unchanged commit because of an external condition, correct that condition and retry only verification:
+
+```bash
+pnpm dlx afk-geoff retry <run-id> --stage verification --json
+```
+
+AFK refuses this recovery if the reviewed commit changed or the worktree is dirty.
+
 Use `--pr` on the run command when the result should be published as a pull request.
 
 For a repo-local installation:

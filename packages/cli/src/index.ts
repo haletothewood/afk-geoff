@@ -12,6 +12,7 @@ import { showEntity } from "./commands/show.js";
 import { listRunRecords, printRuns } from "./commands/runs.js";
 import { inspectRun, printRunInspection } from "./commands/inspect.js";
 import { getRunHandoff, printRunHandoff } from "./commands/handoff.js";
+import { retryRunVerification } from "./commands/retry.js";
 import { printRunLogs } from "./commands/logs.js";
 import { watchRun } from "./commands/watch.js";
 import {
@@ -217,6 +218,35 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .action(async (runId: string) => {
       const ctx = await openContext(commandCwd, dependencies);
       await printRunLogs(ctx, runId);
+    });
+
+  program
+    .command("retry")
+    .argument("<runId>", "Terminal run id")
+    .addOption(new Option("--stage <stage>", "Recovery stage").choices(["verification"]).default("verification"))
+    .option("--json", "Print machine-readable JSON")
+    .action(async (runId: string, options: { stage: "verification"; json?: boolean }) => {
+      const ctx = await openContext(commandCwd, dependencies);
+      const retryAction = async () => {
+        await autoSync(ctx);
+        return await retryRunVerification(ctx, runId);
+      };
+      if (options.json) {
+        try {
+          const outcome = await runForJson(retryAction);
+          printJson({ command: "retry", ok: true, backend: ctx.executionBackendKind, stage: options.stage, ...outcome });
+        } catch (error) {
+          printJson({ command: "retry", ok: false, backend: ctx.executionBackendKind, stage: options.stage, runId, error: { message: formatErrorMessage(error) } });
+          throw error;
+        }
+      } else {
+        const outcome = await retryAction();
+        console.log(`Run ${outcome.runId} verification retry ${outcome.verification.status}`);
+        console.log(`Reused stages: ${outcome.reusedStages.join(", ")}`);
+        console.log(`Retried stages: ${outcome.retriedStages.join(", ")}`);
+        console.log(`Publishable: ${outcome.publishable}`);
+        console.log(`Final result: ${outcome.finalResultPath}`);
+      }
     });
 
   program

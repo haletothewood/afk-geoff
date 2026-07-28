@@ -152,6 +152,14 @@ AFK fingerprints product-verification failures and reviewer issue sets. If the s
 
 If implementation, verification, and review completed successfully but PR publishing failed, rerunning the failed work item with `--pr` reuses those completed stages and retries publishing against the same branch and worktree. The run's `recovery` object, also included in the evidence packet returned by inspect and handoff, lists `reusedStages`, `retriedStages`, the source run, and recovery time.
 
+For a repeated verification failure on an unchanged commit with a reusable `PASS` review, use:
+
+```bash
+afk retry <runId> --stage verification --json
+```
+
+AFK reruns the recorded verification commands without launching a worker or reviewer. It refuses recovery if the worktree is dirty or its `HEAD` differs from the reviewed commit. A successful retry updates the authoritative final result and evidence packet, marks verification passed, and recommends publishing.
+
 ## Artifacts To Read
 
 The orchestrator can use returned paths instead of guessing locations.
