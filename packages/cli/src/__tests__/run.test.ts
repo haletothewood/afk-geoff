@@ -151,6 +151,24 @@ describe("afk CLI — run command", () => {
     expect(await fixture.store.listRuns()).toEqual([]);
   });
 
+  it("Given conflicting package-manager lockfiles, when run is requested, then admission rejects it before creating a run", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    fs.writeFileSync(path.join(fixture.repoDir, "package-lock.json"), "{}\n");
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow(
+      /Package manager conflict: .*secondary lockfiles/
+    );
+
+    expect(await fixture.store.listRuns()).toEqual([]);
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("todo");
+  });
+
   it("Given the smoke runner profile, when run file is used, then it completes without agent credentials", async () => {
     const fixture = await createFixture(tempDir, { writeWorktreeChange: false });
     await fixture.cli(["init", "--runner-profile", "smoke"]);

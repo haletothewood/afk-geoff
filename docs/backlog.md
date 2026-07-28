@@ -96,7 +96,7 @@ Scope:
 - done: normalize and validate verification entries from project config, execution briefs, and run options before starting a worker
 - done: reject alternatives such as npm versus pnpm with an actionable admission error; never execute natural-language connectives as shell syntax
 - next: replace raw command arrays with structured verification entries where richer policies are needed
-- select one package manager from the brief, `packageManager` metadata, and existing lockfiles, and reject accidental secondary lockfiles
+- done: select one package manager from `packageManager` metadata, existing lockfiles, and verification commands, and reject accidental secondary lockfiles
 - done: classify verification outcomes as product, verification-contract, or environment failures
 - done: route only product verification failures to a coding worker; block verification-contract and environment failures before review/fix
 - next: propagate orchestrator and publishing failure categories through every terminal artifact
@@ -109,7 +109,8 @@ Scope:
 - done: add regression coverage for product, verification-contract, and environment verification routing
 - done: add regression coverage for repeated verification and review failure loops
 - done: add regression coverage proving a publishing retry does not repeat worker, verification, or review stages
-- next: add regression coverage for lockfile-aware package-manager selection and verification-only retries
+- done: add regression coverage for lockfile-aware package-manager selection
+- next: add regression coverage for verification-only retries
 
 Success criteria:
 - malformed verification is rejected before it consumes a worker iteration

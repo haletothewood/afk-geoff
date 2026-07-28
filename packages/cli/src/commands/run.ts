@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { GitHubIssueWorkSource } from "@afk-geoff/adapter-github";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
-import { createId, deriveTitle, normalizeVerificationCommands, slugify } from "@afk-geoff/shared";
+import { createId, deriveTitle, normalizeVerificationCommands, resolvePackageManagerContract, slugify } from "@afk-geoff/shared";
 import type { ExecutionBackendResult, Requirement } from "@afk-geoff/core";
 import { buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
@@ -55,6 +55,7 @@ export async function runTrackedWorkItem(
       ])
     )
   ];
+  resolvePackageManagerContract(ctx.repoRoot, verification);
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   const sourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
   const executionModeConfig = options.executionModeConfig ?? detachedOptions.executionModeConfig;
