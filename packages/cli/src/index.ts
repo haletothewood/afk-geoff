@@ -91,17 +91,53 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program.command("doctor")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { json?: boolean }) => {
-    const ctx = await openContext(commandCwd, dependencies);
-    if (options.json) {
-      const report = await runForJson(async () => await getDoctorReport(ctx));
-      printJson({ command: "doctor", backend: ctx.executionBackendKind, ...report });
-      if (!report.ok) {
-        throw new Error(`Doctor checks failed (${report.failures.length} issue${report.failures.length === 1 ? "" : "s"})`);
+      if (options.json) {
+        let ctx;
+        try {
+          ctx = await openContext(commandCwd, dependencies);
+        } catch (error) {
+          const message = formatErrorMessage(error);
+          printJson({
+            command: "doctor",
+            ok: false,
+            backend: null,
+            checks: [],
+            failures: [message],
+            error: { message }
+          });
+          throw error;
+        }
+        let report: Awaited<ReturnType<typeof getDoctorReport>>;
+        try {
+          report = await runForJson(async () => await getDoctorReport(ctx));
+        } catch (error) {
+          const message = formatErrorMessage(error);
+          printJson({
+            command: "doctor",
+            ok: false,
+            backend: ctx.executionBackendKind,
+            checks: [],
+            failures: [message],
+            error: { message }
+          });
+          throw error;
+        }
+        printJson({
+          command: "doctor",
+          backend: ctx.executionBackendKind,
+          ...report,
+          ...(!report.ok
+            ? { error: { message: `Doctor checks failed (${report.failures.length} issue${report.failures.length === 1 ? "" : "s"})` } }
+            : {})
+        });
+        if (!report.ok) {
+          throw new Error(`Doctor checks failed (${report.failures.length} issue${report.failures.length === 1 ? "" : "s"})`);
+        }
+      } else {
+        const ctx = await openContext(commandCwd, dependencies);
+        await runDoctor(ctx);
       }
-    } else {
-      await runDoctor(ctx);
-    }
-  });
+    });
 
   program
     .command("capture")
@@ -414,8 +450,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]))
     .action(async (target: string, value: string | undefined, options: { pr?: boolean; detach?: boolean; json?: boolean; backend?: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
-      const runAction = async () => {
+      const runAction = async (ctx: Awaited<ReturnType<typeof openContext>>) => {
         await autoSync(ctx);
         if (options.pr) assertPullRequestReady(ctx);
         assertRunTargetArguments(target, value);
@@ -438,12 +473,15 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       };
 
       if (options.json) {
+        let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
         try {
+          const openedContext = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
+          ctx = openedContext;
           const outcome = await runForJson(async () => await withRunEvents(async () => {
             emitRunEvent({ event: "run_requested", target, ...(value ? { value } : {}) });
-            return await runAction();
+            return await runAction(openedContext);
           }), { allowRunEvents: true });
-          printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome }, { compact: true });
+          printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: openedContext.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome }, { compact: true });
         } catch (error) {
           const terminalFailure = terminalFailureFromError(error);
           printJson({
@@ -452,7 +490,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
             ok: false,
             target,
             ...(value ? { value } : {}),
-            backend: ctx.executionBackendKind,
+            backend: ctx?.executionBackendKind ?? options.backend ?? null,
             requirePullRequest: options.pr ?? false,
             detached: options.detach ?? false,
             ...(terminalFailure ? { terminalFailure } : {}),
@@ -464,7 +502,8 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
-        const outcome = await runAction();
+        const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
+        const outcome = await runAction(ctx);
         printRunOutcome(outcome);
         if (outcome.prUrl) {
           console.log(`Opened PR: ${outcome.prUrl}`);

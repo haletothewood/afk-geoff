@@ -230,6 +230,8 @@ For the quick operational path, see [docs/agent-orchestrator-quickstart.md](docs
 
 For the full agent-facing protocol, see [docs/orchestrator-contract.md](docs/orchestrator-contract.md).
 
+For the frozen local `doctor --json` and `run --json` result envelopes, see [docs/local-execution-json-contract.md](docs/local-execution-json-contract.md).
+
 For a minimal parent-process implementation, see [examples/orchestrator](examples/orchestrator).
 
 Priority command contracts:
@@ -348,7 +350,8 @@ pnpm afk remote-download <github-actions-artifact-id> --json
 - SQLite remains the source of truth.
 - GitHub is a mirror and collaboration surface.
 - HITL work is not auto-dispatched.
-- `result.json` is the authoritative worker result.
+- `result.json` is the authoritative worker outcome.
+- `final-result.json` is the authoritative completed-run and publishability artifact.
 - Run artifacts are retained for debugging.
 
 ## Developer Docs

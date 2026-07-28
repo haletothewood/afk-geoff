@@ -6,6 +6,8 @@ The orchestrator chooses the work and observes the result. AFK Geoff performs th
 
 For the shortest operational path, start with [Agent Orchestrator Quickstart](agent-orchestrator-quickstart.md).
 
+The frozen field-level contract for local preflight and run command results is [Local Execution JSON Contract](local-execution-json-contract.md).
+
 ## Operating Model
 
 Treat AFK as a backend worker, not as an interactive assistant.
@@ -126,7 +128,7 @@ On failure, commands emit an `ok: false` payload before exiting nonzero:
 
 ## Success Gate
 
-For local execution, `final-result.json` is the authoritative completion artifact.
+For local execution, `result.json` is the authoritative worker outcome. `final-result.json` is the authoritative completed-run and publishability artifact.
 
 Treat a run as publishable only when:
 
@@ -183,7 +185,7 @@ Important artifacts:
 - `worktreePath`: isolated checkout containing the produced branch
 - `detachLogPaths`: stdout/stderr capture files for detached background workers
 
-When present, prefer `finalResultPath` over `resultPath`; `resultPath` may describe only the last worker phase.
+Use `resultPath` when the worker's own outcome is required. Use `finalResultPath` for completed-run status and every publishability decision; `resultPath` may describe only the last worker phase.
 
 `inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, an optional `pullRequest` external ref, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
 

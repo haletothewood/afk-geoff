@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole, createFixture, makeTempDir, rewriteConfig } from "./test-helpers.js";
 
@@ -73,6 +75,7 @@ describe("afk CLI — doctor command", () => {
     expect(payload.ok).toBe(true);
     expect(payload.backend).toBe("local-docker");
     expect(payload.failures).toEqual([]);
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "failures", "ok"]);
     expect(payload.checks.some((check) => check.label === "git" && check.ok)).toBe(true);
     expect(payload.checks.some((check) => check.label === "runner" && check.ok)).toBe(true);
     expect(output).not.toContain("Doctor checks passed");
@@ -94,14 +97,128 @@ describe("afk CLI — doctor command", () => {
       command: string;
       ok: boolean;
       failures: string[];
+      error: { message: string };
       checks: Array<{ label: string; ok: boolean; error?: string }>;
     };
 
     expect(payload.command).toBe("doctor");
     expect(payload.ok).toBe(false);
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
+    expect(payload.error.message).toBe("Doctor checks failed (2 issues)");
     expect(payload.failures).toHaveLength(2);
     expect(payload.checks.find((check) => check.label === "env:OPENAI_API_KEY")?.error).toBe("Missing required env var OPENAI_API_KEY");
     expect(payload.checks.find((check) => check.label === "env:SECOND_REQUIRED_ENV")?.error).toBe("Missing required env var SECOND_REQUIRED_ENV");
+  });
+
+  it("Given configuration is invalid, when doctor --json runs, then it emits a context failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.version = 2;
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: null;
+      checks: unknown[];
+      failures: string[];
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("doctor");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.checks).toEqual([]);
+    expect(payload.failures).toEqual([payload.error.message]);
+    expect(payload.error.message).toContain("version");
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
+  });
+
+  it("Given doctor report construction fails, when doctor --json runs, then it emits a structured failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.runner.kind = "custom";
+    delete config.runner.command;
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      checks: unknown[];
+      failures: string[];
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("doctor");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.checks).toEqual([]);
+    expect(payload.failures).toEqual([payload.error.message]);
+    expect(payload.error.message).toBe("Custom runner requires runner.command in .afk/config.yaml");
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
+  });
+
+  it("Given GitHub is enabled without repository coordinates, when doctor --json runs, then it reports the repository precondition", async () => {
+    const fixture = await createFixture(tempDir);
+    const fakeGhPath = path.join(tempDir, "bin", "gh");
+    fs.writeFileSync(fakeGhPath, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(fakeGhPath, 0o755);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.github = { enabled: true };
+    config.execution = { backend: "local-process" };
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      ok: boolean;
+      checks: Array<{ label: string; ok: boolean; error?: string }>;
+    };
+
+    expect(payload.ok).toBe(false);
+    expect(payload.checks).toEqual([
+      { label: "git", ok: true, detail: "git" },
+      { label: "runner", ok: true, detail: "node" },
+      { label: "gh", ok: true, detail: "gh" },
+      {
+        label: "github",
+        ok: false,
+        error: "GitHub is enabled but origin remote owner/repo could not be resolved."
+      }
+    ]);
+  });
+
+  it("Given the local Docker backend executable is missing, when doctor --json runs, then it reports the backend-specific failure", async () => {
+    const fixture = await createFixture(tempDir);
+    process.env.PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      backend: string;
+      ok: boolean;
+      checks: Array<{ label: string; ok: boolean; error?: string }>;
+    };
+
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.ok).toBe(false);
+    expect(payload.checks.find((check) => check.label === "docker")).toEqual({
+      label: "docker",
+      ok: false,
+      error: "Missing docker executable: docker"
+    });
   });
 });
 

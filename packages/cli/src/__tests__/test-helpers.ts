@@ -78,7 +78,7 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
     githubAuthVerifier: options.githubAuthVerifier ?? (async () => {})
   };
 
-  await runCli(["node", "afk", "init"], dependencies);
+  await runFixtureCli(repoDir, ["init"], dependencies);
   rewriteConfig(repoDir, {
     githubEnabled: options.githubEnabled ?? false,
     ...(options.verification ? { verification: options.verification } : {})
@@ -97,10 +97,10 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
     store,
     githubMirror: options.githubMirror,
     cli: async (args: string[]) => {
-      await runCli(["node", "afk", ...args], dependencies ?? {});
+      await runFixtureCli(repoDir, args, dependencies);
     },
     capture: async (prompt: string) => {
-      await runCli(["node", "afk", "capture", prompt], dependencies ?? {});
+      await runFixtureCli(repoDir, ["capture", prompt], dependencies);
       return await firstRequirement(store);
     },
     requirement: async () => firstRequirement(store),
@@ -119,10 +119,29 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
       await store.updateWorkItemStatus(backend.id, "todo");
       await store.updateWorkItemStatus(frontend.id, "blocked");
       await store.updateWorkItemStatus(review.id, "hitl_pending");
-      await runCli(["node", "afk", "sync"], dependencies);
+      await runFixtureCli(repoDir, ["sync"], dependencies);
       return await store.listWorkItemsByRequirement(requirementId);
     }
   };
+}
+
+async function runFixtureCli(
+  repoDir: string,
+  args: string[],
+  dependencies: Parameters<typeof runCli>[1]
+): Promise<void> {
+  const originalAfkCwd = process.env.AFK_CWD;
+  process.env.AFK_CWD = repoDir;
+
+  try {
+    await runCli(["node", "afk", ...args], dependencies);
+  } finally {
+    if (originalAfkCwd === undefined) {
+      delete process.env.AFK_CWD;
+    } else {
+      process.env.AFK_CWD = originalAfkCwd;
+    }
+  }
 }
 
 export async function firstRequirement(store: SqliteStateStore): Promise<Requirement> {
