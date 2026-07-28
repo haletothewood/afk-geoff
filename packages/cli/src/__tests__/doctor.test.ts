@@ -138,6 +138,35 @@ describe("afk CLI — doctor command", () => {
     expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
   });
 
+  it("Given doctor report construction fails, when doctor --json runs, then it emits a structured failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.runner.kind = "custom";
+    delete config.runner.command;
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: string;
+      checks: unknown[];
+      failures: string[];
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("doctor");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBe("local-docker");
+    expect(payload.checks).toEqual([]);
+    expect(payload.failures).toEqual([payload.error.message]);
+    expect(payload.error.message).toBe("Custom runner requires runner.command in .afk/config.yaml");
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
+  });
+
   it("Given GitHub is enabled without repository coordinates, when doctor --json runs, then it reports the repository precondition", async () => {
     const fixture = await createFixture(tempDir);
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");

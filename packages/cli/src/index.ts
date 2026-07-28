@@ -107,7 +107,21 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           });
           throw error;
         }
-        const report = await runForJson(async () => await getDoctorReport(ctx));
+        let report: Awaited<ReturnType<typeof getDoctorReport>>;
+        try {
+          report = await runForJson(async () => await getDoctorReport(ctx));
+        } catch (error) {
+          const message = formatErrorMessage(error);
+          printJson({
+            command: "doctor",
+            ok: false,
+            backend: ctx.executionBackendKind,
+            checks: [],
+            failures: [message],
+            error: { message }
+          });
+          throw error;
+        }
         printJson({
           command: "doctor",
           backend: ctx.executionBackendKind,
