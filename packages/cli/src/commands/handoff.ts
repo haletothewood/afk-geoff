@@ -1,5 +1,6 @@
 import type { RunInspection } from "./inspect.js";
 import { inspectRun } from "./inspect.js";
+import type { TerminalFailure } from "@afk-geoff/core";
 import type { CliContext } from "../types.js";
 
 export type RecommendedHandoffAction = "publish" | "report_failure" | "investigate" | "retry";
@@ -24,6 +25,7 @@ export interface RunHandoff {
   finalResultPath: string;
   worktreePath?: string;
   evidencePacket?: Record<string, unknown>;
+  terminalFailure?: TerminalFailure;
   summary?: string;
 }
 
@@ -55,6 +57,7 @@ export async function getRunHandoff(ctx: CliContext, runId: string): Promise<Run
     finalResultPath: paths.finalResultPath,
     ...(paths.worktreePath ? { worktreePath: paths.worktreePath } : {}),
     ...(inspection.evidencePacket ? { evidencePacket: inspection.evidencePacket } : {}),
+    ...(inspection.terminalFailure ? { terminalFailure: inspection.terminalFailure } : {}),
     ...(run.summary ? { summary: run.summary } : {})
   };
 }
@@ -70,6 +73,9 @@ export async function printRunHandoff(ctx: CliContext, runId: string): Promise<v
   console.log(`Publishable: ${handoff.publishable === undefined ? "unknown" : String(handoff.publishable)}`);
   console.log(`Review: ${handoff.reviewVerdict ?? "unknown"}`);
   console.log(`Verification: ${handoff.verificationStatus}`);
+  if (handoff.terminalFailure) {
+    console.log(`Terminal failure [${handoff.terminalFailure.category}]: ${handoff.terminalFailure.message}`);
+  }
   if (typeof handoff.evidencePacket?.recommendedHumanAction === "string") {
     console.log(`Recommended human action: ${handoff.evidencePacket.recommendedHumanAction}`);
   }

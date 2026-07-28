@@ -4,6 +4,19 @@ export type WorkItemStatus = "draft" | "todo" | "blocked" | "in_progress" | "hit
 export type RequirementStatus = "captured" | "planned" | "approved" | "completed";
 export type RunStatus = "prepared" | "running" | "completed" | "failed";
 export type ExternalRefType = "issue" | "pull_request";
+export const failureCategories = [
+  "product",
+  "verification",
+  "environment",
+  "orchestrator",
+  "publishing"
+] as const;
+export type FailureCategory = typeof failureCategories[number];
+
+export interface TerminalFailure {
+  category: FailureCategory;
+  message: string;
+}
 
 export interface Requirement {
   id: string;
@@ -41,6 +54,7 @@ export interface RunRecord {
   worktreePath?: string;
   runDir: string;
   summary?: string;
+  terminalFailure?: TerminalFailure;
   createdAt: string;
   updatedAt: string;
 }

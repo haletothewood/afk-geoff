@@ -585,6 +585,21 @@ describe("afk CLI — run command", () => {
     expect(workItem?.status).toBe("failed");
     expect(run?.status).toBe("failed");
     expect(run?.summary).toContain("Post-run publication failed: simulated PR failure");
+    expect(run?.terminalFailure).toEqual({
+      category: "publishing",
+      message: "Post-run publication failed: simulated PR failure"
+    });
+
+    const failedFinalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      terminalFailure?: { category: string; message: string };
+      evidencePacket?: {
+        terminalFailure?: { category: string; message: string };
+      };
+    };
+    expect(failedFinalResult.terminalFailure).toEqual(run?.terminalFailure);
+    expect(failedFinalResult.evidencePacket?.terminalFailure).toEqual(run?.terminalFailure);
 
     const promptPath = path.join(run!.runDir, "prompt.md");
     const promptModifiedAt = fs.statSync(promptPath).mtimeMs;
@@ -604,8 +619,10 @@ describe("afk CLI — run command", () => {
           reusedStages: string[];
           retriedStages: string[];
         };
+        terminalFailure?: unknown;
       };
       workerResults: Array<{ phase: string }>;
+      terminalFailure?: unknown;
     };
 
     expect(await fixture.store.listRuns()).toHaveLength(1);
@@ -621,6 +638,8 @@ describe("afk CLI — run command", () => {
       })
     );
     expect(finalResult.evidencePacket.recovery).toEqual(finalResult.recovery);
+    expect(finalResult.terminalFailure).toBeUndefined();
+    expect(finalResult.evidencePacket.terminalFailure).toBeUndefined();
   });
 
   it("Given GH_TOKEN is unset but GitHub auth can be resolved, when run file is used with --pr, then publishing still works", async () => {

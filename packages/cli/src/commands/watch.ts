@@ -1,7 +1,8 @@
 import path from "node:path";
 import fs from "node:fs";
+import type { TerminalFailure } from "@afk-geoff/core";
 import { delay, processExists, readDetachedProcessInfo, readRunProgress } from "../cli-utils.js";
-import { refreshRequirementStatuses } from "../store-helpers.js";
+import { markRunFailed, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, CliDependencies } from "../types.js";
 import { emitRunEvent } from "../run-events.js";
 
@@ -11,6 +12,7 @@ export interface WatchRunOutcome {
   status: string;
   mode: string;
   summary?: string;
+  terminalFailure?: TerminalFailure;
   branchName?: string;
   worktreePath?: string;
   runDir: string;
@@ -51,7 +53,10 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
     if (options.json) {
       emitRunEvent(toWatchEvent("run_observed", run));
     } else {
-      console.log(`Run ${runId} ${run.status}${run.summary ? `: ${run.summary}` : ""}`);
+      console.log(
+        `Run ${runId} ${run.status}`
+        + (run.terminalFailure ? ` [${run.terminalFailure.category}]: ${run.terminalFailure.message}` : run.summary ? `: ${run.summary}` : "")
+      );
       printNewLogContent("stdout.log", 0, "[stdout]");
       printNewLogContent("stderr.log", 0, "[stderr]");
     }
@@ -160,7 +165,12 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
       if (options.json) {
         emitRunEvent(toWatchEvent("run_failed", detachedFailure));
       } else {
-        console.log(`Run ${runId} failed: ${detachedFailure.summary ?? "Detached worker exited before completion"}`);
+        console.log(
+          `Run ${runId} failed`
+          + (detachedFailure.terminalFailure
+            ? ` [${detachedFailure.terminalFailure.category}]: ${detachedFailure.terminalFailure.message}`
+            : `: ${detachedFailure.summary ?? "Detached worker exited before completion"}`)
+        );
       }
       return toWatchOutcome(detachedFailure);
     }
@@ -176,6 +186,7 @@ function toWatchOutcome(run: Awaited<ReturnType<CliContext["store"]["listRuns"]>
     status: run.status,
     mode: run.mode,
     ...(run.summary ? { summary: run.summary } : {}),
+    ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {}),
     ...(run.branchName ? { branchName: run.branchName } : {}),
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
     runDir: run.runDir
@@ -189,6 +200,7 @@ function toWatchEvent(event: string, run: Awaited<ReturnType<CliContext["store"]
     workItemId: run.workItemId,
     status: run.status,
     ...(run.summary ? { message: run.summary } : {}),
+    ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {}),
     ...(run.branchName ? { branchName: run.branchName } : {}),
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
     runDir: run.runDir
@@ -213,7 +225,7 @@ async function failIfDetachedProcessExited(ctx: CliContext, runId: string) {
   }
 
   const summary = `Detached worker process ${processInfo.pid} exited before completing run artifacts`;
-  await ctx.store.updateRun(run.id, { status: "failed", summary });
+  await markRunFailed(ctx, run, summary);
   await ctx.store.updateWorkItemStatus(run.workItemId, "failed");
   await refreshRequirementStatuses(ctx);
 

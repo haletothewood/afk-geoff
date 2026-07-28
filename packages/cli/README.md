@@ -93,9 +93,9 @@ The outer orchestrator or human remains responsible for choosing the work, revie
 
 The next priorities are:
 
-1. Harden structured verification and incremental recovery so verifier failures cannot trigger unrelated code changes or repeat the full worker/reviewer loop.
-2. Finish the pull-request comment resolution contract for reviewer-directed follow-up runs.
-3. Stabilize and document the machine-readable orchestration contract.
+1. Finish the pull-request comment resolution contract for reviewer-directed follow-up runs.
+2. Stabilize and document the machine-readable orchestration contract.
+3. Harden run lifecycle and worktree ownership for reliable detached and concurrent execution.
 
 After that, planned work includes stronger work admission and back pressure, hardened backend selection, the optional GitHub Actions backend, additional source and publishing adapters, and reliable runner usage accounting.
 

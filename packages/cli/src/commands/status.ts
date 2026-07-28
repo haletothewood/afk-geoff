@@ -22,6 +22,11 @@ export async function printStatus(ctx: CliContext): Promise<void> {
   const activeLines = snapshot.active.map((entry) => entry.label);
   printLinesOrNone(activeLines);
   console.log("");
+  console.log("Recent terminal failures");
+  printLinesOrNone(snapshot.terminalFailures.map(
+    (entry) => `- ${entry.runId}  ${entry.workItemId}  [${entry.terminalFailure.category}] ${entry.terminalFailure.message}`
+  ));
+  console.log("");
   printNextActionLines(snapshot.nextActions);
 }
 
@@ -32,6 +37,13 @@ export async function getStatusSnapshot(ctx: CliContext) {
   const prRefs = await ctx.store.listExternalRefs("work_item", "pull_request");
   const decisions = classifyWorkItems(workItems);
   const active: Array<Record<string, unknown> & { label: string }> = [];
+  const terminalFailures = runs
+    .filter((run) => run.status === "failed" && run.terminalFailure)
+    .map((run) => ({
+      runId: run.id,
+      workItemId: run.workItemId,
+      terminalFailure: run.terminalFailure!
+    }));
 
   for (const run of runs.filter((record) => record.status === "running" || record.status === "prepared")) {
     const progress = readRunProgress(run.runDir);
@@ -83,6 +95,7 @@ export async function getStatusSnapshot(ctx: CliContext) {
     blocked: decisions.blocked,
     hitl: decisions.hitl,
     active,
+    terminalFailures,
     nextActions: getGlobalNextActions(requirements, workItems)
   };
 }

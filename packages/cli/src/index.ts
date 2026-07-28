@@ -33,7 +33,7 @@ import { listRemoteRuns, printRemoteRuns } from "./commands/remote-runs.js";
 import { downloadRemoteArtifact, listRemoteArtifacts, printRemoteArtifactDownload, printRemoteArtifacts } from "./commands/remote-artifacts.js";
 import { autoSync } from "./sync.js";
 import { assertPullRequestReady, assertRunTargetArguments, runPreflight } from "./preflight.js";
-import { formatErrorMessage } from "./cli-utils.js";
+import { formatErrorMessage, terminalFailureFromError } from "./cli-utils.js";
 import { emitRunEvent, isRunEventLine, withRunEvents } from "./run-events.js";
 import type { CliDependencies, RunOutcome } from "./types.js";
 
@@ -271,7 +271,14 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           ok,
           backend: ctx.executionBackendKind,
           ...outcome,
-          ...(!ok ? { error: { message: outcome.summary ?? `Run ${runId} ${outcome.status}` } } : {})
+          ...(!ok
+            ? {
+                error: {
+                  ...(outcome.terminalFailure ? { category: outcome.terminalFailure.category } : {}),
+                  message: outcome.summary ?? `Run ${runId} ${outcome.status}`
+                }
+              }
+            : {})
         }, { compact: true });
         if (!ok) {
           process.exitCode = 1;
@@ -438,7 +445,22 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           }), { allowRunEvents: true });
           printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome }, { compact: true });
         } catch (error) {
-          printJson({ kind: "run_result", command: "run", ok: false, target, ...(value ? { value } : {}), backend: ctx.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, error: { message: formatErrorMessage(error) } }, { compact: true });
+          const terminalFailure = terminalFailureFromError(error);
+          printJson({
+            kind: "run_result",
+            command: "run",
+            ok: false,
+            target,
+            ...(value ? { value } : {}),
+            backend: ctx.executionBackendKind,
+            requirePullRequest: options.pr ?? false,
+            detached: options.detach ?? false,
+            ...(terminalFailure ? { terminalFailure } : {}),
+            error: {
+              ...(terminalFailure ? { category: terminalFailure.category } : {}),
+              message: formatErrorMessage(error)
+            }
+          }, { compact: true });
           throw error;
         }
       } else {
@@ -560,6 +582,7 @@ function printRunOutcome(outcome: {
   resultPath?: string;
   finalResultPath?: string;
   finalVerdict?: string;
+  terminalFailure?: import("@afk-geoff/core").TerminalFailure;
 }): void {
   if (!outcome.runId) {
     return;
@@ -567,6 +590,9 @@ function printRunOutcome(outcome: {
 
   console.log(`Run ${outcome.status ?? "completed"}: ${outcome.runId}`);
   if (outcome.finalVerdict) console.log(`Final verdict: ${outcome.finalVerdict}`);
+  if (outcome.terminalFailure) {
+    console.log(`Terminal failure [${outcome.terminalFailure.category}]: ${outcome.terminalFailure.message}`);
+  }
   if (outcome.branchName) console.log(`Branch: ${outcome.branchName}`);
   if (outcome.worktreePath) console.log(`Worktree: ${outcome.worktreePath}`);
   if (outcome.finalResultPath) console.log(`Final result: ${outcome.finalResultPath}`);

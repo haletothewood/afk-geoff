@@ -153,8 +153,14 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
   public async createRun(run: RunRecord): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO runs (id, work_item_id, mode, status, branch_name, worktree_path, run_dir, summary, created_at, updated_at)
-         VALUES (@id, @work_item_id, @mode, @status, @branch_name, @worktree_path, @run_dir, @summary, @created_at, @updated_at)`
+        `INSERT INTO runs (
+           id, work_item_id, mode, status, branch_name, worktree_path, run_dir, summary,
+           terminal_failure_category, terminal_failure_message, created_at, updated_at
+         )
+         VALUES (
+           @id, @work_item_id, @mode, @status, @branch_name, @worktree_path, @run_dir, @summary,
+           @terminal_failure_category, @terminal_failure_message, @created_at, @updated_at
+         )`
       )
       .run(this.toDbRun(run));
   }
@@ -175,6 +181,10 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
       worktree_path: patch.worktreePath ?? existing.worktree_path,
       run_dir: patch.runDir ?? existing.run_dir,
       summary: patch.summary ?? existing.summary,
+      terminal_failure_category: patch.terminalFailure?.category
+        ?? (patch.status && patch.status !== "failed" ? null : existing.terminal_failure_category),
+      terminal_failure_message: patch.terminalFailure?.message
+        ?? (patch.status && patch.status !== "failed" ? null : existing.terminal_failure_message),
       updated_at: timestamp()
     };
 
@@ -182,7 +192,8 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
       .prepare(
         `UPDATE runs
          SET work_item_id = @work_item_id, mode = @mode, status = @status, branch_name = @branch_name, worktree_path = @worktree_path,
-             run_dir = @run_dir, summary = @summary, updated_at = @updated_at
+             run_dir = @run_dir, summary = @summary, terminal_failure_category = @terminal_failure_category,
+             terminal_failure_message = @terminal_failure_message, updated_at = @updated_at
          WHERE id = @id`
       )
       .run(merged);
@@ -293,6 +304,8 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
         worktree_path TEXT,
         run_dir TEXT NOT NULL,
         summary TEXT,
+        terminal_failure_category TEXT,
+        terminal_failure_message TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(work_item_id) REFERENCES work_items(id)
@@ -317,6 +330,16 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
         updated_at TEXT NOT NULL
       );
     `);
+
+    this.ensureColumn("runs", "terminal_failure_category", "TEXT");
+    this.ensureColumn("runs", "terminal_failure_message", "TEXT");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((candidate) => candidate.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   private loadHydratedWorkItems(requirementId?: string, workItemId?: string): HydratedWorkItem[] {
@@ -404,6 +427,8 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
       worktree_path: run.worktreePath ?? null,
       run_dir: run.runDir,
       summary: run.summary ?? null,
+      terminal_failure_category: run.terminalFailure?.category ?? null,
+      terminal_failure_message: run.terminalFailure?.message ?? null,
       created_at: run.createdAt,
       updated_at: run.updatedAt
     };
@@ -420,7 +445,15 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
       updatedAt: row.updated_at,
       ...(row.branch_name ? { branchName: row.branch_name } : {}),
       ...(row.worktree_path ? { worktreePath: row.worktree_path } : {}),
-      ...(row.summary ? { summary: row.summary } : {})
+      ...(row.summary ? { summary: row.summary } : {}),
+      ...(row.terminal_failure_category && row.terminal_failure_message
+        ? {
+            terminalFailure: {
+              category: row.terminal_failure_category as NonNullable<RunRecord["terminalFailure"]>["category"],
+              message: row.terminal_failure_message
+            }
+          }
+        : {})
     };
   }
 
@@ -491,6 +524,8 @@ interface DbRun {
   worktree_path: string | null;
   run_dir: string;
   summary: string | null;
+  terminal_failure_category: string | null;
+  terminal_failure_message: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -265,6 +265,8 @@ Example event stream:
 
 `final-result.json` includes `publishable` and `whyNotPublishable`. A local run is only publishable when wrapper verification passed, the review gate passed, there is a committed diff against the base branch, and the worktree is clean. Failed wrapper verification is fed back into the autonomous fix loop even if the reviewer returns `PASS`; if the loop cannot clear it, AFK reports `blocked` rather than `done`.
 
+Terminal orchestration and publishing failures include a structured `terminalFailure` with a category and actionable message. The same failure is persisted with the run and projected through `final-result.json`, its evidence packet, `watch`, `status`, `inspect`, and `handoff`. A successful recovery clears the prior terminal failure.
+
 Execution backend selection is explicit on run commands:
 
 - `afk run file <path> --backend local-docker`
