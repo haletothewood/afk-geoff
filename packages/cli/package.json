@@ -2,6 +2,10 @@
   "name": "afk-geoff",
   "version": "0.1.1",
   "description": "A boringly reliable execution layer for autonomous coding agents, with isolated runs, verification, review, and PR handoff.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haletothewood/afk-geoff.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

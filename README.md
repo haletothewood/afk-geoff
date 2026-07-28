@@ -95,6 +95,26 @@ pnpm test:package
 
 `pnpm pack:cli` builds the workspace and produces an installable `afk-geoff` tarball. `pnpm test:package` installs that tarball into a temporary project and verifies `afk --help` plus `afk init --runner-profile smoke`.
 
+## npm Releases
+
+Pushing a version tag such as `v0.1.2` runs `.github/workflows/publish-npm.yml`. The workflow requires the tagged commit to be on `main`, requires the tag to match `packages/cli/package.json`, and runs typecheck, tests, build, and package smoke checks before publishing `afk-geoff`.
+
+Publishing uses npm trusted publishing with GitHub OIDC, so the repository does not need a long-lived `NPM_TOKEN`. Configure the `afk-geoff` package on npm with this trusted publisher:
+
+- provider: GitHub Actions
+- organization or user: `haletothewood`
+- repository: `afk-geoff`
+- workflow filename: `publish-npm.yml`
+- environment: none
+- allowed action: npm publish
+
+Then bump the package version on `main`, create a signed matching tag, and push it:
+
+```bash
+git tag -s v0.1.2 -m "Release v0.1.2"
+git push origin v0.1.2
+```
+
 This creates:
 
 - `.afk/config.yaml`
