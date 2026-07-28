@@ -33,10 +33,13 @@ describe("npm publish workflow", () => {
     expect(commands).toContain("package_version");
     expect(commands).toContain("pnpm install --frozen-lockfile");
     expect(commands).toContain("pnpm typecheck");
+    expect(commands).toContain("pnpm build");
     expect(commands).toContain("pnpm test");
     expect(commands).toContain("pnpm test:package");
     expect(commands).toContain("npm publish --access public");
     expect(commands).not.toContain("NPM_TOKEN");
+
+    expect(commands.indexOf("pnpm build")).toBeLessThan(commands.indexOf("pnpm test"));
   });
 
   it("declares the repository required by npm provenance", () => {
