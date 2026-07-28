@@ -148,6 +148,8 @@ Only product failures are actionable by a coding worker. Verification-contract a
 
 AFK fingerprints product-verification failures and reviewer issue sets. If the same fingerprint recurs on the same Git commit after a fix attempt, AFK stops before consuming another worker iteration. The terminal `final-result.json` includes `repeatedFailure` with the failure kind, fingerprint, first and repeated iterations, and unchanged commit SHA.
 
+If implementation, verification, and review completed successfully but PR publishing failed, rerunning the failed work item with `--pr` reuses those completed stages and retries publishing against the same branch and worktree. The run's `recovery` object, also included in the evidence packet returned by inspect and handoff, lists `reusedStages`, `retriedStages`, the source run, and recovery time.
+
 ## Artifacts To Read
 
 The orchestrator can use returned paths instead of guessing locations.

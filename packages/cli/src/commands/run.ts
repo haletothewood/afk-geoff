@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { GitHubIssueWorkSource } from "@afk-geoff/adapter-github";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import { createId, deriveTitle, normalizeVerificationCommands, slugify } from "@afk-geoff/shared";
-import type { Requirement } from "@afk-geoff/core";
+import type { ExecutionBackendResult, Requirement } from "@afk-geoff/core";
 import { buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
@@ -58,15 +58,23 @@ export async function runTrackedWorkItem(
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
   const sourceUpdater = issueUrl ? ctx.sourceUpdaterFactory(issueUrl) : new NoOpSourceUpdater();
   const executionModeConfig = options.executionModeConfig ?? detachedOptions.executionModeConfig;
-  let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
+  let result: RecoverableExecutionResult;
   try {
-    result = await ctx.executionBackend.run({
-      requirement,
-      workItem,
-      verification,
-      ...(issueUrl ? { issueUrl } : {}),
-      ...(executionModeConfig ? { executionModeConfig } : {})
-    });
+    const reusableFinalization = options.requirePullRequest
+      ? await tryReusePublishableFinalization(ctx, workItem.id)
+      : undefined;
+    if (reusableFinalization) {
+      await ctx.store.updateWorkItemStatus(workItem.id, "in_progress");
+      result = reusableFinalization;
+    } else {
+      result = await ctx.executionBackend.run({
+        requirement,
+        workItem,
+        verification,
+        ...(issueUrl ? { issueUrl } : {}),
+        ...(executionModeConfig ? { executionModeConfig } : {})
+      });
+    }
   } catch (error) {
     const latestRun = await latestRunForWorkItem(ctx, workItem.id);
     if (!latestRun || latestRun.status === "running") {
@@ -125,6 +133,9 @@ export async function runTrackedWorkItem(
       await ctx.store.updateWorkItemStatus(workItem.id, "done");
       if (latestRun) {
         await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
+        if (result.recovery) {
+          recordRecoveryMetadata(latestRun.runDir, result.recovery);
+        }
       }
       await refreshRequirementStatuses(ctx);
       const prUrl = publication.url;
@@ -155,6 +166,109 @@ export async function runTrackedWorkItem(
     await markWorkItemRunFailed(ctx, workItem.id, `Post-run publication failed: ${formatErrorMessage(error)}`);
     throw error;
   }
+}
+
+interface RecoveryMetadata {
+  sourceRunId: string;
+  reusedStages: Array<"work" | "verification" | "review">;
+  retriedStages: Array<"publishing">;
+  recoveredAt: string;
+}
+
+type RecoverableExecutionResult = ExecutionBackendResult & {
+  recovery?: RecoveryMetadata;
+};
+
+async function tryReusePublishableFinalization(
+  ctx: CliContext,
+  workItemId: string
+): Promise<RecoverableExecutionResult | undefined> {
+  const run = await latestRunForWorkItem(ctx, workItemId);
+  if (
+    !run ||
+    run.status !== "failed" ||
+    !run.branchName ||
+    !run.worktreePath ||
+    !fs.existsSync(run.worktreePath)
+  ) {
+    return undefined;
+  }
+
+  const finalResult = readJsonRecord(path.join(run.runDir, "final-result.json"));
+  const workerResult = readJsonRecord(path.join(run.runDir, "result.json"));
+  const worktreeStatus = isJsonRecord(finalResult?.worktreeStatus) ? finalResult.worktreeStatus : undefined;
+  if (
+    finalResult?.status !== "done" ||
+    finalResult.publishable !== true ||
+    worktreeStatus?.clean !== true ||
+    !workerResult
+  ) {
+    return undefined;
+  }
+
+  const summary = typeof finalResult.latestWorkerSummary === "string"
+    ? finalResult.latestWorkerSummary
+    : typeof workerResult.summary === "string"
+      ? workerResult.summary
+      : "Reused reviewed implementation";
+  const issueComment = typeof workerResult.issueComment === "string" ? workerResult.issueComment : "";
+  const pr = isJsonRecord(workerResult.pr) ? workerResult.pr : undefined;
+  const pullRequest = pr && typeof pr.title === "string" && typeof pr.body === "string"
+    ? {
+        title: pr.title,
+        body: pr.body,
+        ...(Array.isArray(pr.manualQa) && pr.manualQa.every((item) => typeof item === "string")
+          ? { manualQa: pr.manualQa as string[] }
+          : {})
+      }
+    : undefined;
+
+  return {
+    status: "done",
+    summary,
+    issueComment,
+    hasDiff: true,
+    branchName: run.branchName,
+    worktreePath: run.worktreePath,
+    ...(pullRequest ? { pullRequest } : {}),
+    recovery: {
+      sourceRunId: run.id,
+      reusedStages: ["work", "verification", "review"],
+      retriedStages: ["publishing"],
+      recoveredAt: new Date().toISOString()
+    }
+  };
+}
+
+function recordRecoveryMetadata(runDir: string, recovery: RecoveryMetadata): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonRecord(finalResultPath);
+  if (!finalResult) {
+    return;
+  }
+  const evidencePacket = isJsonRecord(finalResult.evidencePacket)
+    ? { ...finalResult.evidencePacket, recovery }
+    : { recovery };
+  fs.writeFileSync(
+    finalResultPath,
+    JSON.stringify({ ...finalResult, recovery, evidencePacket }, null, 2)
+  );
+}
+
+function readJsonRecord(filename: string): Record<string, unknown> | undefined {
+  if (!fs.existsSync(filename)) {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
+    return isJsonRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function buildRunOutcome(
