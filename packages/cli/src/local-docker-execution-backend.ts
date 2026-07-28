@@ -17,6 +17,7 @@ import {
   parseJsonWithRecovery,
   reviewResultSchema,
   resolveExecutionMode,
+  verificationCommands,
   workerResultSchema,
   DEFAULT_DOCKERFILE_PATH,
   type VerificationCommandResult
@@ -222,6 +223,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     let previousVerificationFailure: FailureObservation | undefined;
     let previousReviewFailure: FailureObservation | undefined;
     const packageManager = await resolvePackageManager(worktreePath);
+    const verification = verificationCommands(input.verification);
     if (packageManager.warning) {
       if (isRunEventsEnabled()) {
         emitRunEvent({
@@ -268,7 +270,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         prompt = buildWorkerPrompt({
           requirement: input.requirement,
           workItem: input.workItem,
-          verification: input.verification,
+          verification,
           progressPath: progressContainerPath,
           resultPath: resultContainerPath,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
@@ -279,7 +281,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         prompt = buildFixWorkerPrompt({
           requirement: input.requirement,
           workItem: input.workItem,
-          verification: input.verification,
+          verification,
           progressPath: progressContainerPath,
           resultPath: resultContainerPath,
           reviewIssues: isFollowUp && isFirstIteration ? input.followUp?.reviewComments ?? [] : reviewIssues,
@@ -491,7 +493,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }));
       emitRunEvent({ event: "verification_started", runId, workItemId: input.workItem.id, iteration, phase: "verify" });
 
-      const verificationResults = await runVerificationCommands(input.verification, worktreePath, packageManager);
+      const verificationResults = await runVerificationCommands(verification, worktreePath, packageManager);
       verificationSummaries.push({
         iteration,
         results: verificationResults.map((result) => ({

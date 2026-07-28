@@ -1,11 +1,15 @@
 import type { ChangeRequest, ExternalRef, HydratedWorkItem, Requirement, RunRecord, RunnerKind, WorkItem, WorkItemStatus } from "./domain.js";
 
+export interface VerificationEntry {
+  command: string;
+}
+
 export interface ExecutionBrief {
   requirementBody: string;
   workItemTitle: string;
   workItemBody: string;
   acceptanceCriteria: string[];
-  verification: string[];
+  verification: VerificationEntry[];
   issueUrl?: string;
   /** Explicit primary execution mode, "auto" to infer, or undefined (treated as "auto"). */
   executionMode?: string;
@@ -66,7 +70,7 @@ export interface WorkSource<TInput = string> {
 export interface ExecutionBackendInput {
   requirement: Requirement;
   workItem: HydratedWorkItem;
-  verification: string[];
+  verification: VerificationEntry[];
   issueUrl?: string;
   followUp?: {
     branchName: string;

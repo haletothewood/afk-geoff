@@ -1,5 +1,5 @@
 import type { ExecutionBrief } from "@afk-geoff/core";
-import { normalizeVerificationCommands } from "./verification-command.js";
+import { normalizeVerificationEntries } from "./verification-command.js";
 
 export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
   const sections = parseMarkdownSections(source);
@@ -8,7 +8,7 @@ export function parseExecutionBriefMarkdown(source: string): ExecutionBrief {
   const workItemBody = getRequiredSection(sections, "Work Item Body");
   const acceptanceCriteria = parseBulletList(getRequiredSection(sections, "Acceptance Criteria"));
   const verification = sections.get("verification")
-    ? normalizeVerificationCommands(parseBulletList(sections.get("verification") ?? ""))
+    ? normalizeVerificationEntries(parseBulletList(sections.get("verification") ?? ""))
     : [];
   const issueUrl = sections.get("github issue");
 

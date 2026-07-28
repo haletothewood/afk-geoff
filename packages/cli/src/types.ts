@@ -3,6 +3,7 @@ import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import type { ChangeRequestPublisher } from "@afk-geoff/core";
+import type { VerificationEntryInput } from "@afk-geoff/shared";
 
 export type ExecutionBackendKind = ReturnType<typeof loadProjectConfig>["execution"]["backend"];
 
@@ -84,7 +85,7 @@ export interface VerificationSummary {
 }
 
 export interface DetachedRunOptions {
-  verification?: string[];
+  verification?: VerificationEntryInput[];
   issueUrl?: string;
   executionModeConfig?: { executionMode?: string; overlays?: string[]; risk?: string };
 }
