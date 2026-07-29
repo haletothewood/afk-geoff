@@ -25,6 +25,7 @@ export async function submitGitHubActionsIssueRun(
     throw new Error("GitHub Actions submission requires GitHub to be configured.");
   }
 
+  const remote = ctx.remote;
   const dispatcher = asWorkflowDispatcher(ctx.github);
   if (!dispatcher) {
     throw new Error("GitHub Actions submission requires a GitHub adapter that can dispatch workflows.");
@@ -34,22 +35,36 @@ export async function submitGitHubActionsIssueRun(
   const afkRepository = options.afkRepository ?? DEFAULT_AFK_REPOSITORY;
   const afkRef = options.afkRef ?? DEFAULT_AFK_REF;
   const correlationId = createId("dispatch");
-  const inputs = {
-    correlation_id: correlationId,
+  const compatibleInputs = {
     issue_url: issueUrl,
     backend: "local-docker",
     require_pr: String(requirePullRequest),
     afk_repository: afkRepository,
     afk_ref: afkRef
   };
+  let inputs: Record<string, string> = {
+    correlation_id: correlationId,
+    ...compatibleInputs
+  };
 
-  await dispatcher.dispatchWorkflow({
-    owner: ctx.remote.owner,
-    repo: ctx.remote.repo,
+  const dispatch = () => dispatcher.dispatchWorkflow({
+    owner: remote.owner,
+    repo: remote.repo,
     workflowId: AFK_RUN_WORKFLOW_ID,
     ref: ctx.config.baseBranch,
     inputs
   });
+
+  try {
+    await dispatch();
+  } catch (error) {
+    if (!isUnsupportedCorrelationInput(error)) {
+      throw error;
+    }
+
+    inputs = compatibleInputs;
+    await dispatch();
+  }
 
   return {
     backend: "github-actions",
@@ -73,4 +88,17 @@ function asWorkflowDispatcher(value: unknown): WorkflowDispatcher | undefined {
   }
 
   return undefined;
+}
+
+function isUnsupportedCorrelationInput(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const status = "status" in error ? error.status : undefined;
+  const message = "message" in error ? error.message : undefined;
+  return status === 422 &&
+    typeof message === "string" &&
+    message.startsWith("Unexpected inputs provided:") &&
+    message.includes("correlation_id");
 }

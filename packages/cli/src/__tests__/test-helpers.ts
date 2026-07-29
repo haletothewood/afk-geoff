@@ -488,6 +488,7 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
   public workflowArtifactBytes = new Uint8Array(Buffer.from("zip-bytes"));
   public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
   public openPullRequestError: Error | undefined;
+  public workflowDispatchErrors: Error[] = [];
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
 
   public async mirrorRequirement(input: { owner: string; repo: string; requirement: Requirement }): Promise<ExternalRef> {
@@ -536,6 +537,10 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
 
   public async dispatchWorkflow(input: { owner: string; repo: string; workflowId: string; ref: string; inputs: Record<string, string> }): Promise<void> {
     this.workflowDispatches.push(input);
+    const error = this.workflowDispatchErrors.shift();
+    if (error) {
+      throw error;
+    }
   }
 
   public async listWorkflowRuns(input: { owner: string; repo: string; workflowId: string; limit: number }): Promise<Array<{ id: string; correlationId?: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {

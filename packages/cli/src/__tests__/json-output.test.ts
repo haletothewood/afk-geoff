@@ -1305,6 +1305,47 @@ describe("afk CLI — JSON output", () => {
     ]);
   });
 
+  it("Given an installed legacy workflow, when correlation_id is rejected, then submit retries with compatible inputs", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.workflowDispatchErrors.push(
+      Object.assign(new Error('Unexpected inputs provided: ["correlation_id"]'), { status: 422 })
+    );
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      correlationId: string;
+      inputs: Record<string, string>;
+    };
+    const compatibleInputs = {
+      issue_url: issueUrl,
+      backend: "local-docker",
+      require_pr: "true",
+      afk_repository: "haletothewood/afk-geoff",
+      afk_ref: "main"
+    };
+
+    expect(payload.correlationId).toMatch(/^dispatch_[0-9a-f]{32}$/);
+    expect(payload.inputs).toEqual(compatibleInputs);
+    expect(githubMirror.workflowDispatches).toEqual([
+      expect.objectContaining({
+        inputs: {
+          correlation_id: payload.correlationId,
+          ...compatibleInputs
+        }
+      }),
+      expect.objectContaining({
+        inputs: compatibleInputs
+      })
+    ]);
+  });
+
   it("Given submit issue --backend github-actions --json is not configured, then it returns the frozen preflight failure envelope", async () => {
     const fixture = await createFixture(tempDir);
     const issueUrl = "https://github.com/acme/demo/issues/42";
