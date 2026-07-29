@@ -9,5 +9,6 @@ coverage
 # Koi PAI files
 .codex/
 scratchpad.md
+docs/backlog.md
 .koi/private/
 .claude/
