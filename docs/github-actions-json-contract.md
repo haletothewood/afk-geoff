@@ -22,6 +22,7 @@ The commands follow the shared command-envelope and presence conventions from th
 | `backend` | Always | Non-null and equal to `github-actions`. The backend is selected by the command, so it remains known when configuration or GitHub preflight fails. |
 | `error` | Failure only | Non-null object containing exactly one non-null `message` for the currently defined remote failures. |
 | `workflowId` | Submit success and every `remote-runs` envelope | Non-null string. It is absent from submit failures that occur before dispatch succeeds. |
+| `correlationId` | Submit success and correlated `remote-runs` entries | Non-null string generated for one submission. The same value is passed as `correlation_id`, used as the workflow run display title, and returned by run discovery. |
 | `runId` | Every `remote-artifacts` envelope | Non-null decimal string copied from the command argument. |
 | `artifactId` | Every `remote-download` envelope | Non-null decimal string copied from the command argument. |
 | `outputPath` | Download success only | Non-null native absolute path on the host running AFK. |
@@ -32,7 +33,7 @@ Errors from argument validation, missing GitHub configuration or adapter capabil
 
 ## Remote Submission
 
-`submit issue` dispatches the configured repository's `afk-run.yml` workflow. GitHub's workflow-dispatch API does not return a run ID, so successful submission identifies the workflow and ref. Discover the created run through `remote-runs --json`; do not infer or fabricate a run ID from the submit response.
+`submit issue` dispatches the configured repository's `afk-run.yml` workflow. GitHub's workflow-dispatch API does not return a run ID, so AFK generates a unique `correlationId` before dispatch and sends it as the required `correlation_id` workflow input. The workflow uses that exact value as its display title. Discover the created run through `remote-runs --json` by exact `correlationId` equality; do not infer or fabricate a run ID from the submit response.
 
 ### Success
 
@@ -45,9 +46,11 @@ Errors from argument validation, missing GitHub configuration or adapter capabil
   "backend": "github-actions",
   "workflowId": "afk-run.yml",
   "ref": "main",
+  "correlationId": "dispatch_0123456789abcdef0123456789abcdef",
   "issueUrl": "https://github.com/acme/demo/issues/42",
   "requirePullRequest": true,
   "inputs": {
+    "correlation_id": "dispatch_0123456789abcdef0123456789abcdef",
     "issue_url": "https://github.com/acme/demo/issues/42",
     "backend": "local-docker",
     "require_pr": "true",
@@ -57,7 +60,7 @@ Errors from argument validation, missing GitHub configuration or adapter capabil
 }
 ```
 
-`target`, `value`, `backend`, and `error` remain present on failure. `workflowId`, `ref`, `issueUrl`, `requirePullRequest`, and `inputs` are success-only because they describe a completed dispatch.
+`target`, `value`, `backend`, and `error` remain present on failure. `workflowId`, `ref`, `correlationId`, `issueUrl`, `requirePullRequest`, and `inputs` are success-only because they describe a completed dispatch. `correlationId` uses the `dispatch_` prefix followed by 32 lowercase hexadecimal characters.
 
 ### Backend preflight failure
 
@@ -91,6 +94,7 @@ A GitHub API dispatch failure uses the same field presence, with the API failure
   "runs": [
     {
       "id": "123",
+      "correlationId": "dispatch_0123456789abcdef0123456789abcdef",
       "name": "Run AFK work from issue",
       "status": "completed",
       "conclusion": "success",
@@ -104,7 +108,7 @@ A GitHub API dispatch failure uses the same field presence, with the API failure
 }
 ```
 
-Within each run, only `id` is always present and non-null. `name`, `status`, `conclusion`, `branch`, `event`, `url`, `createdAt`, and `updatedAt` are present only when supplied by GitHub; they are never emitted as `null`. A queued or in-progress run normally has `status` but omits `conclusion`.
+Within each run, only `id` is always present and non-null. `correlationId` is GitHub's workflow run `display_title`; the bundled workflow guarantees that it equals the submitted `correlation_id`. It is omitted for workflows or historical runs that do not supply a display title. `name`, `status`, `conclusion`, `branch`, `event`, `url`, `createdAt`, and `updatedAt` are present only when supplied by GitHub; optional values are never emitted as `null`. A queued or in-progress run normally has `status` but omits `conclusion`.
 
 ### GitHub API failure
 
@@ -203,9 +207,9 @@ An API or filesystem write failure has the same shape and the requested numeric 
 
 An external orchestrator can complete the remote submit-to-artifact-discovery path without terminal-prose parsing:
 
-1. Dispatch with `submit issue <url> --backend github-actions --json` and retain `workflowId` and `ref`.
-2. Poll `remote-runs --workflow <workflowId> --json`, select the matching workflow-dispatch run using structured run fields, and retain its `id`, `status`, `conclusion`, and `url`.
+1. Dispatch with `submit issue <url> --backend github-actions --json` and retain `workflowId`, `ref`, and `correlationId`.
+2. Poll `remote-runs --workflow <workflowId> --json`, select the single run whose `correlationId` exactly equals the submission's `correlationId`, and retain its `id`, `status`, `conclusion`, and `url`.
 3. After the run reaches a terminal status, call `remote-artifacts <run-id> --json` and select an unexpired artifact by `name`, retaining its `id` and URLs.
 4. If local bytes are needed, call `remote-download <artifact-id> --json` and consume `outputPath`.
 
-The workflow-dispatch API creates an unavoidable discovery boundary between steps 1 and 2: submit does not claim a run ID that GitHub did not return.
+The workflow-dispatch API creates an unavoidable discovery boundary between steps 1 and 2: submit does not claim a run ID that GitHub did not return. The stable correlation value makes that boundary deterministic even when multiple submissions use the same workflow and ref concurrently.

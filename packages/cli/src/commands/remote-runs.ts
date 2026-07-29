@@ -7,6 +7,7 @@ export interface RemoteRunsSnapshot {
   workflowId: string;
   runs: Array<{
     id: string;
+    correlationId?: string;
     name?: string;
     status?: string;
     conclusion?: string;

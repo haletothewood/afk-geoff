@@ -122,6 +122,7 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
             workflow_runs: [
               {
                 id: 123,
+                display_title: "dispatch_0123456789abcdef0123456789abcdef",
                 name: "Run AFK work from issue",
                 status: "completed",
                 conclusion: "success",
@@ -417,6 +418,7 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(runs).toEqual([
       {
         id: "123",
+        correlationId: "dispatch_0123456789abcdef0123456789abcdef",
         name: "Run AFK work from issue",
         status: "completed",
         conclusion: "success",

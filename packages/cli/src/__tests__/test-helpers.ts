@@ -483,7 +483,7 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
   public readonly closedPullRequestNumbers: number[] = [];
   public readonly issueComments: Array<{ issueNumber: number; body: string }> = [];
   public readonly workflowDispatches: Array<{ owner: string; repo: string; workflowId: string; ref: string; inputs: Record<string, string> }> = [];
-  public workflowRuns: Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }> = [];
+  public workflowRuns: Array<{ id: string; correlationId?: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }> = [];
   public workflowArtifacts: Array<{ id: string; name: string; sizeInBytes?: number; expired?: boolean; url?: string; archiveDownloadUrl?: string; createdAt?: string; updatedAt?: string; expiresAt?: string }> = [];
   public workflowArtifactBytes = new Uint8Array(Buffer.from("zip-bytes"));
   public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
@@ -538,7 +538,7 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
     this.workflowDispatches.push(input);
   }
 
-  public async listWorkflowRuns(input: { owner: string; repo: string; workflowId: string; limit: number }): Promise<Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
+  public async listWorkflowRuns(input: { owner: string; repo: string; workflowId: string; limit: number }): Promise<Array<{ id: string; correlationId?: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
     return this.workflowRuns.slice(0, input.limit);
   }
 

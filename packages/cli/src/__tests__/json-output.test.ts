@@ -1260,11 +1260,13 @@ describe("afk CLI — JSON output", () => {
       backend: string;
       workflowId: string;
       ref: string;
+      correlationId: string;
       issueUrl: string;
       requirePullRequest: boolean;
       inputs: Record<string, string>;
     };
 
+    expect(payload.correlationId).toMatch(/^dispatch_[0-9a-f]{32}$/);
     expect(payload).toEqual({
       command: "submit",
       ok: true,
@@ -1273,9 +1275,11 @@ describe("afk CLI — JSON output", () => {
       backend: "github-actions",
       workflowId: "afk-run.yml",
       ref: "main",
+      correlationId: payload.correlationId,
       issueUrl,
       requirePullRequest: true,
       inputs: {
+        correlation_id: payload.correlationId,
         issue_url: issueUrl,
         backend: "local-docker",
         require_pr: "true",
@@ -1290,6 +1294,7 @@ describe("afk CLI — JSON output", () => {
         workflowId: "afk-run.yml",
         ref: "main",
         inputs: {
+          correlation_id: payload.correlationId,
           issue_url: issueUrl,
           backend: "local-docker",
           require_pr: "true",
@@ -1354,6 +1359,7 @@ describe("afk CLI — JSON output", () => {
     githubMirror.workflowRuns = [
       {
         id: "123",
+        correlationId: "dispatch_0123456789abcdef0123456789abcdef",
         name: "Run AFK work from issue",
         status: "completed",
         conclusion: "success",
@@ -1388,6 +1394,7 @@ describe("afk CLI — JSON output", () => {
       runs: [
         {
           id: "123",
+          correlationId: "dispatch_0123456789abcdef0123456789abcdef",
           name: "Run AFK work from issue",
           status: "completed",
           conclusion: "success",
@@ -1398,6 +1405,53 @@ describe("afk CLI — JSON output", () => {
           updatedAt: "2026-01-01T00:01:00Z"
         }
       ]
+    });
+  });
+
+  it("Given a submitted correlation ID, when runs are discovered, then the created run is identifiable without heuristics", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const submitOutput = await captureConsole(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+    const submission = JSON.parse(submitOutput) as {
+      correlationId: string;
+      inputs: Record<string, string>;
+    };
+
+    expect(submission.inputs.correlation_id).toBe(submission.correlationId);
+    githubMirror.workflowRuns = [
+      {
+        id: "123",
+        correlationId: submission.correlationId,
+        status: "queued",
+        event: "workflow_dispatch"
+      },
+      {
+        id: "122",
+        correlationId: "dispatch_ffffffffffffffffffffffffffffffff",
+        status: "in_progress",
+        event: "workflow_dispatch"
+      }
+    ];
+
+    const runsOutput = await captureConsole(async () => {
+      await fixture.cli(["remote-runs", "--workflow", "afk-run.yml", "--json"]);
+    });
+    const discovery = JSON.parse(runsOutput) as {
+      runs: Array<{ id: string; correlationId?: string }>;
+    };
+
+    expect(discovery.runs.find((run) => run.correlationId === submission.correlationId)).toEqual({
+      id: "123",
+      correlationId: submission.correlationId,
+      status: "queued",
+      event: "workflow_dispatch"
     });
   });
 

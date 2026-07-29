@@ -1,4 +1,5 @@
 import type { WorkflowDispatcher } from "@afk-geoff/core";
+import { createId } from "@afk-geoff/shared";
 import type { CliContext } from "../types.js";
 
 const AFK_RUN_WORKFLOW_ID = "afk-run.yml";
@@ -9,6 +10,7 @@ export interface SubmitWorkflowOutcome {
   backend: "github-actions";
   workflowId: string;
   ref: string;
+  correlationId: string;
   issueUrl: string;
   requirePullRequest: boolean;
   inputs: Record<string, string>;
@@ -31,7 +33,9 @@ export async function submitGitHubActionsIssueRun(
   const requirePullRequest = options.requirePullRequest ?? true;
   const afkRepository = options.afkRepository ?? DEFAULT_AFK_REPOSITORY;
   const afkRef = options.afkRef ?? DEFAULT_AFK_REF;
+  const correlationId = createId("dispatch");
   const inputs = {
+    correlation_id: correlationId,
     issue_url: issueUrl,
     backend: "local-docker",
     require_pr: String(requirePullRequest),
@@ -51,6 +55,7 @@ export async function submitGitHubActionsIssueRun(
     backend: "github-actions",
     workflowId: AFK_RUN_WORKFLOW_ID,
     ref: ctx.config.baseBranch,
+    correlationId,
     issueUrl,
     requirePullRequest,
     inputs

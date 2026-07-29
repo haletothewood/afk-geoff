@@ -45,6 +45,8 @@ describe("afk CLI — init command", () => {
 
     const workflow = fs.readFileSync(workflowPath, "utf8");
     expect(workflow).toContain("name: AFK Run");
+    expect(workflow).toContain("run-name: ${{ inputs.correlation_id }}");
+    expect(workflow).toContain("correlation_id:");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("repository: ${{ inputs.afk_repository }}");
     expect(workflow).toContain("path: target");

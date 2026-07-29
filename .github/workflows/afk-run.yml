@@ -1,8 +1,13 @@
 name: AFK Run
+run-name: ${{ inputs.correlation_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      correlation_id:
+        description: "Stable identifier for correlating a dispatch with its workflow run"
+        required: true
+        type: string
       issue_url:
         description: "GitHub issue URL containing an AFK execution brief"
         required: true
