@@ -78,7 +78,7 @@ isolated branch and worktree
     ↓
 implementation runner
     ↓
-project verification
+project verification plus execution-brief verification
     ↓
 independent review
     ↓
@@ -93,7 +93,7 @@ The outer orchestrator or human remains responsible for choosing the work, revie
 
 The next priorities are:
 
-1. Finish the pull-request comment resolution contract for reviewer-directed follow-up runs.
+1. Continue hardening the pull-request comment resolution contract for reviewer-directed follow-up runs.
 2. Stabilize and document the machine-readable orchestration contract.
 3. Harden run lifecycle and worktree ownership for reliable detached and concurrent execution.
 

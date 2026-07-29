@@ -1,4 +1,4 @@
-import type { VerificationEntry } from "@afk-geoff/core";
+import type { VerificationEntry, VerificationOrigin } from "@afk-geoff/core";
 
 const MARKDOWN_ALTERNATIVE_PATTERN = /`[^`\n]+`\s+(?:or|and\/or)\s+`[^`\n]+`/i;
 
@@ -10,12 +10,39 @@ export function normalizeVerificationCommands(commands: readonly string[]): stri
 
 export function normalizeVerificationEntries(entries: readonly VerificationEntryInput[]): VerificationEntry[] {
   return entries.map((entry) => ({
-    command: normalizeVerificationCommand(typeof entry === "string" ? entry : entry.command)
+    command: normalizeVerificationCommand(typeof entry === "string" ? entry : entry.command),
+    ...(typeof entry === "string" || !entry.origins ? {} : { origins: [...entry.origins] })
   }));
 }
 
 export function dedupeVerificationEntries(entries: readonly VerificationEntry[]): VerificationEntry[] {
-  return [...new Map(entries.map((entry) => [entry.command, entry])).values()];
+  const deduplicated = new Map<string, VerificationEntry>();
+  for (const entry of entries) {
+    const existing = deduplicated.get(entry.command);
+    if (!existing) {
+      deduplicated.set(entry.command, {
+        ...entry,
+        ...(entry.origins ? { origins: [...entry.origins] } : {})
+      });
+      continue;
+    }
+
+    const origins = [...new Set([...(existing.origins ?? []), ...(entry.origins ?? [])])];
+    if (origins.length > 0) {
+      existing.origins = origins;
+    }
+  }
+  return [...deduplicated.values()];
+}
+
+export function tagVerificationEntries(
+  entries: readonly VerificationEntryInput[],
+  origin: VerificationOrigin
+): VerificationEntry[] {
+  return normalizeVerificationEntries(entries).map((entry) => ({
+    ...entry,
+    origins: [...new Set([...(entry.origins ?? []), origin])]
+  }));
 }
 
 export function verificationCommands(entries: readonly VerificationEntry[]): string[] {

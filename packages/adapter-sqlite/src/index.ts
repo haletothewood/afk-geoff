@@ -62,9 +62,9 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
     const inserted = new Map<string, HydratedWorkItem>();
     const insertWorkItem = this.db.prepare(
       `INSERT INTO work_items (
-        id, requirement_id, title, body, type, status, plan_key, execution_summary, acceptance_criteria_json, created_at, updated_at
+        id, requirement_id, title, body, type, status, plan_key, execution_summary, acceptance_criteria_json, brief_verification_json, created_at, updated_at
       ) VALUES (
-        @id, @requirementId, @title, @body, @type, @status, @planKey, @executionSummary, @acceptanceCriteriaJson, @createdAt, @updatedAt
+        @id, @requirementId, @title, @body, @type, @status, @planKey, @executionSummary, @acceptanceCriteriaJson, @briefVerificationJson, @createdAt, @updatedAt
       )`
     );
     const insertDependency = this.db.prepare(
@@ -85,6 +85,7 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
         planKey: item.planKey,
         executionSummary: item.executionSummary ?? summary,
         acceptanceCriteria: [...item.acceptanceCriteria],
+        ...(item.briefVerification ? { briefVerification: [...item.briefVerification] } : {}),
         dependencyIds: [],
         createdAt: now,
         updatedAt: now
@@ -100,6 +101,7 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
         planKey: workItem.planKey,
         executionSummary: workItem.executionSummary,
         acceptanceCriteriaJson: JSON.stringify(workItem.acceptanceCriteria),
+        briefVerificationJson: workItem.briefVerification ? JSON.stringify(workItem.briefVerification) : null,
         createdAt: now,
         updatedAt: now
       });
@@ -282,6 +284,7 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
         plan_key TEXT NOT NULL,
         execution_summary TEXT NOT NULL,
         acceptance_criteria_json TEXT NOT NULL,
+        brief_verification_json TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(requirement_id) REFERENCES requirements(id)
@@ -333,6 +336,7 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
 
     this.ensureColumn("runs", "terminal_failure_category", "TEXT");
     this.ensureColumn("runs", "terminal_failure_message", "TEXT");
+    this.ensureColumn("work_items", "brief_verification_json", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -412,6 +416,9 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
       planKey: row.plan_key,
       executionSummary: row.execution_summary,
       acceptanceCriteria: JSON.parse(row.acceptance_criteria_json),
+      ...(row.brief_verification_json
+        ? { briefVerification: JSON.parse(row.brief_verification_json) }
+        : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -511,6 +518,7 @@ interface DbWorkItem {
   plan_key: string;
   execution_summary: string;
   acceptance_criteria_json: string;
+  brief_verification_json: string | null;
   created_at: string;
   updated_at: string;
 }

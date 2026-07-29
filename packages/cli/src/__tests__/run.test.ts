@@ -593,11 +593,15 @@ describe("afk CLI — run command", () => {
     const failedFinalResult = JSON.parse(
       fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
     ) as {
+      status?: string;
+      publishable?: boolean;
       terminalFailure?: { category: string; message: string };
       evidencePacket?: {
         terminalFailure?: { category: string; message: string };
       };
     };
+    expect(failedFinalResult.status).toBe("failed");
+    expect(failedFinalResult.publishable).toBe(false);
     expect(failedFinalResult.terminalFailure).toEqual(run?.terminalFailure);
     expect(failedFinalResult.evidencePacket?.terminalFailure).toEqual(run?.terminalFailure);
 
@@ -610,6 +614,10 @@ describe("afk CLI — run command", () => {
     const [retriedRun] = await fixture.store.listRuns();
     const [retriedWorkItem] = await fixture.items(requirement!.id);
     const finalResult = JSON.parse(fs.readFileSync(path.join(retriedRun!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      publishabilityBlockers: Array<{ category: string; message: string }>;
       recovery: {
         reusedStages: string[];
         retriedStages: string[];
@@ -638,6 +646,12 @@ describe("afk CLI — run command", () => {
       })
     );
     expect(finalResult.evidencePacket.recovery).toEqual(finalResult.recovery);
+    expect(finalResult.status).toBe("done");
+    expect(finalResult.publishable).toBe(true);
+    expect(finalResult.whyNotPublishable).not.toContain(run!.terminalFailure!.message);
+    expect(finalResult.publishabilityBlockers).not.toContainEqual(
+      expect.objectContaining({ category: "publishing" })
+    );
     expect(finalResult.terminalFailure).toBeUndefined();
     expect(finalResult.evidencePacket.terminalFailure).toBeUndefined();
   });
