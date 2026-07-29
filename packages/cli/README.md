@@ -99,7 +99,7 @@ The next priorities are:
 
 After that, planned work includes stronger work admission and back pressure, hardened backend selection, the optional GitHub Actions backend, additional source and publishing adapters, and reliable runner usage accounting.
 
-Roadmap order may change as the execution contract is tested in real repositories. See the [full backlog](https://github.com/haletothewood/afk-geoff/blob/main/docs/backlog.md) for current scope and status.
+Roadmap order may change as the execution contract is tested in real repositories. See the [public roadmap](https://github.com/haletothewood/afk-geoff/blob/main/docs/roadmap.md) for current direction.
 
 ## Current status
 
@@ -110,7 +110,7 @@ AFK Geoff is early-stage software. Local execution is the primary workflow, GitH
 - [Repository and full documentation](https://github.com/haletothewood/afk-geoff)
 - [Agent orchestrator quick start](https://github.com/haletothewood/afk-geoff/blob/main/docs/agent-orchestrator-quickstart.md)
 - [Machine-readable orchestrator contract](https://github.com/haletothewood/afk-geoff/blob/main/docs/orchestrator-contract.md)
-- [Roadmap and backlog](https://github.com/haletothewood/afk-geoff/blob/main/docs/backlog.md)
+- [Public roadmap](https://github.com/haletothewood/afk-geoff/blob/main/docs/roadmap.md)
 
 ## License
 
