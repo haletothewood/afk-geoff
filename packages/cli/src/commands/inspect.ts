@@ -9,8 +9,8 @@ export interface RunInspection {
   diagnostics: ReturnType<typeof getRunDiagnostics>;
   paths: {
     runDir: string;
-    resultPath: string;
-    finalResultPath: string;
+    resultPath?: string;
+    finalResultPath?: string;
     worktreePath?: string;
     detachLogPaths?: {
       stdout: string;
@@ -53,8 +53,8 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
     diagnostics,
     paths: {
       runDir: run.runDir,
-      resultPath,
-      finalResultPath,
+      ...(fs.existsSync(resultPath) ? { resultPath } : {}),
+      ...(fs.existsSync(finalResultPath) ? { finalResultPath } : {}),
       ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
       ...(diagnostics.detachLogPaths ? { detachLogPaths: diagnostics.detachLogPaths } : {})
     },
@@ -84,7 +84,9 @@ export async function printRunInspection(ctx: CliContext, runId: string): Promis
   if (inspection.pullRequest?.url) {
     console.log(`Pull request: ${inspection.pullRequest.url}`);
   }
-  console.log(`Final result: ${inspection.paths.finalResultPath}`);
+  if (inspection.paths.finalResultPath) {
+    console.log(`Final result: ${inspection.paths.finalResultPath}`);
+  }
 }
 
 function deriveInspection(

@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress, WorkspaceRuntime } from "@afk-geoff/core";
+import type { ExecutionBackend, ExecutionBackendInput, ExecutionBackendResult, AgentRunner, RunProgress, TerminalFailure, WorkspaceRuntime } from "@afk-geoff/core";
 import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
 import {
@@ -25,6 +25,7 @@ import {
 } from "@afk-geoff/shared";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
+import { attachTerminalFailure, formatErrorMessage } from "./cli-utils.js";
 import { emitRunEvent, isRunEventsEnabled } from "./run-events.js";
 
 const execFileAsync = promisify(execFile);
@@ -226,6 +227,64 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const generatedArtifacts: GeneratedArtifactSummary[] = [];
     let previousVerificationFailure: FailureObservation | undefined;
     let previousReviewFailure: FailureObservation | undefined;
+    const finishOrchestratorFailure = async (
+      summary: string,
+      issueComment: string
+    ): Promise<ExecutionBackendResult> => {
+      const terminalFailure: TerminalFailure = {
+        category: "orchestrator",
+        message: summary
+      };
+      const finalResultPath = path.join(runDir, "final-result.json");
+      await this.store.updateWorkItemStatus(input.workItem.id, "failed");
+      await this.store.updateRun(runId, { status: "failed", summary, terminalFailure });
+      try {
+        writeFinalRunResult(finalResultPath, {
+          runId,
+          status: "failed",
+          summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          generatedArtifacts,
+          branchName,
+          worktreePath,
+          baseBranch: this.config.baseBranch,
+          publishable: false,
+          whyNotPublishable: [summary],
+          terminalFailure
+        });
+      } catch (error) {
+        const artifactFailure: TerminalFailure = {
+          category: "orchestrator",
+          message: `Final result artifact persistence failed: ${formatErrorMessage(error)}`
+        };
+        await this.store.updateRun(runId, {
+          status: "failed",
+          summary: artifactFailure.message,
+          terminalFailure: artifactFailure
+        });
+        throw attachTerminalFailure(error, artifactFailure);
+      }
+      emitRunEvent({
+        event: "run_completed",
+        runId,
+        workItemId: input.workItem.id,
+        status: "failed",
+        message: summary,
+        branchName,
+        worktreePath,
+        runDir,
+        finalResultPath
+      });
+      return {
+        status: "failed",
+        summary,
+        issueComment,
+        hasDiff: false
+      };
+    };
     const packageManager = await resolvePackageManager(worktreePath);
     const verificationOrigins = new Map(
       input.verification.map((entry) => [entry.command, entry.origins ?? []])
@@ -373,10 +432,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
       if (!fs.existsSync(hostResultPath)) {
         const summary = `No result.json found (exit code ${exitCode}, iteration ${iteration})`;
-        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, { status: "failed", summary });
-        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
-        throw new Error(`Worker did not produce result.json for ${input.workItem.id} (iteration ${iteration})`);
+        const message = `Worker did not produce result.json for ${input.workItem.id} (iteration ${iteration})`;
+        await finishOrchestratorFailure(
+          summary,
+          message
+        );
+        throw attachTerminalFailure(new Error(message), {
+          category: "orchestrator",
+          message: summary
+        });
       }
 
       let agentResult: import("@afk-geoff/shared").WorkerResult;
@@ -384,10 +448,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         agentResult = workerResultSchema.parse(parseJsonWithRecovery(fs.readFileSync(hostResultPath, "utf8")));
       } catch (err) {
         const summary = `Agent produced malformed result.json (iteration ${iteration})`;
-        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, { status: "failed", summary });
-        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
-        throw new Error(`Agent produced malformed result.json for ${input.workItem.id} (iteration ${iteration}): ${String(err)}`);
+        const message = `Agent produced malformed result.json for ${input.workItem.id} (iteration ${iteration}): ${String(err)}`;
+        await finishOrchestratorFailure(
+          summary,
+          message
+        );
+        throw attachTerminalFailure(new Error(message), {
+          category: "orchestrator",
+          message: summary
+        });
       }
       const phaseResultPath = path.join(runDir, `${phase}-result-${iteration}.json`);
       fs.copyFileSync(hostResultPath, phaseResultPath);
@@ -720,42 +789,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           reviewStderrPath
         );
       } catch (err) {
-        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, {
-          status: "failed",
-          summary: `Review agent process failed to start (iteration ${iteration}): ${String(err)}`
-        });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "failed",
-          message: `Review agent process failed (iteration ${iteration})`,
-          branchName,
-          worktreePath,
-          runDir
-        });
-        return {
-          status: "failed",
-          summary: `Review agent process failed (iteration ${iteration})`,
-          issueComment: `Review agent process failed (iteration ${iteration}): ${String(err)}`,
-          hasDiff: false
-        };
+        const summary = `Review agent process failed to start (iteration ${iteration}): ${String(err)}`;
+        return await finishOrchestratorFailure(summary, summary);
       } finally {
         stopReviewStatusTicker();
       }
 
       if (!fs.existsSync(reviewResultPath)) {
         const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})`;
-        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, { status: "failed", summary });
-        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
-        return {
-          status: "failed",
-          summary,
-          issueComment: `**AFK run failed**\n\n${summary}`,
-          hasDiff: false
-        };
+        return await finishOrchestratorFailure(summary, `**AFK run failed**\n\n${summary}`);
       }
 
       let reviewResult: import("@afk-geoff/shared").ReviewResult;
@@ -765,15 +807,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         );
       } catch {
         const summary = `Review agent produced malformed output (iteration ${iteration})`;
-        await this.store.updateWorkItemStatus(input.workItem.id, "failed");
-        await this.store.updateRun(runId, { status: "failed", summary });
-        emitRunEvent({ event: "run_completed", runId, workItemId: input.workItem.id, status: "failed", message: summary, branchName, worktreePath, runDir });
-        return {
-          status: "failed",
-          summary,
-          issueComment: `**AFK run failed**\n\n${summary}`,
-          hasDiff: false
-        };
+        return await finishOrchestratorFailure(summary, `**AFK run failed**\n\n${summary}`);
       }
       reviewResults.push({
         iteration,
@@ -1222,6 +1256,7 @@ function writeFinalRunResult(pathname: string, result: {
   hasDiff?: boolean;
   publishable?: boolean;
   whyNotPublishable?: string[];
+  terminalFailure?: TerminalFailure;
 }): void {
   const worktreeStatus = readWorktreeStatus(result.worktreePath);
   const verificationIssues = result.verificationSummaries.flatMap((summary) =>
@@ -1249,13 +1284,20 @@ function writeFinalRunResult(pathname: string, result: {
     verificationIssues.length === 0
   );
   const uniqueWhyNotPublishable = whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [];
-  const evidencePacket = buildEvidencePacket({
+  const baseEvidencePacket = buildEvidencePacket({
     ...result,
     worktreeStatus,
     publishable,
     whyNotPublishable: uniqueWhyNotPublishable,
     changedFiles: readChangedFiles(result.worktreePath, result.baseBranch)
   });
+  const evidencePacket: EvidencePacket = result.terminalFailure
+    ? {
+        ...baseEvidencePacket,
+        terminalFailure: result.terminalFailure,
+        recommendedHumanAction: "retry"
+      }
+    : baseEvidencePacket;
   fs.writeFileSync(
     pathname,
     JSON.stringify(
@@ -1299,6 +1341,7 @@ interface EvidencePacket {
     inspectFirst: string[];
   };
   recommendedHumanAction: "publish" | "retry" | "narrow_scope" | "fix_environment" | "inspect";
+  terminalFailure?: TerminalFailure;
 }
 
 function buildEvidencePacket(result: {

@@ -877,6 +877,49 @@ describe("afk CLI — JSON output", () => {
     });
   });
 
+  it("Given a terminal run has no persisted artifacts, then inspect and handoff omit unusable artifact paths", async () => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    const runId = "run_missing_artifacts";
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "failed",
+      runDir,
+      summary: "Final result artifact persistence failed: disk unavailable",
+      terminalFailure: {
+        category: "orchestrator",
+        message: "Final result artifact persistence failed: disk unavailable"
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const inspection = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["inspect", runId, "--json"]);
+    })) as {
+      paths: { resultPath?: string; finalResultPath?: string };
+      derived: { complete: boolean };
+    };
+    const handoff = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["handoff", runId, "--json"]);
+    })) as {
+      finalResultPath?: string;
+      recommendedAction: string;
+    };
+
+    expect(inspection.paths).not.toHaveProperty("resultPath");
+    expect(inspection.paths).not.toHaveProperty("finalResultPath");
+    expect(inspection.derived.complete).toBe(false);
+    expect(handoff).not.toHaveProperty("finalResultPath");
+    expect(handoff.recommendedAction).toBe("retry");
+  });
+
   it("Given status --json, when work exists, then it prints queue and next-action state", async () => {
     const fixture = await createFixture(tempDir);
     writeBrief(fixture.repoDir);
@@ -1006,6 +1049,96 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.backend).toBe("local-docker");
 	    expect(payload.workItemId).toBe(initialRun!.workItemId);
     expect(payload.error.message).toContain("no actionable review comments");
+  });
+
+  it("Given a follow-up reviewer exits without a verdict, then every advertised terminal artifact exists and retains evidence", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{ id: "comment_1", body: "Please address this feedback." }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      verification: ["node -e \"process.exit(0)\""]
+    });
+    writeBrief(fixture.repoDir);
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["follow-up", initialRun!.workItemId, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      status: string;
+      runId: string;
+      finalResultPath: string;
+      terminalFailure?: { category: string; message: string };
+    };
+    const [followUpRun] = await fixture.store.listRuns();
+
+    expect(payload).toEqual(expect.objectContaining({
+      command: "follow-up",
+      ok: true,
+      status: "failed",
+      runId: followUpRun!.id
+    }));
+    expect(fs.existsSync(payload.finalResultPath)).toBe(true);
+
+    const finalResult = JSON.parse(fs.readFileSync(payload.finalResultPath, "utf8")) as {
+      status: string;
+      publishable: boolean;
+      workerResults: unknown[];
+      verificationSummaries: unknown[];
+      terminalFailure: { category: string; message: string };
+      evidencePacket: {
+        terminalFailure: { category: string; message: string };
+        recommendedHumanAction: string;
+      };
+    };
+    expect(finalResult).toEqual(expect.objectContaining({
+      status: "failed",
+      publishable: false,
+      workerResults: expect.any(Array),
+      verificationSummaries: expect.any(Array),
+      terminalFailure: {
+        category: "orchestrator",
+        message: expect.stringContaining("did not produce a verdict")
+      }
+    }));
+    expect(finalResult.workerResults).toHaveLength(1);
+    expect(finalResult.verificationSummaries).toHaveLength(1);
+    expect(finalResult.evidencePacket.terminalFailure).toEqual(finalResult.terminalFailure);
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("retry");
+
+    const inspectOutput = await captureConsole(async () => {
+      await fixture.cli(["inspect", followUpRun!.id, "--json"]);
+    });
+    const inspection = JSON.parse(inspectOutput) as {
+      paths: { finalResultPath: string };
+      derived: { complete: boolean; publishable: boolean };
+      terminalFailure: { category: string; message: string };
+    };
+    const handoffOutput = await captureConsole(async () => {
+      await fixture.cli(["handoff", followUpRun!.id, "--json"]);
+    });
+    const handoff = JSON.parse(handoffOutput) as {
+      status: string;
+      finalResultPath: string;
+      recommendedAction: string;
+      terminalFailure: { category: string; message: string };
+    };
+
+    expect(fs.existsSync(inspection.paths.finalResultPath)).toBe(true);
+    expect(inspection.derived).toEqual(expect.objectContaining({ complete: true, publishable: false }));
+    expect(inspection.terminalFailure).toEqual(finalResult.terminalFailure);
+    expect(fs.existsSync(handoff.finalResultPath)).toBe(true);
+    expect(handoff).toEqual(expect.objectContaining({
+      status: "failed",
+      recommendedAction: "retry",
+      terminalFailure: finalResult.terminalFailure
+    }));
   });
 
   it("Given follow-up --json cannot push its branch, then it reports and persists a publishing failure", async () => {

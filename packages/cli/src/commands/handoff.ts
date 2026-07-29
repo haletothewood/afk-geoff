@@ -22,7 +22,7 @@ export interface RunHandoff {
   createdCommitCount?: number;
   worktreeClean?: boolean;
   runDir: string;
-  finalResultPath: string;
+  finalResultPath?: string;
   worktreePath?: string;
   evidencePacket?: Record<string, unknown>;
   terminalFailure?: TerminalFailure;
@@ -54,7 +54,7 @@ export async function getRunHandoff(ctx: CliContext, runId: string): Promise<Run
     ...(typeof derived.createdCommitCount === "number" ? { createdCommitCount: derived.createdCommitCount } : {}),
     ...(typeof derived.worktreeClean === "boolean" ? { worktreeClean: derived.worktreeClean } : {}),
     runDir: paths.runDir,
-    finalResultPath: paths.finalResultPath,
+    ...(paths.finalResultPath ? { finalResultPath: paths.finalResultPath } : {}),
     ...(paths.worktreePath ? { worktreePath: paths.worktreePath } : {}),
     ...(inspection.evidencePacket ? { evidencePacket: inspection.evidencePacket } : {}),
     ...(inspection.terminalFailure ? { terminalFailure: inspection.terminalFailure } : {}),
@@ -79,7 +79,9 @@ export async function printRunHandoff(ctx: CliContext, runId: string): Promise<v
   if (typeof handoff.evidencePacket?.recommendedHumanAction === "string") {
     console.log(`Recommended human action: ${handoff.evidencePacket.recommendedHumanAction}`);
   }
-  console.log(`Final result: ${handoff.finalResultPath}`);
+  if (handoff.finalResultPath) {
+    console.log(`Final result: ${handoff.finalResultPath}`);
+  }
 }
 
 function recommendAction(inspection: RunInspection): RecommendedHandoffAction {
