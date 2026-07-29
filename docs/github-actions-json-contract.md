@@ -77,7 +77,7 @@ Errors from argument validation, missing GitHub configuration or adapter capabil
 }
 ```
 
-A GitHub API dispatch failure uses the same field presence, with the API failure text in `error.message`.
+A GitHub API dispatch failure uses the same field presence, with the API failure text in `error.message`. If the installed workflow rejects the required `correlation_id` input, submission fails and instructs the caller to upgrade the workflow; AFK does not retry an uncorrelated legacy dispatch or return a success envelope.
 
 ## Run Discovery
 

@@ -35,16 +35,13 @@ export async function submitGitHubActionsIssueRun(
   const afkRepository = options.afkRepository ?? DEFAULT_AFK_REPOSITORY;
   const afkRef = options.afkRef ?? DEFAULT_AFK_REF;
   const correlationId = createId("dispatch");
-  const compatibleInputs = {
+  const inputs: Record<string, string> = {
+    correlation_id: correlationId,
     issue_url: issueUrl,
     backend: "local-docker",
     require_pr: String(requirePullRequest),
     afk_repository: afkRepository,
     afk_ref: afkRef
-  };
-  let inputs: Record<string, string> = {
-    correlation_id: correlationId,
-    ...compatibleInputs
   };
 
   const dispatch = () => dispatcher.dispatchWorkflow({
@@ -62,8 +59,9 @@ export async function submitGitHubActionsIssueRun(
       throw error;
     }
 
-    inputs = compatibleInputs;
-    await dispatch();
+    throw new Error(
+      "The remote afk-run.yml workflow does not accept the required correlation_id input. Upgrade the workflow before submitting GitHub Actions runs."
+    );
   }
 
   return {

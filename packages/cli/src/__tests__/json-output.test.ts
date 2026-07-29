@@ -1305,7 +1305,7 @@ describe("afk CLI — JSON output", () => {
     ]);
   });
 
-  it("Given an installed legacy workflow, when correlation_id is rejected, then submit retries with compatible inputs", async () => {
+  it("Given an installed legacy workflow, when correlation_id is rejected, then submit returns the frozen upgrade-required failure", async () => {
     const githubMirror = new MockGitHubMirror();
     githubMirror.workflowDispatchErrors.push(
       Object.assign(new Error('Unexpected inputs provided: ["correlation_id"]'), { status: 422 })
@@ -1316,32 +1316,25 @@ describe("afk CLI — JSON output", () => {
     });
     const issueUrl = "https://github.com/acme/demo/issues/42";
 
-    const output = await captureConsole(async () => {
+    const output = await captureConsoleForRejected(async () => {
       await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
     });
-    const payload = JSON.parse(output) as {
-      correlationId: string;
-      inputs: Record<string, string>;
-    };
-    const compatibleInputs = {
-      issue_url: issueUrl,
-      backend: "local-docker",
-      require_pr: "true",
-      afk_repository: "haletothewood/afk-geoff",
-      afk_ref: "main"
-    };
 
-    expect(payload.correlationId).toMatch(/^dispatch_[0-9a-f]{32}$/);
-    expect(payload.inputs).toEqual(compatibleInputs);
+    expect(JSON.parse(output)).toEqual({
+      command: "submit",
+      ok: false,
+      target: "issue",
+      value: issueUrl,
+      backend: "github-actions",
+      error: {
+        message: "The remote afk-run.yml workflow does not accept the required correlation_id input. Upgrade the workflow before submitting GitHub Actions runs."
+      }
+    });
     expect(githubMirror.workflowDispatches).toEqual([
       expect.objectContaining({
-        inputs: {
-          correlation_id: payload.correlationId,
-          ...compatibleInputs
-        }
-      }),
-      expect.objectContaining({
-        inputs: compatibleInputs
+        inputs: expect.objectContaining({
+          correlation_id: expect.stringMatching(/^dispatch_[0-9a-f]{32}$/)
+        })
       })
     ]);
   });
