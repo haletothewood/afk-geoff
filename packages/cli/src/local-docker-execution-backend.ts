@@ -1259,31 +1259,31 @@ function writeFinalRunResult(pathname: string, result: {
   terminalFailure?: TerminalFailure;
 }): void {
   const worktreeStatus = readWorktreeStatus(result.worktreePath);
-  const verificationIssues = result.verificationSummaries.flatMap((summary) =>
-    summary.results
-      .filter((verification) => !verification.passed)
-      .map((verification) => {
-        const category = verification.failureCategory ?? "product";
-        const label = category === "environment"
-          ? "Environment verification"
-          : category === "verification"
-            ? "Verification contract"
-            : "Product verification";
-        return `${label} failed: ${verification.command} (exit ${verification.exitCode})`;
-      })
-  );
+  const terminalVerificationResults = latestVerificationResults(result.verificationSummaries);
+  const verificationIssues = terminalVerificationResults
+    .filter((verification) => !verification.passed)
+    .map((verification) => {
+      const category = verification.failureCategory ?? "product";
+      const label = category === "environment"
+        ? "Environment verification"
+        : category === "verification"
+          ? "Verification contract"
+          : "Product verification";
+      return `${label} failed: ${verification.command} (exit ${verification.exitCode})`;
+    });
   const whyNotPublishable = [
     ...verificationIssues,
     ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
     ...(result.whyNotPublishable ?? [])
   ];
-  const publishable = result.publishable ?? (
+  const requestedPublishable = result.publishable ?? (
     result.status === "done" &&
     result.hasDiff === true &&
     worktreeStatus.clean &&
     verificationIssues.length === 0
   );
   const uniqueWhyNotPublishable = whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [];
+  const publishable = requestedPublishable && uniqueWhyNotPublishable.length === 0;
   const baseEvidencePacket = buildEvidencePacket({
     ...result,
     worktreeStatus,
@@ -1357,7 +1357,7 @@ function buildEvidencePacket(result: {
   whyNotPublishable: string[];
   changedFiles: string[];
 }): EvidencePacket {
-  const verificationCommands = result.verificationSummaries.flatMap((summary) => summary.results);
+  const verificationCommands = latestVerificationResults(result.verificationSummaries);
   const verificationStatus = verificationCommands.length === 0
     ? "skipped"
     : verificationCommands.every((command) => command.passed) ? "passed" : "failed";
@@ -1403,6 +1403,12 @@ function buildEvidencePacket(result: {
     },
     recommendedHumanAction: recommendHumanAction(result.publishable, blockers, latestReview?.verdict)
   };
+}
+
+function latestVerificationResults(
+  summaries: VerificationPhaseSummary[]
+): VerificationPhaseSummary["results"] {
+  return summaries.at(-1)?.results ?? [];
 }
 
 function deriveImportantDesignDecisions(result: {

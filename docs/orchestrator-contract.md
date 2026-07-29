@@ -192,7 +192,9 @@ Each failed wrapper-verification command records a `failureCategory`:
 - `verification`: the verification contract or shell command is malformed; AFK blocks without launching a fix worker
 - `environment`: a required command, module, permission, or runtime dependency is unavailable; AFK blocks without launching a fix worker
 
-Only product failures are actionable by a coding worker. Verification-contract and environment failures remain visible in `verificationSummaries`, `whyNotPublishable`, and the evidence packet, which recommends correcting the contract or environment before retrying.
+Only product failures are actionable by a coding worker. Active verification-contract and environment failures remain visible in `verificationSummaries`, `whyNotPublishable`, and the evidence packet, which recommends correcting the contract or environment before retrying.
+
+`verificationSummaries` preserves every iteration as historical evidence. Terminal verification status, active `whyNotPublishable` entries, `publishabilityBlockers`, and `evidencePacket.verification` derive from the latest applicable verification summary. A recovered earlier failure remains in history without blocking publication; a failure in the final applicable summary keeps the run non-publishable. Consequently, `publishable: true` always implies that `whyNotPublishable` and `publishabilityBlockers` are empty.
 
 Terminal AFK and result-publishing failures use a separate `terminalFailure` object:
 

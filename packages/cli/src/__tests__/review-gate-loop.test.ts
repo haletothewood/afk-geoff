@@ -325,6 +325,100 @@ if (prompt.includes("# Issues to fix")) {
     expect(fs.existsSync(path.join(run!.runDir, "fix-prompt-3.md"))).toBe(false);
   });
 
+  it("verification recovery: historical failures remain evidence without blocking the final passing iteration", async () => {
+    const fixture = await createFixture(tempDir, {
+      runnerScriptSuffix: `
+if (prompt.includes("# Issues to fix")) {
+  fs.writeFileSync(path.join(process.cwd(), "verification-ready"), "ready\\n");
+}
+`
+    });
+    const verificationCommand = `node -e "process.exit(require('fs').existsSync('verification-ready') ? 0 : 1)"`;
+    rewriteConfig(fixture.repoDir, { githubEnabled: false, verification: [verificationCommand] });
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      publishabilityBlockers: Array<{ category: string; message: string }>;
+      verificationSummaries: Array<{
+        iteration: number;
+        results: Array<{ command: string; passed: boolean; exitCode: number }>;
+      }>;
+      evidencePacket: {
+        verification: {
+          status: string;
+          commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+        };
+        publishability: {
+          publishable: boolean;
+          blockers: Array<{ category: string; message: string }>;
+        };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(finalResult.verificationSummaries).toEqual([
+      expect.objectContaining({
+        iteration: 1,
+        results: [expect.objectContaining({ command: verificationCommand, passed: false, exitCode: 1 })]
+      }),
+      expect.objectContaining({
+        iteration: 2,
+        results: [expect.objectContaining({ command: verificationCommand, passed: true, exitCode: 0 })]
+      })
+    ]);
+    expect(finalResult).toEqual(expect.objectContaining({
+      status: "done",
+      publishable: true,
+      whyNotPublishable: [],
+      publishabilityBlockers: []
+    }));
+    expect(finalResult.evidencePacket.verification).toEqual({
+      status: "passed",
+      commands: [expect.objectContaining({ command: verificationCommand, passed: true, exitCode: 0 })]
+    });
+    expect(finalResult.evidencePacket.publishability).toEqual({
+      publishable: true,
+      blockers: []
+    });
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("publish");
+
+    const inspection = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["inspect", run!.id, "--json"]);
+    })) as {
+      derived: { verificationStatus: string; publishable: boolean; whyNotPublishable: string[] };
+    };
+    const handoff = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    })) as {
+      verificationStatus: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      recommendedAction: string;
+    };
+
+    expect(inspection.derived).toEqual(expect.objectContaining({
+      verificationStatus: "passed",
+      publishable: true,
+      whyNotPublishable: []
+    }));
+    expect(handoff).toEqual(expect.objectContaining({
+      verificationStatus: "passed",
+      publishable: true,
+      whyNotPublishable: [],
+      recommendedAction: "publish"
+    }));
+  });
+
   it("verification retry: a reviewed unchanged commit reruns verification without another agent iteration", async () => {
     const fixture = await createFixture(tempDir);
     const readinessMarker = path.join(tempDir, "verification-ready");
