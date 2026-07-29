@@ -338,10 +338,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--limit <count>", "Maximum number of workflow runs to list", "10")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { workflow: string; limit: string; json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
-
       if (options.json) {
         try {
+          const ctx = await openContext(commandCwd, dependencies);
           const limit = parsePositiveInteger(options.limit, "--limit");
           const snapshot = await runForJson(async () => await listRemoteRuns(ctx, { workflowId: options.workflow, limit }));
           printJson({ command: "remote-runs", ok: true, backend: githubActionsBackend, ...snapshot });
@@ -350,6 +349,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         const limit = parsePositiveInteger(options.limit, "--limit");
         await printRemoteRuns(ctx, { workflowId: options.workflow, limit });
       }
@@ -361,10 +361,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--limit <count>", "Maximum number of artifacts to list", "10")
     .option("--json", "Print machine-readable JSON")
     .action(async (runId: string, options: { limit: string; json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
-
       if (options.json) {
         try {
+          const ctx = await openContext(commandCwd, dependencies);
           const limit = parsePositiveInteger(options.limit, "--limit");
           assertNumericId(runId, "runId", "GitHub Actions numeric run id");
           const snapshot = await runForJson(async () => await listRemoteArtifacts(ctx, { runId, limit }));
@@ -374,6 +373,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         const limit = parsePositiveInteger(options.limit, "--limit");
         assertNumericId(runId, "runId", "GitHub Actions numeric run id");
         await printRemoteArtifacts(ctx, { runId, limit });
@@ -386,10 +386,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--output <path>", "Path for the downloaded artifact ZIP")
     .option("--json", "Print machine-readable JSON")
     .action(async (artifactId: string, options: { output?: string; json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
-
       if (options.json) {
         try {
+          const ctx = await openContext(commandCwd, dependencies);
           assertNumericId(artifactId, "artifactId", "GitHub Actions numeric artifact id");
           const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
           const result = await runForJson(async () => await downloadRemoteArtifact(ctx, downloadOptions));
@@ -399,6 +398,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         assertNumericId(artifactId, "artifactId", "GitHub Actions numeric artifact id");
         const downloadOptions = options.output ? { artifactId, outputPath: options.output } : { artifactId };
         await printRemoteArtifactDownload(ctx, downloadOptions);
@@ -415,8 +415,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Remote execution backend").choices([...submitBackendChoices]).default("github-actions"))
     .action(async (target: string, value: string, options: { pr?: boolean; afkRepository: string; afkRef: string; json?: boolean; backend: typeof submitBackendChoices[number] }) => {
-      const ctx = await openContext(commandCwd, dependencies);
-      const submitAction = async () => {
+      const submitAction = async (ctx: Awaited<ReturnType<typeof openContext>>) => {
         if (target !== "issue") {
           throw new Error("Usage: pnpm afk submit issue <github-issue-url> [--backend github-actions] [--afk-repository owner/repo] [--afk-ref ref] [--json]");
         }
@@ -429,14 +428,16 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
 
       if (options.json) {
         try {
-          const outcome = await runForJson(submitAction);
+          const ctx = await openContext(commandCwd, dependencies);
+          const outcome = await runForJson(async () => await submitAction(ctx));
           printJson({ command: "submit", ok: true, target, value, ...outcome });
         } catch (error) {
           printJson({ command: "submit", ok: false, target, value, backend: options.backend, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
-        const outcome = await submitAction();
+        const ctx = await openContext(commandCwd, dependencies);
+        const outcome = await submitAction(ctx);
         console.log(`Submitted ${value} to ${outcome.workflowId} on ${outcome.ref}`);
       }
     });
