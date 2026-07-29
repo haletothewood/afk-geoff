@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { PullRequestReviewSource } from "@afk-geoff/core";
 import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificationEntries, verificationCommands } from "@afk-geoff/shared";
-import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage } from "../cli-utils.js";
+import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage, terminalFailureFromError } from "../cli-utils.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
 
@@ -62,19 +62,58 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   if (followUpWorktreePath) {
     resolvePackageManagerContract(followUpWorktreePath, verificationCommands(verificationContract));
   }
-  const result = await ctx.executionBackend.run({
-    requirement,
-    workItem,
-    verification: verificationContract,
-    followUp: {
-      branchName,
-      ...(followUpWorktreePath ? { worktreePath: followUpWorktreePath } : {}),
-      reviewComments
+  let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
+  try {
+    result = await ctx.executionBackend.run({
+      requirement,
+      workItem,
+      verification: verificationContract,
+      followUp: {
+        branchName,
+        ...(followUpWorktreePath ? { worktreePath: followUpWorktreePath } : {}),
+        reviewComments
+      }
+    });
+  } catch (error) {
+    const failedRun = await latestRunForWorkItem(ctx, workItem.id);
+    if (failedRun && failedRun.id !== latestRun?.id) {
+      const terminalFailure = terminalFailureFromError(error) ?? {
+        category: "orchestrator" as const,
+        message: `Follow-up execution failed: ${formatErrorMessage(error)}`
+      };
+      const finalResultPath = path.join(failedRun.runDir, "final-result.json");
+      if (!fs.existsSync(finalResultPath)) {
+        try {
+          await markWorkItemRunFailed(
+            ctx,
+            workItem.id,
+            terminalFailure.message,
+            terminalFailure.category === "publishing" ? "publishing" : "orchestrator"
+          );
+        } catch (persistenceError) {
+          const artifactFailure = {
+            category: "orchestrator" as const,
+            message: `Final result artifact persistence failed: ${formatErrorMessage(persistenceError)}`
+          };
+          throw attachTerminalFailure(persistenceError, artifactFailure);
+        }
+      }
+      throw attachTerminalFailure(error, terminalFailure);
     }
-  });
+    throw error;
+  }
 
   if (result.status === "blocked" || result.status === "failed") {
-    const run = await latestRunForWorkItem(ctx, workItem.id);
+    let run = await latestRunForWorkItem(ctx, workItem.id);
+    const finalResultPath = run ? path.join(run.runDir, "final-result.json") : undefined;
+    if (
+      result.status === "failed"
+      && run
+      && (!run.terminalFailure || !finalResultPath || !fs.existsSync(finalResultPath))
+    ) {
+      await markWorkItemRunFailed(ctx, workItem.id, result.summary);
+      run = await latestRunForWorkItem(ctx, workItem.id);
+    }
     const verification = readVerificationSummary(run?.runDir);
     return {
       workItemId: workItem.id,
@@ -84,6 +123,14 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
             status: result.status,
             ...(run.branchName ? { branchName: run.branchName } : {}),
             ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
+            runDir: run.runDir,
+            ...(fs.existsSync(path.join(run.runDir, "result.json"))
+              ? { resultPath: path.join(run.runDir, "result.json") }
+              : {}),
+            ...(fs.existsSync(path.join(run.runDir, "final-result.json"))
+              ? { finalResultPath: path.join(run.runDir, "final-result.json") }
+              : {}),
+            ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {}),
             actionableReviewComments,
             ...(verification ? { verification } : {}),
             ...(pullRef.url ? { prUrl: pullRef.url } : {})

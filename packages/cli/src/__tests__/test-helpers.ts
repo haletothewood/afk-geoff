@@ -260,6 +260,10 @@ if (reviewMatch) {
     fs.writeFileSync(reviewOutputPath, "{ verdict: PASS "); // missing closing brace + unquoted key
     process.exit(0);
   }
+  // Special sentinel: exit successfully without writing the required verdict artifact.
+  if (verdict === "__MISSING__") {
+    process.exit(0);
+  }
   const result = { verdict, ...(issues.length > 0 ? { issues } : {}), ...(blockerReason ? { blockerReason } : {}) };
   fs.writeFileSync(reviewOutputPath, JSON.stringify(result, null, 2));
   process.exit(0);

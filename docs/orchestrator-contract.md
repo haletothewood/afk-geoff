@@ -109,6 +109,8 @@ A verification failure returns the tracked terminal outcome with `ok: true`, `st
 }
 ```
 
+Every terminal follow-up run persists `final-result.json` before its result is emitted, including missing or malformed worker results, reviewer startup failures, and missing or malformed reviewer verdicts. These failure artifacts retain the evidence completed before the failure, set `publishable: false`, record an `orchestrator` terminal failure, and recommend retry. Follow-up, inspect, and handoff include `finalResultPath` only when that file exists. If AFK cannot persist the artifact, the command exits with a structured orchestrator error whose message begins `Final result artifact persistence failed` and does not advertise a usable path.
+
 For detached orchestrators, combine the local detached flow with `--pr`:
 
 ```bash
@@ -230,6 +232,8 @@ Important artifacts:
 - `detachLogPaths`: stdout/stderr capture files for detached background workers
 
 Use `resultPath` when the worker's own outcome is required. Use `finalResultPath` for completed-run status and every publishability decision; `resultPath` may describe only the last worker phase.
+
+For terminal runs, every non-null artifact path in command, inspect, or handoff output exists when emitted. A path is omitted when its artifact was not produced; AFK does not use a projected path as evidence that persistence completed.
 
 `inspect <runId> --json` returns the run record, diagnostics, artifact paths, the parsed final result when available, an optional `pullRequest` external ref, and derived fields such as `publishable`, `reviewVerdict`, `verificationStatus`, `createdCommitCount`, and `worktreeClean`.
 
