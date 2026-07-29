@@ -1,8 +1,4 @@
-import type { ChangeRequest, ExternalRef, HydratedWorkItem, Requirement, RunRecord, RunnerKind, WorkItem, WorkItemStatus } from "./domain.js";
-
-export interface VerificationEntry {
-  command: string;
-}
+import type { ChangeRequest, ExternalRef, HydratedWorkItem, Requirement, RunRecord, RunnerKind, VerificationEntry, WorkItem, WorkItemStatus } from "./domain.js";
 
 export interface ExecutionBrief {
   requirementBody: string;

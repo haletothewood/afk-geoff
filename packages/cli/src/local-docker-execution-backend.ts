@@ -17,6 +17,7 @@ import {
   parseJsonWithRecovery,
   reviewResultSchema,
   resolveExecutionMode,
+  resolvePackageManagerContract,
   verificationCommands,
   workerResultSchema,
   DEFAULT_DOCKERFILE_PATH,
@@ -87,6 +88,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       ? input.followUp.worktreePath
       : existingDetachedRun?.worktreePath ?? path.join(this.paths.worktreesDir, runId);
     const runDir = existingDetachedRun?.runDir ?? path.join(this.paths.runsDir, runId);
+    const verification = verificationCommands(input.verification);
     fs.mkdirSync(runDir, { recursive: true });
 
     if (!input.followUp?.worktreePath || !fs.existsSync(input.followUp.worktreePath)) {
@@ -105,6 +107,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         });
       }
     }
+
+    resolvePackageManagerContract(worktreePath, verification);
 
     if (!isDetachedResume) {
       // Foreground path: create run record and mark work item as in-progress now.
@@ -223,7 +227,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     let previousVerificationFailure: FailureObservation | undefined;
     let previousReviewFailure: FailureObservation | undefined;
     const packageManager = await resolvePackageManager(worktreePath);
-    const verification = verificationCommands(input.verification);
+    const verificationOrigins = new Map(
+      input.verification.map((entry) => [entry.command, entry.origins ?? []])
+    );
     if (packageManager.warning) {
       if (isRunEventsEnabled()) {
         emitRunEvent({
@@ -496,12 +502,16 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const verificationResults = await runVerificationCommands(verification, worktreePath, packageManager);
       verificationSummaries.push({
         iteration,
-        results: verificationResults.map((result) => ({
-          command: result.command,
-          passed: result.passed,
-          exitCode: result.exitCode,
-          ...(result.failureCategory ? { failureCategory: result.failureCategory } : {})
-        }))
+        results: verificationResults.map((result) => {
+          const origins = verificationOrigins.get(result.command);
+          return {
+            command: result.command,
+            passed: result.passed,
+            exitCode: result.exitCode,
+            ...(origins && origins.length > 0 ? { origins } : {}),
+            ...(result.failureCategory ? { failureCategory: result.failureCategory } : {})
+          };
+        })
       });
       if (verificationResults.length > 0) {
         const passed = verificationResults.filter((result) => result.passed).length;
@@ -1150,6 +1160,7 @@ interface VerificationPhaseSummary {
     command: string;
     passed: boolean;
     exitCode: number;
+    origins?: import("@afk-geoff/core").VerificationOrigin[];
     failureCategory?: import("@afk-geoff/shared").VerificationFailureCategory;
   }>;
 }

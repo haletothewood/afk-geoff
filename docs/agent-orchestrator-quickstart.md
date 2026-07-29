@@ -246,7 +246,7 @@ If an AFK-created pull request receives actionable review comments:
 afk follow-up <workItemId> --json
 ```
 
-The follow-up run works on the existing PR branch and pushes follow-up commits to the same pull request.
+The follow-up run works on the existing PR branch and pushes follow-up commits to the same pull request. It reruns both the current project verification and the original execution brief verification. Duplicate commands execute once, and `verification.commands[].origins` identifies whether each check came from `project`, `brief`, or both. The same provenance is authoritative in `final-result.json`.
 
 ## Minimal Command Sequence
 

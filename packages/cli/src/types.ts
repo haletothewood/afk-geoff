@@ -82,7 +82,12 @@ export interface ReviewCommentSummary {
 
 export interface VerificationSummary {
   status: "passed" | "failed" | "skipped" | "unknown";
-  commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+  commands: Array<{
+    command: string;
+    passed: boolean;
+    exitCode: number;
+    origins?: Array<"project" | "brief">;
+  }>;
 }
 
 export interface DetachedRunOptions {

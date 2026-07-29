@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { PullRequestReviewSource } from "@afk-geoff/core";
-import { buildFallbackSourceComment } from "../cli-utils.js";
-import { latestRunForWorkItem, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
+import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificationEntries, verificationCommands } from "@afk-geoff/shared";
+import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage } from "../cli-utils.js";
+import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
@@ -51,13 +52,23 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   }
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
+  const verificationContract = dedupeVerificationEntries([
+    ...tagVerificationEntries(ctx.config.verification, "project"),
+    ...tagVerificationEntries(workItem.briefVerification ?? [], "brief")
+  ]);
+  const followUpWorktreePath = latestRun.worktreePath && fs.existsSync(latestRun.worktreePath)
+    ? latestRun.worktreePath
+    : undefined;
+  if (followUpWorktreePath) {
+    resolvePackageManagerContract(followUpWorktreePath, verificationCommands(verificationContract));
+  }
   const result = await ctx.executionBackend.run({
     requirement,
     workItem,
-    verification: ctx.config.verification,
+    verification: verificationContract,
     followUp: {
       branchName,
-      ...(latestRun.worktreePath && fs.existsSync(latestRun.worktreePath) ? { worktreePath: latestRun.worktreePath } : {}),
+      ...(followUpWorktreePath ? { worktreePath: followUpWorktreePath } : {}),
       reviewComments
     }
   });
@@ -82,10 +93,19 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   }
 
   if (result.hasDiff && result.branchName && result.worktreePath) {
-    await ctx.git.pushBranch({
-      cwd: result.worktreePath,
-      branchName: result.branchName
-    });
+    try {
+      await ctx.git.pushBranch({
+        cwd: result.worktreePath,
+        branchName: result.branchName
+      });
+    } catch (error) {
+      const terminalFailure = {
+        category: "publishing" as const,
+        message: `Follow-up publication failed: ${formatErrorMessage(error)}`
+      };
+      await markWorkItemRunFailed(ctx, workItem.id, terminalFailure.message, terminalFailure.category);
+      throw attachTerminalFailure(error, terminalFailure);
+    }
   }
 
   const followUpRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -209,12 +229,21 @@ function getVerificationCommands(value: unknown): VerificationSummary["commands"
       return [];
     }
 
+    const origins = getVerificationOrigins(command.origins);
     return [{
       command: command.command,
       passed: command.passed,
-      exitCode: command.exitCode
+      exitCode: command.exitCode,
+      ...(origins.length > 0 ? { origins } : {})
     }];
   });
+}
+
+function getVerificationOrigins(value: unknown): Array<"project" | "brief"> {
+  return getArray<unknown>(value).filter(
+    (origin): origin is "project" | "brief" =>
+      origin === "project" || origin === "brief"
+  );
 }
 
 function getArray<T>(value: unknown): T[] {

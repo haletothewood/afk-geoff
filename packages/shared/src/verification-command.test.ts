@@ -50,4 +50,13 @@ describe("structured verification entries", () => {
 
     expect(dedupeVerificationEntries(entries)).toEqual([{ command: "pnpm typecheck" }]);
   });
+
+  it("retains every origin when equivalent verification entries are deduplicated", () => {
+    expect(dedupeVerificationEntries([
+      { command: "pnpm test", origins: ["project"] },
+      { command: "pnpm test", origins: ["brief"] }
+    ])).toEqual([
+      { command: "pnpm test", origins: ["project", "brief"] }
+    ]);
+  });
 });

@@ -528,7 +528,12 @@ describe("afk CLI — JSON output", () => {
     expect(payload.evidencePacket.changedFiles).toContain("implemented.txt");
     expect(payload.evidencePacket.verification).toEqual({
       status: "passed",
-      commands: [{ command: "node -e \"process.exit(0)\"", passed: true, exitCode: 0 }]
+      commands: [{
+        command: "node -e \"process.exit(0)\"",
+        passed: true,
+        exitCode: 0,
+        origins: ["brief"]
+      }]
     });
     expect(payload.evidencePacket.review).toEqual({
       verdict: "PASS",
@@ -918,7 +923,9 @@ describe("afk CLI — JSON output", () => {
       githubMirror,
       verification: ["node -e \"process.exit(0)\""]
     });
-    writeBrief(fixture.repoDir);
+    writeBrief(fixture.repoDir, {
+      verification: ["node -e \"process.exit(0)\""]
+    });
 
     await fixture.cli(["run", "file", "brief.md", "--pr"]);
     const [initialRun] = await fixture.store.listRuns();
@@ -939,7 +946,7 @@ describe("afk CLI — JSON output", () => {
       addressedReviewComments: number;
       verification: {
         status: string;
-        commands: Array<{ command: string; passed: boolean; exitCode: number }>;
+        commands: Array<{ command: string; passed: boolean; exitCode: number; origins: string[] }>;
       };
     };
 
@@ -962,7 +969,12 @@ describe("afk CLI — JSON output", () => {
     expect(payload.addressedReviewComments).toBe(1);
     expect(payload.verification).toEqual({
       status: "passed",
-      commands: [{ command: "node -e \"process.exit(0)\"", passed: true, exitCode: 0 }]
+      commands: [{
+        command: "node -e \"process.exit(0)\"",
+        passed: true,
+        exitCode: 0,
+        origins: ["project", "brief"]
+      }]
     });
     expect(output).not.toContain("Addressed 1 review comment");
   });
@@ -994,6 +1006,106 @@ describe("afk CLI — JSON output", () => {
 	    expect(payload.backend).toBe("local-docker");
 	    expect(payload.workItemId).toBe(initialRun!.workItemId);
     expect(payload.error.message).toContain("no actionable review comments");
+  });
+
+  it("Given follow-up --json cannot push its branch, then it reports and persists a publishing failure", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{ id: "comment_1", body: "Please address this feedback." }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    writeBrief(fixture.repoDir);
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    fs.renameSync(`${tempDir}/remote.git`, `${tempDir}/remote-unavailable.git`);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["follow-up", initialRun!.workItemId, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      terminalFailure: { category: string; message: string };
+      error: { category: string; message: string };
+    };
+    const [followUpRun] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(
+      fs.readFileSync(`${followUpRun!.runDir}/final-result.json`, "utf8")
+    ) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      publishabilityBlockers: Array<{ category: string; message: string }>;
+      terminalFailure: { category: string; message: string };
+      evidencePacket: {
+        publishability: {
+          publishable: boolean;
+          blockers: Array<{ category: string; message: string }>;
+        };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(payload.command).toBe("follow-up");
+    expect(payload.ok).toBe(false);
+    expect(payload.terminalFailure.category).toBe("publishing");
+    expect(payload.error.category).toBe("publishing");
+    expect(finalResult.terminalFailure).toEqual(payload.terminalFailure);
+    expect(finalResult.status).toBe("failed");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable).toContain(payload.terminalFailure.message);
+    expect(finalResult.publishabilityBlockers).toContainEqual({
+      category: "publishing",
+      message: payload.terminalFailure.message
+    });
+    expect(finalResult.evidencePacket.publishability).toEqual({
+      publishable: false,
+      blockers: [{
+        category: "publishing",
+        message: payload.terminalFailure.message
+      }]
+    });
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("retry");
+  });
+
+  it("Given follow-up --json fails verification, then it returns the tracked failure with command provenance", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{ id: "comment_1", body: "Please address this feedback." }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    writeBrief(fixture.repoDir);
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    rewriteConfig(fixture.repoDir, {
+      githubEnabled: true,
+      verification: ["node -e \"process.exit(1)\""]
+    });
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["follow-up", initialRun!.workItemId, "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      ok: boolean;
+      status: string;
+      verification: {
+        status: string;
+        commands: Array<{ command: string; passed: boolean; origins: string[] }>;
+      };
+    };
+
+    expect(payload.ok).toBe(true);
+    expect(payload.status).toBe("blocked");
+    expect(payload.verification.status).toBe("failed");
+    expect(payload.verification.commands).toContainEqual(expect.objectContaining({
+      command: "node -e \"process.exit(1)\"",
+      passed: false,
+      origins: ["project"]
+    }));
   });
 
   it("Given submit issue --backend github-actions --json, when GitHub is configured, then it dispatches the AFK workflow", async () => {

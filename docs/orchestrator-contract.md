@@ -63,7 +63,51 @@ afk run file brief.md --pr --json
 afk follow-up <workItemId> --json
 ```
 
-`follow-up` addresses actionable review comments on an AFK-created pull request and pushes commits to the same branch.
+`follow-up` addresses actionable review comments on an AFK-created pull request and pushes commits to the same branch. AFK persists the normalized verification entries from the original execution brief and merges them with the current project verification contract for every follow-up. Identical commands run once, while each command retains an `origins` array containing `project`, `brief`, or both.
+
+Successful follow-up output includes the existing pull request, actionable comments, and verification provenance:
+
+```json
+{
+  "command": "follow-up",
+  "ok": true,
+  "workItemId": "wi_...",
+  "runId": "run_...",
+  "status": "completed",
+  "branchName": "afk/example",
+  "prUrl": "https://github.com/acme/repo/pull/42",
+  "actionableReviewComments": [
+    {"id": "comment_1", "location": "src/app.ts:12", "body": "Add error handling.", "path": "src/app.ts", "line": 12}
+  ],
+  "addressedReviewComments": 1,
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {"command": "pnpm test", "passed": true, "exitCode": 0, "origins": ["project", "brief"]}
+    ]
+  }
+}
+```
+
+The same command records, including `origins`, appear in `final-result.json` under `verificationSummaries` and `evidencePacket.verification.commands`. Older AFK work items without persisted brief verification remain valid and run the current project verification only.
+
+No-actionable-comment failures occur before a run starts:
+
+```json
+{"command":"follow-up","ok":false,"workItemId":"wi_...","error":{"message":"Pull request 42 has no actionable review comments."}}
+```
+
+A verification failure returns the tracked terminal outcome with `ok: true`, `status: "blocked"` or `"failed"`, and `verification.status: "failed"`; the command entries retain their origins and failure evidence. Package-manager admission uses the follow-up PR worktree, including when AFK must recreate that worktree from the recorded branch. A failure to push the reviewed follow-up is a command failure and is persisted to `final-result.json`; AFK marks the artifact failed and non-publishable with a publishing blocker:
+
+```json
+{
+  "command": "follow-up",
+  "ok": false,
+  "workItemId": "wi_...",
+  "terminalFailure": {"category": "publishing", "message": "Follow-up publication failed: ..."},
+  "error": {"category": "publishing", "message": "..."}
+}
+```
 
 For detached orchestrators, combine the local detached flow with `--pr`:
 

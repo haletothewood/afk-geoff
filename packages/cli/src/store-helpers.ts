@@ -77,15 +77,78 @@ function writeTerminalFailure(runDir: string, terminalFailure: TerminalFailure):
     publishable: false,
     whyNotPublishable: [terminalFailure.message]
   };
-  const evidencePacket = isJsonObject(finalResult.evidencePacket)
-    ? { ...finalResult.evidencePacket, terminalFailure }
-    : { terminalFailure };
+  const blocker = {
+    category: terminalFailure.category,
+    message: terminalFailure.message
+  };
+  const whyNotPublishable = uniqueStrings([
+    ...getStringArray(finalResult.whyNotPublishable),
+    terminalFailure.message
+  ]);
+  const publishabilityBlockers = uniqueBlockers([
+    ...getBlockers(finalResult.publishabilityBlockers),
+    blocker
+  ]);
+  const existingEvidencePacket = isJsonObject(finalResult.evidencePacket)
+    ? finalResult.evidencePacket
+    : {};
+  const existingPublishability = isJsonObject(existingEvidencePacket.publishability)
+    ? existingEvidencePacket.publishability
+    : {};
+  const evidencePacket = {
+    ...existingEvidencePacket,
+    terminalFailure,
+    publishability: {
+      ...existingPublishability,
+      publishable: false,
+      blockers: uniqueBlockers([
+        ...getBlockers(existingPublishability.blockers),
+        blocker
+      ])
+    },
+    recommendedHumanAction: "retry"
+  };
 
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(
     finalResultPath,
-    JSON.stringify({ ...finalResult, terminalFailure, evidencePacket }, null, 2)
+    JSON.stringify({
+      ...finalResult,
+      status: "failed",
+      publishable: false,
+      whyNotPublishable,
+      publishabilityBlockers,
+      terminalFailure,
+      evidencePacket
+    }, null, 2)
   );
+}
+
+function getStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function getBlockers(value: unknown): Array<{ category: string; message: string }> {
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is { category: string; message: string } =>
+          isJsonObject(entry)
+          && typeof entry.category === "string"
+          && typeof entry.message === "string"
+      )
+    : [];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function uniqueBlockers(
+  blockers: Array<{ category: string; message: string }>
+): Array<{ category: string; message: string }> {
+  return [...new Map(
+    blockers.map((blocker) => [`${blocker.category}\u0000${blocker.message}`, blocker])
+  ).values()];
 }
 
 function readJsonObject(filename: string): Record<string, unknown> | undefined {

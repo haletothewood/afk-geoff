@@ -88,10 +88,13 @@ Covered by:
 ```gherkin
 Given an AFK work item has opened a pull request
 And the pull request has review comments
+And the original execution brief defines verification
 When follow-up runs for that work item
 Then AFK should run against the existing PR branch
 And push follow-up commits to the same pull request
 And report how many review comments were addressed
+And rerun the merged project and brief verification without duplicate commands
+And report each verification command's origin in JSON and the final result
 ```
 
 Covered by:

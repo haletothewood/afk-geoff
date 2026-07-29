@@ -10,6 +10,7 @@ import {
   normalizeVerificationEntries,
   resolvePackageManagerContract,
   slugify,
+  tagVerificationEntries,
   verificationCommands,
   type VerificationEntryInput
 } from "@afk-geoff/shared";
@@ -56,11 +57,14 @@ export async function runTrackedWorkItem(
 
   const requirement = await mustGetRequirement(ctx, workItem.requirementId);
   const verification = dedupeVerificationEntries(
-    normalizeVerificationEntries([
-      ...ctx.config.verification,
-      ...(options.verification ?? []),
-      ...(detachedOptions.verification ?? [])
-    ])
+    [
+      ...tagVerificationEntries(ctx.config.verification, "project"),
+      ...tagVerificationEntries([
+        ...(workItem.briefVerification ?? []),
+        ...(options.verification ?? []),
+        ...(detachedOptions.verification ?? [])
+      ], "brief")
+    ]
   );
   resolvePackageManagerContract(ctx.repoRoot, verificationCommands(verification));
   const issueUrl = options.issueUrl ?? detachedOptions.issueUrl;
@@ -216,9 +220,15 @@ async function tryReusePublishableFinalization(
   const finalResult = readJsonRecord(path.join(run.runDir, "final-result.json"));
   const workerResult = readJsonRecord(path.join(run.runDir, "result.json"));
   const worktreeStatus = isJsonRecord(finalResult?.worktreeStatus) ? finalResult.worktreeStatus : undefined;
+  const terminalFailure = isJsonRecord(finalResult?.terminalFailure) ? finalResult.terminalFailure : undefined;
+  const hasReusablePublishFailure = finalResult?.status === "failed"
+    && finalResult.publishable === false
+    && terminalFailure?.category === "publishing";
   if (
-    finalResult?.status !== "done" ||
-    finalResult.publishable !== true ||
+    !(
+      (finalResult?.status === "done" && finalResult.publishable === true)
+      || hasReusablePublishFailure
+    ) ||
     worktreeStatus?.clean !== true ||
     !workerResult
   ) {
@@ -265,17 +275,66 @@ function recordRecoveryMetadata(runDir: string, recovery: RecoveryMetadata): voi
   if (!finalResult) {
     return;
   }
+  const terminalFailure = isJsonRecord(finalResult.terminalFailure)
+    ? finalResult.terminalFailure
+    : undefined;
+  const terminalFailureMessage = typeof terminalFailure?.message === "string"
+    ? terminalFailure.message
+    : undefined;
   const { terminalFailure: _terminalFailure, ...completedFinalResult } = finalResult;
+  const whyNotPublishable = Array.isArray(finalResult.whyNotPublishable)
+    ? finalResult.whyNotPublishable.filter(
+        (message) => typeof message === "string" && message !== terminalFailureMessage
+      )
+    : [];
+  const publishabilityBlockers = withoutTerminalFailureBlocker(
+    finalResult.publishabilityBlockers,
+    terminalFailure
+  );
   const evidencePacket = isJsonRecord(finalResult.evidencePacket)
     ? (() => {
         const { terminalFailure: _evidenceTerminalFailure, ...completedEvidencePacket } = finalResult.evidencePacket;
-        return { ...completedEvidencePacket, recovery };
+        const existingPublishability = isJsonRecord(completedEvidencePacket.publishability)
+          ? completedEvidencePacket.publishability
+          : {};
+        return {
+          ...completedEvidencePacket,
+          publishability: {
+            ...existingPublishability,
+            publishable: true,
+            blockers: withoutTerminalFailureBlocker(existingPublishability.blockers, terminalFailure)
+          },
+          recommendedHumanAction: "publish",
+          recovery
+        };
       })()
     : { recovery };
   fs.writeFileSync(
     finalResultPath,
-    JSON.stringify({ ...completedFinalResult, recovery, evidencePacket }, null, 2)
+    JSON.stringify({
+      ...completedFinalResult,
+      status: "done",
+      publishable: true,
+      whyNotPublishable,
+      publishabilityBlockers,
+      recovery,
+      evidencePacket
+    }, null, 2)
   );
+}
+
+function withoutTerminalFailureBlocker(
+  value: unknown,
+  terminalFailure: Record<string, unknown> | undefined
+): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((blocker) => !(
+    isJsonRecord(blocker)
+    && blocker.category === terminalFailure?.category
+    && blocker.message === terminalFailure?.message
+  ));
 }
 
 function readJsonRecord(filename: string): Record<string, unknown> | undefined {
@@ -418,6 +477,7 @@ export async function importExecutionBrief(
         body: brief.workItemBody,
         type: "afk",
         acceptanceCriteria: brief.acceptanceCriteria,
+        briefVerification: brief.verification,
         executionSummary: options.sourceSummary,
         dependencyPlanKeys: []
       }

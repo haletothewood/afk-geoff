@@ -536,7 +536,18 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           const outcome = await runForJson(followUpAction);
           printJson({ command: "follow-up", ok: true, workItemId, backend: ctx.executionBackendKind, ...outcome });
         } catch (error) {
-          printJson({ command: "follow-up", ok: false, workItemId, backend: ctx.executionBackendKind, error: { message: formatErrorMessage(error) } });
+          const terminalFailure = terminalFailureFromError(error);
+          printJson({
+            command: "follow-up",
+            ok: false,
+            workItemId,
+            backend: ctx.executionBackendKind,
+            ...(terminalFailure ? { terminalFailure } : {}),
+            error: {
+              ...(terminalFailure ? { category: terminalFailure.category } : {}),
+              message: formatErrorMessage(error)
+            }
+          });
           throw error;
         }
       } else {

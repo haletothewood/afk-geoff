@@ -27,6 +27,13 @@ export interface Requirement {
   updatedAt: string;
 }
 
+export type VerificationOrigin = "project" | "brief";
+
+export interface VerificationEntry {
+  command: string;
+  origins?: VerificationOrigin[];
+}
+
 export interface WorkItem {
   id: string;
   requirementId: string;
@@ -37,6 +44,7 @@ export interface WorkItem {
   planKey: string;
   executionSummary: string;
   acceptanceCriteria: string[];
+  briefVerification?: VerificationEntry[];
   createdAt: string;
   updatedAt: string;
 }
