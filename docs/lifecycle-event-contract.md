@@ -33,6 +33,7 @@ Every lifecycle event has this envelope:
 | `verification_completed` | Verification duration, status, and summary message. |
 | `verification_issues` | Non-empty normalized issue list and issue count. |
 | `review_started` | Reviewer attempt, iteration, command, and result path. |
+| `review_contract_failed` | Missing, empty, or malformed reviewer verdict, including the bounded attempt and result path. |
 | `review_issues` | `ISSUES` verdict, duration, non-empty issue list, and result path. |
 | `review_completed` | `PASS` or `BLOCKED` verdict, duration, issue count, and result path. |
 | `run_completed` | Terminal workflow observation: status, run directory, optional result path and classified failure. |

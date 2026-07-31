@@ -166,6 +166,324 @@ describe("afk CLI — autonomous review gate loop", () => {
     expect(finalResult.evidencePacket?.terminalFailure).toEqual(run?.terminalFailure);
   });
 
+  it("review retry: a missing verdict reruns only review against the unchanged verified commit", async () => {
+    const verificationLog = path.join(tempDir, "verification.log");
+    const fixture = await createFixture(tempDir, {
+      verification: [`node -e "require('fs').appendFileSync('${verificationLog}', 'verified\\n')"`]
+    });
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const originalHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: run!.worktreePath!,
+      encoding: "utf8"
+    }).trim();
+    const workerPromptModifiedAt = fs.statSync(path.join(run!.runDir, "prompt.md")).mtimeMs;
+    writeReviewVerdicts(fixture.repoDir, ["PASS"]);
+
+    const retryOutput = await captureConsole(async () => {
+      await fixture.cli(["retry", run!.id, "--stage", "review", "--json"]);
+    });
+    const payloads = retryOutput.trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+      kind?: string;
+      event?: string;
+      reusedStages?: string[];
+      retriedStage?: string;
+      status?: string;
+      recovery?: { reviewAttempt: number; maxReviewAttempts: number };
+    }>;
+
+    expect(payloads.filter((payload) => payload.kind === "run_event").map((payload) => payload.event)).toEqual([
+      "evidence_reused",
+      "review_started",
+      "review_completed"
+    ]);
+    expect(payloads[0]).toEqual(expect.objectContaining({
+      reusedStages: ["work", "verification"],
+      retriedStage: "review"
+    }));
+    expect(payloads.at(-1)).toEqual(expect.objectContaining({
+      kind: "retry_result",
+      status: "done",
+      recovery: expect.objectContaining({ reviewAttempt: 2, maxReviewAttempts: 3 })
+    }));
+
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      status: string;
+      publishable: boolean;
+      terminalFailure?: unknown;
+      workerResults: unknown[];
+      verificationSummaries: unknown[];
+      reviewResults: Array<{ verdict: string; recovery?: boolean; attempt?: number }>;
+      recovery: { reusedStages: string[]; retriedStages: string[]; reviewAttempt: number };
+      evidencePacket: { recovery: { retriedStages: string[] }; review: { verdict: string } };
+    };
+    expect(execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: run!.worktreePath!,
+      encoding: "utf8"
+    }).trim()).toBe(originalHead);
+    expect(fs.readFileSync(verificationLog, "utf8").trim().split("\n")).toEqual(["verified"]);
+    expect(fs.statSync(path.join(run!.runDir, "prompt.md")).mtimeMs).toBe(workerPromptModifiedAt);
+    expect(finalResult).toEqual(expect.objectContaining({
+      status: "done",
+      publishable: true,
+      workerResults: [expect.any(Object)],
+      verificationSummaries: [expect.any(Object)],
+      reviewResults: [expect.objectContaining({ verdict: "PASS", recovery: true, attempt: 2 })]
+    }));
+    expect(finalResult.terminalFailure).toBeUndefined();
+    expect(finalResult.recovery).toEqual(expect.objectContaining({
+      reusedStages: ["work", "verification"],
+      retriedStages: ["review"],
+      reviewAttempt: 2
+    }));
+    expect(finalResult.evidencePacket.recovery).toEqual(finalResult.recovery);
+    expect(finalResult.evidencePacket.review.verdict).toBe("PASS");
+  });
+
+  it("review retry: actionable issues continue into the normal fix workflow", async () => {
+    const fixture = await createFixture(tempDir, {
+      verification: ['node -e "process.exit(0)"']
+    });
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [sourceRun] = await fixture.store.listRuns();
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Handle retry exhaustion explicitly"] },
+      "PASS"
+    ]);
+
+    await fixture.cli(["retry", sourceRun!.id, "--stage", "review"]);
+
+    const [continuationRun, preservedSourceRun] = await fixture.store.listRuns();
+    expect(continuationRun?.id).not.toBe(sourceRun?.id);
+    expect(continuationRun).toEqual(expect.objectContaining({
+      status: "completed",
+      branchName: sourceRun?.branchName,
+      worktreePath: sourceRun?.worktreePath
+    }));
+    expect(preservedSourceRun?.id).toBe(sourceRun?.id);
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("done");
+    expect(fs.readFileSync(path.join(continuationRun!.runDir, "follow-up-prompt.md"), "utf8"))
+      .toContain("Handle retry exhaustion explicitly");
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(continuationRun!.runDir, "final-result.json"), "utf8")
+    ) as {
+      status: string;
+      workerResults: Array<{ phase: string }>;
+      reviewResults: Array<{ verdict: string }>;
+      recovery?: { sourceRunId: string; retriedStages: string[] };
+    };
+    expect(finalResult).toEqual(expect.objectContaining({
+      status: "done",
+      workerResults: [expect.objectContaining({ phase: "follow-up" })],
+      reviewResults: [expect.objectContaining({ verdict: "PASS" })],
+      recovery: expect.objectContaining({
+        sourceRunId: sourceRun?.id,
+        retriedStages: ["review"]
+      })
+    }));
+  });
+
+  it("review retry: accumulated issue evidence survives a recovered later review", async () => {
+    const fixture = await createFixture(tempDir, {
+      verification: ['node -e "process.exit(0)"']
+    });
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Handle retry exhaustion explicitly"] },
+      "__MISSING__"
+    ]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    writeReviewVerdicts(fixture.repoDir, ["PASS"]);
+
+    await fixture.cli(["retry", run!.id, "--stage", "review"]);
+
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      reviewResults: Array<{ verdict: string; issues?: string[] }>;
+      evidencePacket: {
+        review: {
+          verdict: string;
+          passCount: number;
+          issueCount: number;
+          addressedIssueCount: number;
+          remainingIssues: string[];
+        };
+      };
+    };
+    expect(finalResult.reviewResults).toEqual([
+      expect.objectContaining({ verdict: "ISSUES", issues: ["Handle retry exhaustion explicitly"] }),
+      expect.objectContaining({ verdict: "PASS" })
+    ]);
+    expect(finalResult.evidencePacket.review).toEqual({
+      verdict: "PASS",
+      passCount: 1,
+      issueCount: 1,
+      addressedIssueCount: 1,
+      remainingIssues: []
+    });
+  });
+
+  it.each([
+    ["empty", "__EMPTY__"],
+    ["malformed", "__MALFORMED__"]
+  ])("review retry: %s verdict output remains eligible for reviewer-only recovery", async (expectedKind, sentinel) => {
+    const fixtureDir = path.join(tempDir, expectedKind);
+    fs.mkdirSync(fixtureDir);
+    const fixture = await createFixture(fixtureDir, {
+      verification: ['node -e "process.exit(0)"']
+    });
+    writeReviewVerdicts(fixture.repoDir, [sentinel]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const failedResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as { reviewContractFailure: { kind: string; attempt: number } };
+    expect(failedResult.reviewContractFailure).toEqual(expect.objectContaining({
+      kind: expectedKind,
+      attempt: 1
+    }));
+
+    writeReviewVerdicts(fixture.repoDir, ["PASS"]);
+    await fixture.cli(["retry", run!.id, "--stage", "review"]);
+
+    const recoveredResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as { status: string; publishable: boolean; reviewContractFailure?: unknown };
+    expect(recoveredResult).toEqual(expect.objectContaining({ status: "done", publishable: true }));
+    expect(recoveredResult.reviewContractFailure).toBeUndefined();
+  });
+
+  it("review retry: exhausting the retry budget leaves a truthful blocked result", async () => {
+    const fixture = await createFixture(tempDir, {
+      verification: ['node -e "process.exit(0)"']
+    });
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+
+    for (const expectedAttempt of [2, 3]) {
+      writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+      const output = await captureConsole(async () => {
+        await fixture.cli(["retry", run!.id, "--stage", "review", "--json"]);
+      });
+      const events = output.trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+        kind?: string;
+        event?: string;
+        attempt?: number;
+        status?: string;
+        review?: unknown;
+        reviewContractFailure?: { kind: string; attempt: number; maxAttempts: number };
+      }>;
+      expect(events.filter((event) => event.kind === "run_event").map((event) => event.event)).toEqual([
+        "evidence_reused",
+        "review_started",
+        "review_contract_failed"
+      ]);
+      expect(events.find((event) => event.event === "review_contract_failed")?.attempt).toBe(expectedAttempt);
+      expect(events.at(-1)).toEqual(expect.objectContaining({
+        kind: "retry_result",
+        status: expectedAttempt === 3 ? "blocked" : "failed",
+        reviewContractFailure: expect.objectContaining({
+          kind: "missing",
+          attempt: expectedAttempt,
+          maxAttempts: 3
+        })
+      }));
+      expect(events.at(-1)?.review).toBeUndefined();
+    }
+
+    const finalResult = JSON.parse(
+      fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")
+    ) as {
+      status: string;
+      publishable: boolean;
+      terminalFailure?: unknown;
+      workerResults: unknown[];
+      verificationSummaries: unknown[];
+      reviewContractFailure: { attempt: number; maxAttempts: number; reviewedHead: string };
+      recovery: { reviewAttempt: number; maxReviewAttempts: number; reusedStages: string[]; retriedStages: string[] };
+      evidencePacket: {
+        terminalFailure?: unknown;
+        recovery: { reviewAttempt: number };
+        publishability: { publishable: boolean; blockers: Array<{ category: string }> };
+        recommendedHumanAction: string;
+      };
+    };
+    expect(finalResult).toEqual(expect.objectContaining({
+      status: "blocked",
+      publishable: false,
+      workerResults: [expect.any(Object)],
+      verificationSummaries: [expect.any(Object)],
+      reviewContractFailure: expect.objectContaining({ attempt: 3, maxAttempts: 3 }),
+      recovery: expect.objectContaining({
+        reviewAttempt: 3,
+        maxReviewAttempts: 3,
+        reusedStages: ["work", "verification"],
+        retriedStages: ["review"]
+      })
+    }));
+    expect(finalResult.terminalFailure).toBeUndefined();
+    expect(finalResult.evidencePacket.terminalFailure).toBeUndefined();
+    expect(finalResult.evidencePacket.publishability).toEqual({
+      publishable: false,
+      blockers: [expect.objectContaining({ category: "review" })]
+    });
+    expect(finalResult.evidencePacket.recommendedHumanAction).toBe("inspect");
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend!.id)?.status).toBe("blocked");
+
+    const inspection = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["inspect", run!.id, "--json"]);
+    })) as {
+      derived: { publishable: boolean };
+      evidencePacket: { recovery: { reviewAttempt: number }; recommendedHumanAction: string };
+    };
+    const handoff = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    })) as {
+      status: string;
+      recommendedAction: string;
+      evidencePacket: { recovery: { retriedStages: string[] } };
+    };
+    expect(inspection.derived.publishable).toBe(false);
+    expect(inspection.evidencePacket).toEqual(expect.objectContaining({
+      recovery: expect.objectContaining({ reviewAttempt: 3 }),
+      recommendedHumanAction: "inspect"
+    }));
+    expect(handoff).toEqual(expect.objectContaining({
+      status: "completed",
+      recommendedAction: "inspect"
+    }));
+    expect(handoff.evidencePacket.recovery.retriedStages).toEqual(["review"]);
+
+    await expect(fixture.cli(["retry", run!.id, "--stage", "review"]))
+      .rejects.toThrow("exhausted its review retry budget (3 attempts)");
+  });
+
   // -----------------------------------------------------------------------
   // Fix failure
   // -----------------------------------------------------------------------

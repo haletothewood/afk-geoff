@@ -238,6 +238,14 @@ afk retry <runId> --stage verification --json
 
 AFK reruns the recorded verification commands without launching a worker or reviewer. It refuses recovery if the worktree is dirty or its `HEAD` differs from the reviewed commit. A successful retry updates the authoritative final result and evidence packet, marks verification passed, and recommends publishing.
 
+If a reviewer process exits successfully but produces a missing, empty, or malformed verdict, use:
+
+```bash
+afk retry <runId> --stage review --json
+```
+
+AFK preserves the worker result and passing verification evidence, then reruns only the reviewer against the unchanged commit. Review-contract retries are limited to three total review attempts. A `PASS` verdict resumes publication, while `ISSUES` starts the normal fix workflow on the same branch and worktree. Before exhaustion, another invalid verdict returns `status: "failed"` with `reviewContractFailure` metadata and no fabricated review verdict. Exhausting the budget leaves a blocked, non-publishable final result that recommends inspection.
+
 ## Artifacts To Read
 
 The orchestrator can use returned paths instead of guessing locations.
