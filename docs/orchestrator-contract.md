@@ -149,12 +149,17 @@ Primary commands:
 ## NDJSON Events
 
 `run --json` and `watch --json` may emit multiple JSON objects, one per line.
+`retry --json` also emits lifecycle events when it reuses evidence and reruns a stage.
 
 Event lines use:
 
 ```json
-{"kind":"run_event","event":"worker_started","runId":"run_...","workItemId":"wi_..."}
+{"kind":"run_event","schemaVersion":1,"timestamp":"2026-01-01T00:00:00.000Z","event":"worker_started","runId":"run_...","workItemId":"wi_...","stage":"work","attempt":1,"reused":false}
 ```
+
+The lifecycle event names and payloads form a closed, strict, versioned vocabulary.
+See [Lifecycle Event Contract](lifecycle-event-contract.md) for the complete v1 schema,
+timing fields, compatibility rules, and frozen stream fixtures.
 
 Terminal result lines use:
 
@@ -168,11 +173,21 @@ or:
 {"kind":"watch_result","command":"watch","ok":true,"runId":"run_...","status":"completed"}
 ```
 
+Verification retry ends with:
+
+```json
+{"kind":"retry_result","command":"retry","ok":true,"runId":"run_...","status":"done"}
+```
+
 On failure, commands emit an `ok: false` payload before exiting nonzero:
 
 ```json
 {"kind":"watch_result","command":"watch","ok":false,"runId":"run_missing","error":{"message":"Run run_missing not found"}}
 ```
+
+Lifecycle events are progress observations, not the command result and not a
+runner-native model/tool stream. Continue reading until the terminal result line.
+Persisted `result.json` and `final-result.json` retain the authority described below.
 
 ## Success Gate
 

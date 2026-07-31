@@ -609,7 +609,22 @@ describe("afk CLI — run command", () => {
     const promptModifiedAt = fs.statSync(promptPath).mtimeMs;
     githubMirror.openPullRequestError = undefined;
 
-    await fixture.cli(["run", workItem!.id, "--pr"]);
+    const retryOutput = await captureConsole(async () => {
+      await fixture.cli(["run", workItem!.id, "--pr", "--json"]);
+    });
+    const retryPayloads = retryOutput.trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+      kind?: string;
+      event?: string;
+      reusedStages?: string[];
+      retriedStage?: string;
+    }>;
+    expect(retryPayloads.find((payload) => payload.event === "evidence_reused")).toEqual(
+      expect.objectContaining({
+        kind: "run_event",
+        reusedStages: ["work", "verification", "review"],
+        retriedStage: "publishing"
+      })
+    );
 
     const [retriedRun] = await fixture.store.listRuns();
     const [retriedWorkItem] = await fixture.items(requirement!.id);

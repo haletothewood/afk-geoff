@@ -195,7 +195,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     const resultContainerPath = path.join(runtimeRunDir, "result.json");
     const hostResultPath = path.join(runDir, "result.json");
     const progressPath = path.join(runDir, "progress.json");
-    const runStartedAt = new Date().toISOString();
+    const runStartedAtMs = Date.now();
+    const runStartedAt = new Date(runStartedAtMs).toISOString();
     const progressBase = {
       runId,
       workItemId: input.workItem.id,
@@ -216,7 +217,38 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       iteration: 0,
       lastEvent: "run_started"
     }));
-    emitRunEvent({ event: "run_started", runId, workItemId: input.workItem.id, branchName, worktreePath, runDir });
+    emitRunEvent({
+      event: "run_started",
+      runId,
+      workItemId: input.workItem.id,
+      stage: "run",
+      attempt: 1,
+      reused: false,
+      branchName,
+      worktreePath,
+      runDir
+    });
+    const emitRunCompletion = (
+      status: "done" | "blocked" | "failed",
+      message: string,
+      finalResultPath: string
+    ): void => {
+      emitRunEvent({
+        event: "run_completed",
+        runId,
+        workItemId: input.workItem.id,
+        stage: "run",
+        attempt: 1,
+        reused: false,
+        durationMs: Math.max(0, Date.now() - runStartedAtMs),
+        status,
+        message,
+        branchName,
+        worktreePath,
+        runDir,
+        finalResultPath
+      });
+    };
 
     let lastWorkerResult: import("@afk-geoff/shared").WorkerResult | undefined;
     let reviewIssues: string[] = [];
@@ -267,17 +299,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         });
         throw attachTerminalFailure(error, artifactFailure);
       }
-      emitRunEvent({
-        event: "run_completed",
-        runId,
-        workItemId: input.workItem.id,
-        status: "failed",
-        message: summary,
-        branchName,
-        worktreePath,
-        runDir,
-        finalResultPath
-      });
+      emitRunCompletion("failed", summary, finalResultPath);
       return {
         status: "failed",
         summary,
@@ -368,16 +390,22 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const workerStdin = invocation.promptTransport === "stdin" ? prompt : undefined;
       const stdoutPath = path.join(runDir, `${phase}-stdout-${iteration}.log`);
       const stderrPath = path.join(runDir, `${phase}-stderr-${iteration}.log`);
+      const workerStartedAtMs = Date.now();
       console.log(`[${phase}] iteration ${iteration}: worker running (logs: ${path.basename(stdoutPath)}, ${path.basename(stderrPath)})`);
-      emitRunEvent({
-        event: phase === "fix" ? "fix_started" : "worker_started",
+      const workerStartDetails = {
         runId,
         workItemId: input.workItem.id,
+        attempt: iteration,
+        reused: false,
         iteration,
-        phase,
         command: formatInvocation(invocation.command, invocation.args),
         resultPath: path.join(runDir, `${phase}-result-${iteration}.json`)
-      });
+      } as const;
+      if (phase === "fix") {
+        emitRunEvent({ ...workerStartDetails, event: "fix_started", stage: "fix", phase: "fix" });
+      } else {
+        emitRunEvent({ ...workerStartDetails, event: "worker_started", stage: phase, phase });
+      }
       writeProgress(progressPath, buildProgress(progressBase, {
         phase,
         message: isFollowUp && isFirstIteration ? "Follow-up agent running" : isFirstIteration ? "Work agent running" : `Fix agent running (iteration ${iteration})`,
@@ -472,6 +500,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         event: "worker_completed",
         runId,
         workItemId: input.workItem.id,
+        stage: phase,
+        attempt: iteration,
+        reused: false,
+        durationMs: Math.max(0, Date.now() - workerStartedAtMs),
         iteration,
         phase,
         status: agentResult.status,
@@ -498,17 +530,11 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           worktreePath,
           baseBranch: this.config.baseBranch
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: agentResult.status,
-          message: agentResult.summary,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion(
+          agentResult.status,
+          agentResult.summary,
+          path.join(runDir, "final-result.json")
+        );
         return {
           status: agentResult.status,
           summary: agentResult.summary,
@@ -523,6 +549,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         git: this.git,
         worktreePath,
         summaries: generatedArtifacts,
+        runId,
+        workItemId: input.workItem.id,
         iteration,
         phase,
         stage: "post-worker"
@@ -566,7 +594,17 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         iteration,
         lastEvent: "verification_started"
       }));
-      emitRunEvent({ event: "verification_started", runId, workItemId: input.workItem.id, iteration, phase: "verify" });
+      const verificationStartedAtMs = Date.now();
+      emitRunEvent({
+        event: "verification_started",
+        runId,
+        workItemId: input.workItem.id,
+        stage: "verification",
+        attempt: iteration,
+        reused: false,
+        iteration,
+        phase: "verify"
+      });
 
       const verificationResults = await runVerificationCommands(verification, worktreePath, packageManager);
       verificationSummaries.push({
@@ -589,6 +627,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           event: "verification_completed",
           runId,
           workItemId: input.workItem.id,
+          stage: "verification",
+          attempt: iteration,
+          reused: false,
+          durationMs: Math.max(0, Date.now() - verificationStartedAtMs),
           iteration,
           phase: "verify",
           status: passed === verificationResults.length ? "passed" : "failed",
@@ -600,6 +642,10 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           event: "verification_completed",
           runId,
           workItemId: input.workItem.id,
+          stage: "verification",
+          attempt: iteration,
+          reused: false,
+          durationMs: Math.max(0, Date.now() - verificationStartedAtMs),
           iteration,
           phase: "verify",
           status: "skipped",
@@ -610,6 +656,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         git: this.git,
         worktreePath,
         summaries: generatedArtifacts,
+        runId,
+        workItemId: input.workItem.id,
         iteration,
         phase,
         stage: "post-verification"
@@ -641,17 +689,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           hasDiff: true,
           publishable: false
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "blocked",
-          message: summary,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
         return {
           status: "blocked",
           summary,
@@ -695,17 +733,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
             hasDiff: await this.git.hasDiffAgainst({ cwd: worktreePath, baseBranch: this.config.baseBranch }),
             publishable: false
           });
-          emitRunEvent({
-            event: "run_completed",
-            runId,
-            workItemId: input.workItem.id,
-            status: "blocked",
-            message: summary,
-            branchName,
-            worktreePath,
-            runDir,
-            finalResultPath: path.join(runDir, "final-result.json")
-          });
+          emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
           return {
             status: "blocked",
             summary,
@@ -752,11 +780,15 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       const reviewStdin = reviewInvocation.promptTransport === "stdin" ? reviewPrompt : undefined;
       const reviewStdoutPath = path.join(runDir, `review-stdout-${iteration}.log`);
       const reviewStderrPath = path.join(runDir, `review-stderr-${iteration}.log`);
+      const reviewStartedAtMs = Date.now();
       console.log(`[review] iteration ${iteration}: reviewer running (logs: ${path.basename(reviewStdoutPath)}, ${path.basename(reviewStderrPath)})`);
       emitRunEvent({
         event: "review_started",
         runId,
         workItemId: input.workItem.id,
+        stage: "review",
+        attempt: iteration,
+        reused: false,
         iteration,
         phase: "review",
         command: formatInvocation(reviewInvocation.command, reviewInvocation.args),
@@ -817,18 +849,36 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         resultPath: reviewResultPath
       });
       console.log(`[review] iteration ${iteration}: ${reviewResult.verdict}${reviewResult.issues?.length ? ` (${reviewResult.issues.length} issue${reviewResult.issues.length === 1 ? "" : "s"})` : ""}`);
-      emitRunEvent({
-        event: reviewResult.verdict === "ISSUES" ? "review_issues" : "review_completed",
+      const reviewCompletionDetails = {
         runId,
         workItemId: input.workItem.id,
+        stage: "review",
+        attempt: iteration,
+        reused: false,
+        durationMs: Math.max(0, Date.now() - reviewStartedAtMs),
         iteration,
         phase: "review",
-        verdict: reviewResult.verdict,
         issueCount: reviewResult.issues?.length ?? 0,
-        ...(reviewResult.issues?.length ? { issues: reviewResult.issues } : {}),
-        ...(reviewResult.blockerReason ? { message: reviewResult.blockerReason } : {}),
         resultPath: reviewResultPath
-      });
+      } as const;
+      if (reviewResult.verdict === "ISSUES") {
+        emitRunEvent({
+          ...reviewCompletionDetails,
+          event: "review_issues",
+          verdict: "ISSUES",
+          issueCount: reviewResult.issues?.length || 1,
+          issues: reviewResult.issues?.length ? reviewResult.issues : ["Unspecified review issue"],
+          ...(reviewResult.blockerReason ? { message: reviewResult.blockerReason } : {})
+        });
+      } else {
+        emitRunEvent({
+          ...reviewCompletionDetails,
+          event: "review_completed",
+          verdict: reviewResult.verdict,
+          ...(reviewResult.issues?.length ? { issues: reviewResult.issues } : {}),
+          ...(reviewResult.blockerReason ? { message: reviewResult.blockerReason } : {})
+        });
+      }
 
       if (reviewResult.verdict === "PASS") {
         previousReviewFailure = undefined;
@@ -839,6 +889,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
             event: "verification_issues",
             runId,
             workItemId: input.workItem.id,
+            stage: "verification",
+            attempt: iteration,
             iteration,
             phase: "verify",
             issueCount: verificationIssues.length,
@@ -867,17 +919,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
               publishable: false,
               whyNotPublishable: verificationIssues
             });
-            emitRunEvent({
-              event: "run_completed",
-              runId,
-              workItemId: input.workItem.id,
-              status: "blocked",
-              message: capSummary,
-              branchName,
-              worktreePath,
-              runDir,
-              finalResultPath: path.join(runDir, "final-result.json")
-            });
+            emitRunCompletion("blocked", capSummary, path.join(runDir, "final-result.json"));
             return {
               status: "blocked",
               summary: capSummary,
@@ -910,17 +952,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           worktreePath,
           baseBranch: this.config.baseBranch
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "blocked",
-          message: reason,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion("blocked", reason, path.join(runDir, "final-result.json"));
         return {
           status: "blocked",
           summary: reason,
@@ -965,17 +997,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           publishable: false,
           whyNotPublishable: repeatedIssues
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "blocked",
-          message: summary,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
         return {
           status: "blocked",
           summary,
@@ -1003,17 +1025,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           worktreePath,
           baseBranch: this.config.baseBranch
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "blocked",
-          message: capSummary,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion("blocked", capSummary, path.join(runDir, "final-result.json"));
         return {
           status: "blocked",
           summary: capSummary,
@@ -1030,6 +1042,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       git: this.git,
       worktreePath,
       summaries: generatedArtifacts,
+      runId,
+      workItemId: input.workItem.id,
       iteration: reviewResults.at(-1)?.iteration ?? 0,
       phase: "final",
       stage: "pre-final-diff"
@@ -1056,17 +1070,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         publishable: false,
         whyNotPublishable: [`Dirty worktree: ${finalWorktreeStatus.shortStatus}`]
       });
-      emitRunEvent({
-        event: "run_completed",
-        runId,
-        workItemId: input.workItem.id,
-        status: "blocked",
-        message: summary,
-        branchName,
-        worktreePath,
-        runDir,
-        finalResultPath: path.join(runDir, "final-result.json")
-      });
+      emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
       return {
         status: "blocked",
         summary,
@@ -1099,17 +1103,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         publishable: false,
         whyNotPublishable: ["No changes relative to the base branch"]
       });
-      emitRunEvent({
-        event: "run_completed",
-        runId,
-        workItemId: input.workItem.id,
-        status: "done",
-        message: finalResult.summary,
-        branchName,
-        worktreePath,
-        runDir,
-        finalResultPath: path.join(runDir, "final-result.json")
-      });
+      emitRunCompletion("done", finalResult.summary, path.join(runDir, "final-result.json"));
       return {
         status: "done",
         summary: finalResult.summary,
@@ -1144,17 +1138,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       hasDiff: true,
       publishable: true
     });
-    emitRunEvent({
-      event: "run_completed",
-      runId,
-      workItemId: input.workItem.id,
-      status: "done",
-      message: finalResult.summary,
-      branchName,
-      worktreePath,
-      runDir,
-      finalResultPath: path.join(runDir, "final-result.json")
-    });
+    emitRunCompletion("done", finalResult.summary, path.join(runDir, "final-result.json"));
 
     return {
       status: "done",
@@ -1549,6 +1533,8 @@ async function recordGeneratedArtifactCleanup(input: {
   git: LocalGitCodeHost;
   worktreePath: string;
   summaries: GeneratedArtifactSummary[];
+  runId: string;
+  workItemId: string;
   iteration: number;
   phase: string;
   stage: string;
@@ -1567,6 +1553,10 @@ async function recordGeneratedArtifactCleanup(input: {
   console.log(`[cleanup] ${input.stage}: removed generated artifact${paths.length === 1 ? "" : "s"} ${paths.join(", ")}`);
   emitRunEvent({
     event: "generated_artifacts_cleaned",
+    runId: input.runId,
+    workItemId: input.workItemId,
+    stage: "cleanup",
+    attempt: Math.max(1, input.iteration),
     iteration: input.iteration,
     phase: input.phase,
     paths

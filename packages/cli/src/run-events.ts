@@ -1,28 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  createLifecycleEvent,
+  lifecycleEventSchema,
+  type LifecycleEventInput
+} from "@afk-geoff/shared";
 
-export interface RunEvent {
-  event: string;
-  target?: string;
-  value?: string;
-  runId?: string;
-  workItemId?: string;
-  iteration?: number;
-  phase?: string;
-  status?: string;
-  verdict?: string;
-  message?: string;
-  issueCount?: number;
-  issues?: string[];
-  command?: string;
-  paths?: string[];
-  branchName?: string;
-  worktreePath?: string;
-  runDir?: string;
-  resultPath?: string;
-  finalResultPath?: string;
-}
-
-const EVENT_KIND = "run_event";
 const runEventContext = new AsyncLocalStorage<boolean>();
 
 export async function withRunEvents<T>(action: () => Promise<T>): Promise<T> {
@@ -33,18 +15,17 @@ export function isRunEventsEnabled(): boolean {
   return runEventContext.getStore() === true;
 }
 
-export function emitRunEvent(event: RunEvent): void {
+export function emitRunEvent(event: LifecycleEventInput): void {
   if (!isRunEventsEnabled()) {
     return;
   }
 
-  console.log(JSON.stringify({ kind: EVENT_KIND, timestamp: new Date().toISOString(), ...event }));
+  console.log(JSON.stringify(createLifecycleEvent(event)));
 }
 
 export function isRunEventLine(line: string): boolean {
   try {
-    const parsed = JSON.parse(line) as { kind?: unknown };
-    return parsed.kind === EVENT_KIND;
+    return lifecycleEventSchema.safeParse(JSON.parse(line)).success;
   } catch {
     return false;
   }

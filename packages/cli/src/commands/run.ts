@@ -17,6 +17,7 @@ import {
 import type { ExecutionBackendResult, Requirement, VerificationEntry } from "@afk-geoff/core";
 import { attachTerminalFailure, buildFallbackSourceComment, describeRunnerModel, formatErrorMessage } from "../cli-utils.js";
 import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
+import { emitRunEvent } from "../run-events.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import { MarkdownFileWorkSource, resolveBriefPath } from "../file-work-source.js";
 import type { CliContext, CliDependencies, DetachedRunOptions, RunOutcome } from "../types.js";
@@ -251,6 +252,20 @@ async function tryReusePublishableFinalization(
           : {})
       }
     : undefined;
+  const recovery: RecoveryMetadata = {
+    sourceRunId: run.id,
+    reusedStages: ["work", "verification", "review"],
+    retriedStages: ["publishing"],
+    recoveredAt: new Date().toISOString()
+  };
+  emitRunEvent({
+    event: "evidence_reused",
+    runId: run.id,
+    workItemId: run.workItemId,
+    sourceRunId: recovery.sourceRunId,
+    reusedStages: recovery.reusedStages,
+    retriedStage: "publishing"
+  });
 
   return {
     status: "done",
@@ -260,12 +275,7 @@ async function tryReusePublishableFinalization(
     branchName: run.branchName,
     worktreePath: run.worktreePath,
     ...(pullRequest ? { pullRequest } : {}),
-    recovery: {
-      sourceRunId: run.id,
-      reusedStages: ["work", "verification", "review"],
-      retriedStages: ["publishing"],
-      recoveredAt: new Date().toISOString()
-    }
+    recovery
   };
 }
 
