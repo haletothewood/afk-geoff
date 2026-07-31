@@ -269,10 +269,19 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
       };
       if (options.json) {
         try {
-          const outcome = await runForJson(retryAction);
-          printJson({ command: "retry", ok: true, backend: ctx.executionBackendKind, stage: options.stage, ...outcome });
+          const outcome = await runForJson(
+            async () => await withRunEvents(retryAction),
+            { allowRunEvents: true }
+          );
+          printJson(
+            { kind: "retry_result", command: "retry", ok: true, backend: ctx.executionBackendKind, stage: options.stage, ...outcome },
+            { compact: true }
+          );
         } catch (error) {
-          printJson({ command: "retry", ok: false, backend: ctx.executionBackendKind, stage: options.stage, runId, error: { message: formatErrorMessage(error) } });
+          printJson(
+            { kind: "retry_result", command: "retry", ok: false, backend: ctx.executionBackendKind, stage: options.stage, runId, error: { message: formatErrorMessage(error) } },
+            { compact: true }
+          );
           throw error;
         }
       } else {

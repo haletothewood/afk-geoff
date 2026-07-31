@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { VerificationCommandResult } from "@afk-geoff/shared";
 import { resolvePackageManager, runVerificationCommands } from "../local-docker-execution-backend.js";
+import { emitRunEvent } from "../run-events.js";
 import { refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext } from "../types.js";
 
@@ -72,12 +73,51 @@ export async function retryRunVerification(
     throw new Error(`Run ${runId} has no recorded verification commands`);
   }
 
-  const packageManager = await resolvePackageManager(run.worktreePath);
-  const results = await runVerificationCommands(commands, run.worktreePath, packageManager);
-  const passed = results.every((result) => result.passed);
   const iteration = Math.max(0, ...previousVerification.map((summary) =>
     typeof summary.iteration === "number" ? summary.iteration : 0
   )) + 1;
+  const recovery = {
+    sourceRunId: runId,
+    reusedStages: ["work", "review"],
+    retriedStages: ["verification"],
+    recoveredAt: new Date().toISOString()
+  };
+  emitRunEvent({
+    event: "evidence_reused",
+    runId,
+    workItemId: run.workItemId,
+    sourceRunId: runId,
+    reusedStages: ["work", "review"],
+    retriedStage: "verification"
+  });
+
+  const packageManager = await resolvePackageManager(run.worktreePath);
+  const verificationStartedAtMs = Date.now();
+  emitRunEvent({
+    event: "verification_started",
+    runId,
+    workItemId: run.workItemId,
+    stage: "verification",
+    attempt: iteration,
+    reused: false,
+    iteration,
+    phase: "verify"
+  });
+  const results = await runVerificationCommands(commands, run.worktreePath, packageManager);
+  const passed = results.every((result) => result.passed);
+  emitRunEvent({
+    event: "verification_completed",
+    runId,
+    workItemId: run.workItemId,
+    stage: "verification",
+    attempt: iteration,
+    reused: false,
+    durationMs: Math.max(0, Date.now() - verificationStartedAtMs),
+    iteration,
+    phase: "verify",
+    status: passed ? "passed" : "failed",
+    message: `${results.filter((result) => result.passed).length}/${results.length} passed`
+  });
   const verificationSummaries = [
     ...previousVerification,
     {
@@ -91,12 +131,6 @@ export async function retryRunVerification(
       }))
     }
   ];
-  const recovery = {
-    sourceRunId: runId,
-    reusedStages: ["work", "review"],
-    retriedStages: ["verification"],
-    recoveredAt: new Date().toISOString()
-  };
   const whyNotPublishable = passed ? [] : results
     .filter((result) => !result.passed)
     .map((result) => `${failureLabel(result)} failed: ${result.command} (exit ${result.exitCode})`);

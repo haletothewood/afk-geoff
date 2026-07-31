@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import type { TerminalFailure } from "@afk-geoff/core";
+import type { LifecycleEventInput } from "@afk-geoff/shared";
 import { delay, processExists, readDetachedProcessInfo, readRunProgress } from "../cli-utils.js";
 import { markRunFailed, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, CliDependencies } from "../types.js";
@@ -94,7 +95,8 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
           workItemId: run.workItemId,
           phase: progress.phase,
           iteration: progress.iteration,
-          message: progress.message
+          message: progress.message,
+          progressUpdatedAt: progress.updatedAt
         });
       } else {
         console.log(`[progress] phase=${progress.phase} iteration=${progress.iteration} ${progress.message}`);
@@ -141,7 +143,11 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
     // Warn once if the heartbeat is stale, but do not emit a stale warning on
     // the same poll cycle where progress has just advanced.
     if (progress && !staleWarningShown && !progressChangedBeforePoll && !progressChangedAfterPoll) {
-      const heartbeatAgeMs = Date.now() - new Date(progress.updatedAt).getTime();
+      const observedAtMs = Date.now();
+      const progressUpdatedAtMs = new Date(progress.updatedAt).getTime();
+      const heartbeatAgeMs = Number.isFinite(progressUpdatedAtMs)
+        ? Math.max(0, observedAtMs - progressUpdatedAtMs)
+        : 0;
       if (heartbeatAgeMs > heartbeatStaleMs) {
         const staleSeconds = Math.round(heartbeatAgeMs / 1000);
         if (options.json) {
@@ -151,7 +157,10 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
             workItemId: run.workItemId,
             phase: progress.phase,
             iteration: progress.iteration,
-            message: `last progress update ${staleSeconds}s ago`
+            message: `last progress update ${staleSeconds}s ago`,
+            progressUpdatedAt: progress.updatedAt,
+            heartbeatAgeMs,
+            staleThresholdMs: heartbeatStaleMs
           });
         } else {
           console.log(`Warning: heartbeat stale (last progress update ${staleSeconds}s ago)`);
@@ -193,9 +202,13 @@ function toWatchOutcome(run: Awaited<ReturnType<CliContext["store"]["listRuns"]>
   };
 }
 
-function toWatchEvent(event: string, run: Awaited<ReturnType<CliContext["store"]["listRuns"]>>[number]) {
-  return {
-    event,
+type WatchLifecycleEventName = "run_observed" | "watch_started" | "run_completed" | "run_failed";
+
+function toWatchEvent(
+  event: WatchLifecycleEventName,
+  run: Awaited<ReturnType<CliContext["store"]["listRuns"]>>[number]
+): LifecycleEventInput {
+  const observedRun = {
     runId: run.id,
     workItemId: run.workItemId,
     status: run.status,
@@ -205,6 +218,29 @@ function toWatchEvent(event: string, run: Awaited<ReturnType<CliContext["store"]
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
     runDir: run.runDir
   };
+
+  if (event === "watch_started") {
+    return {
+      ...observedRun,
+      event,
+      stage: "watch",
+      attempt: 1,
+      reused: false
+    };
+  }
+
+  if (event === "run_completed") {
+    return {
+      ...observedRun,
+      event,
+      stage: "watch",
+      attempt: 1,
+      reused: false,
+      status: run.status === "completed" || run.status === "failed" ? run.status : "failed"
+    };
+  }
+
+  return { ...observedRun, event };
 }
 
 async function failIfDetachedProcessExited(ctx: CliContext, runId: string) {

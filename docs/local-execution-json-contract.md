@@ -4,7 +4,10 @@ This document freezes the public command-result envelopes for local execution. I
 
 Human-readable output remains the default. Callers that need a stable interface must pass `--json`, read stdout as JSON or NDJSON as described below, and never parse terminal prose.
 
-Versioned streaming lifecycle event schemas are outside this contract. `run --json` currently emits `run_event` lines before its terminal `run_result` line, but only the command-result envelope is frozen here.
+Versioned streaming lifecycle event schemas are defined separately in the
+[Lifecycle Event Contract](lifecycle-event-contract.md). `run --json` emits zero or
+more validated `run_event` lines before its terminal `run_result` line. This document
+freezes the command-result envelope.
 
 ## Shared Rules
 

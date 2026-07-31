@@ -439,7 +439,35 @@ if (prompt.includes("# Issues to fix")) {
     const promptModifiedAt = fs.statSync(path.join(run!.runDir, "prompt.md")).mtimeMs;
     fs.writeFileSync(readinessMarker, "ready\n");
 
-    await fixture.cli(["retry", run!.id, "--stage", "verification"]);
+    const retryOutput = await captureConsole(async () => {
+      await fixture.cli(["retry", run!.id, "--stage", "verification", "--json"]);
+    });
+    const retryPayloads = retryOutput.trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+      kind?: string;
+      schemaVersion?: number;
+      event?: string;
+      command?: string;
+      reusedStages?: string[];
+      retriedStage?: string;
+      status?: string;
+    }>;
+    const retryEvents = retryPayloads.filter((payload) => payload.kind === "run_event");
+
+    expect(retryEvents.map((event) => event.event)).toEqual([
+      "evidence_reused",
+      "verification_started",
+      "verification_completed"
+    ]);
+    expect(retryEvents[0]).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      reusedStages: ["work", "review"],
+      retriedStage: "verification"
+    }));
+    expect(retryPayloads.at(-1)).toEqual(expect.objectContaining({
+      kind: "retry_result",
+      command: "retry",
+      status: "done"
+    }));
 
     const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
       status: string;
