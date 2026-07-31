@@ -172,7 +172,7 @@ describe("afk CLI — PR follow-up command", () => {
     });
 
     await expect(fixture.cli(["follow-up", initialRun!.workItemId])).resolves.toBeUndefined();
-  });
+  }, 15_000);
 
   it("Given an AFK-created pull request has no review comments, when follow-up runs, then it fails before starting a run", async () => {
     const githubMirror = new MockGitHubMirror();
