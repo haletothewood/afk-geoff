@@ -115,9 +115,16 @@ describe("commit signing policy", () => {
   });
 
   it("treats a missing classic required-signatures setting as absent", async () => {
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 404 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/rules/branches/")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.endsWith("/protection/required_signatures")) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(JSON.stringify({ protected: false }), { status: 200 });
+    }));
 
     await expect(fetchGitHubTargetPolicy({
       owner: "acme",
@@ -125,6 +132,55 @@ describe("commit signing policy", () => {
       branch: "main",
       token: "token"
     })).resolves.toMatchObject({ requirement: "optional" });
+  });
+
+  it("does not treat a permission-limited classic required-signatures response as absent", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/rules/branches/")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.endsWith("/protection/required_signatures")) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(JSON.stringify({ protected: true }), { status: 200 });
+    }));
+
+    await expect(fetchGitHubTargetPolicy({
+      owner: "acme",
+      repo: "demo",
+      branch: "main",
+      token: "token"
+    })).resolves.toMatchObject({
+      requirement: "unavailable",
+      reason: expect.stringContaining("required-signatures API returned HTTP 404")
+    });
+  });
+
+  it("detects required signatures on a later branch-rules page", async () => {
+    const firstPage = Array.from({ length: 100 }, () => ({ type: "deletion" }));
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("page=2")) {
+        return new Response(JSON.stringify([{ type: "required_signatures" }]), { status: 200 });
+      }
+      if (url.includes("/rules/branches/")) {
+        return new Response(JSON.stringify(firstPage), {
+          status: 200,
+          headers: { Link: '<https://api.github.com/repos/acme/demo/rules/branches/main?per_page=100&page=2>; rel="next"' }
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchGitHubTargetPolicy({
+      owner: "acme",
+      repo: "demo",
+      branch: "main",
+      token: "token"
+    })).resolves.toMatchObject({ requirement: "required" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("per_page=100&page=2"))).toBe(true);
   });
 
   it("does not treat an unavailable classic protection check as absent", async () => {

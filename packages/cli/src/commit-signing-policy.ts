@@ -206,6 +206,7 @@ export async function fetchGitHubTargetPolicy(input: {
       ),
       fetchClassicProtectionSignaturePolicy(
         `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}/protection/required_signatures`,
+        `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}`,
         request
       )
     ]);
@@ -217,22 +218,42 @@ export async function fetchGitHubTargetPolicy(input: {
 
 async function fetchRulesetsSignaturePolicy(endpoint: string, request: RequestInit): Promise<TargetCommitSignaturePolicy> {
   try {
-    const response = await fetch(endpoint, request);
-    if (!response.ok) {
-      return unavailableGitHubPolicy("branch-rules", response.status);
+    const firstPage = new URL(endpoint);
+    firstPage.searchParams.set("per_page", "100");
+    let nextPage: string | undefined = firstPage.toString();
+    while (nextPage) {
+      const response = await fetch(nextPage, request);
+      if (!response.ok) {
+        return unavailableGitHubPolicy("branch-rules", response.status);
+      }
+      const rules = await response.json() as Array<{ type?: string }>;
+      if (rules.some((rule) => rule.type === "required_signatures")) {
+        return githubPolicy("required");
+      }
+      nextPage = nextPageFromLinkHeader(response.headers.get("link"));
     }
-    const rules = await response.json() as Array<{ type?: string }>;
-    return githubPolicy(rules.some((rule) => rule.type === "required_signatures") ? "required" : "optional");
+    return githubPolicy("optional");
   } catch (error) {
     return unavailableGitHubPolicy("branch-rules", error);
   }
 }
 
-async function fetchClassicProtectionSignaturePolicy(endpoint: string, request: RequestInit): Promise<TargetCommitSignaturePolicy> {
+async function fetchClassicProtectionSignaturePolicy(
+  endpoint: string,
+  branchEndpoint: string,
+  request: RequestInit
+): Promise<TargetCommitSignaturePolicy> {
   try {
     const response = await fetch(endpoint, request);
     if (response.status === 404) {
-      return githubPolicy("optional");
+      const branchResponse = await fetch(branchEndpoint, request);
+      if (!branchResponse.ok) {
+        return unavailableGitHubPolicy("branch", branchResponse.status);
+      }
+      const branch = await branchResponse.json() as { protected?: boolean };
+      return branch.protected === false
+        ? githubPolicy("optional")
+        : unavailableGitHubPolicy("required-signatures", response.status);
     }
     if (!response.ok) {
       return unavailableGitHubPolicy("required-signatures", response.status);
@@ -242,6 +263,20 @@ async function fetchClassicProtectionSignaturePolicy(endpoint: string, request: 
   } catch (error) {
     return unavailableGitHubPolicy("required-signatures", error);
   }
+}
+
+function nextPageFromLinkHeader(header: string | null): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  for (const link of header.split(",")) {
+    const url = link.match(/<([^>]+)>/)?.[1];
+    const relations = link.match(/\brel="([^"]+)"/)?.[1]?.split(/\s+/) ?? [];
+    if (url && relations.includes("next")) {
+      return url;
+    }
+  }
+  return undefined;
 }
 
 function reconcileGitHubSignaturePolicies(...policies: TargetCommitSignaturePolicy[]): TargetCommitSignaturePolicy {
