@@ -62,6 +62,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   if (followUpWorktreePath) {
     resolvePackageManagerContract(followUpWorktreePath, verificationCommands(verificationContract));
   }
+  const previousRun = await latestRunForWorkItem(ctx, workItem.id);
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
@@ -75,32 +76,25 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
       }
     });
   } catch (error) {
-    const failedRun = await latestRunForWorkItem(ctx, workItem.id);
-    if (failedRun && failedRun.id !== latestRun?.id) {
-      const terminalFailure = terminalFailureFromError(error) ?? {
-        category: "orchestrator" as const,
-        message: `Follow-up execution failed: ${formatErrorMessage(error)}`
-      };
-      const finalResultPath = path.join(failedRun.runDir, "final-result.json");
-      if (!fs.existsSync(finalResultPath)) {
-        try {
-          await markWorkItemRunFailed(
-            ctx,
-            workItem.id,
-            terminalFailure.message,
-            terminalFailure.category === "publishing" ? "publishing" : "orchestrator"
-          );
-        } catch (persistenceError) {
-          const artifactFailure = {
-            category: "orchestrator" as const,
-            message: `Final result artifact persistence failed: ${formatErrorMessage(persistenceError)}`
-          };
-          throw attachTerminalFailure(persistenceError, artifactFailure);
-        }
+    const terminalFailure = {
+      category: "orchestrator" as const,
+      message: `Follow-up orchestration failed: ${formatErrorMessage(error)}`
+    };
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    if (latestRun && latestRun.id !== previousRun?.id) {
+      try {
+        await markWorkItemRunFailed(
+          ctx,
+          workItem.id,
+          terminalFailure.message,
+          terminalFailure.category,
+          { persistFinalResult: false }
+        );
+      } catch {
+        // Preserve the original orchestration failure when terminal state persistence is also unavailable.
       }
-      throw attachTerminalFailure(error, terminalFailure);
     }
-    throw error;
+    throw attachTerminalFailure(error, terminalFailure);
   }
 
   if (result.status === "blocked" || result.status === "failed") {

@@ -6,7 +6,7 @@ The orchestrator chooses the work and observes the result. AFK Geoff performs th
 
 For the shortest operational path, start with [Agent Orchestrator Quickstart](agent-orchestrator-quickstart.md).
 
-The frozen field-level contract for local preflight and run command results is [Local Execution JSON Contract](local-execution-json-contract.md).
+The frozen field-level contract for local preflight and run command results is [Local Execution JSON Contract](local-execution-json-contract.md). Observation, handoff, pull-request publication, and review follow-up are frozen in [Local Observation and Publishing JSON Contract](local-observation-publishing-json-contract.md).
 
 The frozen field-level contract for remote GitHub Actions submission, run and artifact discovery, and artifact download is [GitHub Actions Execution JSON Contract](github-actions-json-contract.md).
 

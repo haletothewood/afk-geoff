@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
+import { captureConsole, createFixture, createRef, makeTempDir, MockGitHubMirror, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
 
 describe("afk CLI — JSON output", () => {
   const originalCwd = process.cwd();
@@ -336,6 +336,54 @@ describe("afk CLI — JSON output", () => {
     });
   });
 
+  it("Given run --pr --json publishing returns no URL, then it fails the frozen success contract", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const { url: _url, ...pullRequestRefWithoutUrl } = createRef(
+      "work_item",
+      "wi_missing_publication_url",
+      "pull_request",
+      201
+    );
+    vi.spyOn(githubMirror, "openPullRequest").mockResolvedValue(pullRequestRefWithoutUrl);
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    writeBrief(fixture.repoDir);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["run", "file", "brief.md", "--pr", "--json"]);
+    });
+    const payload = parseNdjson(output).at(-1) as {
+      kind: string;
+      command: string;
+      ok: boolean;
+      prUrl?: string;
+      terminalFailure?: { category: string; message: string };
+      error: { category?: string; message: string };
+    };
+
+    expect(payload).toMatchObject({
+      kind: "run_result",
+      command: "run",
+      ok: false,
+      terminalFailure: {
+        category: "publishing",
+        message: "Post-run publication failed: Publisher did not return a pull request URL"
+      },
+      error: {
+        category: "publishing",
+        message: "Publisher did not return a pull request URL"
+      }
+    });
+    expect(payload).not.toHaveProperty("prUrl");
+
+    const [workItem] = await fixture.store.listWorkItemsByRequirement((await fixture.requirement()).id);
+    const [run] = await fixture.store.listRuns();
+    expect(workItem?.status).toBe("failed");
+    expect(run?.status).toBe("failed");
+  });
+
   it("Given run --json cannot load configuration, then stdout still contains a structured result envelope", async () => {
     const fixture = await createFixture(tempDir);
     const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
@@ -444,6 +492,26 @@ describe("afk CLI — JSON output", () => {
     expect(payload.runs[0]?.diagnostics.worktreeExists).toBe(true);
     expect(payload.runs[0]?.diagnostics.resultExists).toBe(true);
     expect(payload.runs[0]?.diagnostics.finalResultExists).toBe(true);
+  });
+
+  it("Given runs --json cannot load configuration, then it returns the shared structured failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "version: 2\n");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["runs", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: null;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("runs");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.error.message).toBeTruthy();
   });
 
   it("Given inspect --json, when a completed run exists, then it prints run diagnostics and final result summary", async () => {
@@ -951,6 +1019,28 @@ describe("afk CLI — JSON output", () => {
     expect(payload.nextActions).toEqual(["- All work items are complete"]);
   });
 
+  it("Given status --json cannot load configuration, then it retains the focus id in a structured failure", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "version: 2\n");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["status", "wi_focus", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: null;
+      workItemId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("status");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.workItemId).toBe("wi_focus");
+    expect(payload.error.message).toBeTruthy();
+  });
+
   it("Given follow-up --json, when review comments exist, then it reports the same PR and actionable comment details", async () => {
     const githubMirror = new MockGitHubMirror();
     githubMirror.reviewComments = [
@@ -1080,7 +1170,7 @@ describe("afk CLI — JSON output", () => {
 
     expect(payload).toEqual(expect.objectContaining({
       command: "follow-up",
-      ok: true,
+      ok: false,
       status: "failed",
       runId: followUpRun!.id
     }));
@@ -1231,7 +1321,7 @@ describe("afk CLI — JSON output", () => {
       };
     };
 
-    expect(payload.ok).toBe(true);
+    expect(payload.ok).toBe(false);
     expect(payload.status).toBe("blocked");
     expect(payload.verification.status).toBe("failed");
     expect(payload.verification.commands).toContainEqual(expect.objectContaining({
@@ -1239,6 +1329,105 @@ describe("afk CLI — JSON output", () => {
       passed: false,
       origins: ["project"]
     }));
+  });
+
+  it("Given follow-up cannot persist its final result, then all observation contracts report an orchestrator failure", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{
+      id: "comment_final_result_failure",
+      path: "src/app.ts",
+      line: 7,
+      body: "Please cover the persistence failure."
+    }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    writeBrief(fixture.repoDir);
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    let injectedFailure = false;
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+      if (!injectedFailure && String(args[0]).endsWith("final-result.json")) {
+        injectedFailure = true;
+        throw new Error("simulated final-result persistence failure");
+      }
+      return originalWriteFileSync(...args);
+    });
+
+    let output: string;
+    try {
+      output = await captureConsoleForRejected(async () => {
+        await fixture.cli(["follow-up", initialRun!.workItemId, "--json"]);
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      finalResultPath?: string;
+      terminalFailure?: { category: string; message: string };
+      error: { category?: string; message: string };
+    };
+    expect(payload).toMatchObject({
+      command: "follow-up",
+      ok: false,
+      terminalFailure: {
+        category: "orchestrator",
+        message: "Follow-up orchestration failed: simulated final-result persistence failure"
+      },
+      error: {
+        category: "orchestrator",
+        message: "simulated final-result persistence failure"
+      }
+    });
+    expect(payload).not.toHaveProperty("finalResultPath");
+
+    const followUpRun = (await fixture.store.listRuns()).find((run) => run.id !== initialRun!.id);
+    expect(followUpRun?.status).toBe("failed");
+    expect(followUpRun?.terminalFailure).toEqual(payload.terminalFailure);
+    expect((await fixture.store.getWorkItem(initialRun!.workItemId))?.status).toBe("failed");
+    expect(fs.existsSync(path.join(followUpRun!.runDir, "final-result.json"))).toBe(false);
+
+    const status = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["status", initialRun!.workItemId, "--json"]);
+    })) as {
+      terminalFailures: Array<{
+        runId: string;
+        workItemId: string;
+        terminalFailure: { category: string; message: string };
+      }>;
+    };
+    const inspection = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["inspect", followUpRun!.id, "--json"]);
+    })) as {
+      terminalFailure?: { category: string; message: string };
+      paths: { finalResultPath?: string };
+      derived: { complete: boolean };
+    };
+    const handoff = JSON.parse(await captureConsole(async () => {
+      await fixture.cli(["handoff", followUpRun!.id, "--json"]);
+    })) as {
+      recommendedAction: string;
+      terminalFailure?: { category: string; message: string };
+      finalResultPath?: string;
+    };
+
+    expect(status.terminalFailures).toContainEqual({
+      runId: followUpRun!.id,
+      workItemId: initialRun!.workItemId,
+      terminalFailure: payload.terminalFailure!
+    });
+    expect(inspection.terminalFailure).toEqual(payload.terminalFailure);
+    expect(inspection.paths).not.toHaveProperty("finalResultPath");
+    expect(inspection.derived.complete).toBe(false);
+    expect(handoff.terminalFailure).toEqual(payload.terminalFailure);
+    expect(handoff.recommendedAction).toBe("retry");
+    expect(handoff).not.toHaveProperty("finalResultPath");
   });
 
   it("Given submit issue --backend github-actions --json, when GitHub is configured, then it dispatches the AFK workflow", async () => {

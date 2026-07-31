@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LocalDockerExecutionBackend } from "../local-docker-execution-backend.js";
 import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig } from "./test-helpers.js";
 
 describe("afk CLI — PR follow-up command", () => {
@@ -204,5 +205,52 @@ describe("afk CLI — PR follow-up command", () => {
 
     await expect(fixture.cli(["follow-up", initialRun!.workItemId])).rejects.toThrow("no actionable review comments");
     expect(await fixture.store.listRuns()).toHaveLength(1);
+  });
+
+  it("Given follow-up setup fails before creating a run, then the previous successful run remains completed", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{ id: "comment_1", body: "Please address this feedback." }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+
+    fs.writeFileSync(
+      `${fixture.repoDir}/brief.md`,
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship a narrow internal improvement for the AFK runner.",
+        "",
+        "## Work Item Title",
+        "Publish a PR",
+        "",
+        "## Work Item Body",
+        "Create a branch and pull request.",
+        "",
+        "## Acceptance Criteria",
+        "- A pull request is opened for review"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    const runSpy = vi.spyOn(LocalDockerExecutionBackend.prototype, "run")
+      .mockRejectedValue(new Error("unable to recreate follow-up worktree"));
+
+    try {
+      await expect(fixture.cli(["follow-up", initialRun!.workItemId])).rejects.toThrow(
+        "unable to recreate follow-up worktree"
+      );
+    } finally {
+      runSpy.mockRestore();
+    }
+
+    const [storedRun] = await fixture.store.listRuns();
+    expect(storedRun?.id).toBe(initialRun?.id);
+    expect(storedRun?.status).toBe("completed");
+    expect(storedRun?.terminalFailure).toBeUndefined();
+    expect(fs.existsSync(`${storedRun?.runDir}/final-result.json`)).toBe(true);
   });
 });

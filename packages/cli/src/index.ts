@@ -152,21 +152,34 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("[workItemId]", "Optional work item id to focus JSON status output")
     .option("--json", "Print machine-readable JSON")
     .action(async (workItemId: string | undefined, options: { json?: boolean }) => {
-    const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
-      const snapshot = await runForJson(async () => {
-        await autoSync(ctx);
-        return await getStatusSnapshot(ctx);
-      });
-      printJson({
-        command: "status",
-        ok: true,
-        backend: ctx.executionBackendKind,
-        ...(workItemId ? { workItemId } : {}),
-        ...snapshot,
-        ...(workItemId ? { focusedWorkItem: snapshot.workItems.find((item) => item.id === workItemId) } : {})
-      });
+      let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
+      try {
+        ctx = await openContext(commandCwd, dependencies);
+        const snapshot = await runForJson(async () => {
+          await autoSync(ctx!);
+          return await getStatusSnapshot(ctx!);
+        });
+        printJson({
+          command: "status",
+          ok: true,
+          backend: ctx.executionBackendKind,
+          ...(workItemId ? { workItemId } : {}),
+          ...snapshot,
+          ...(workItemId ? { focusedWorkItem: snapshot.workItems.find((item) => item.id === workItemId) } : {})
+        });
+      } catch (error) {
+        printJson({
+          command: "status",
+          ok: false,
+          backend: ctx?.executionBackendKind ?? null,
+          ...(workItemId ? { workItemId } : {}),
+          error: { message: formatErrorMessage(error) }
+        });
+        throw error;
+      }
     } else {
+      const ctx = await openContext(commandCwd, dependencies);
       await autoSync(ctx);
       await printStatus(ctx);
     }
@@ -184,19 +197,21 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program.command("runs")
     .option("--json", "Print machine-readable JSON")
     .action(async (options: { json?: boolean }) => {
-    const ctx = await openContext(commandCwd, dependencies);
     if (options.json) {
+      let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
       try {
+        ctx = await openContext(commandCwd, dependencies);
         const runs = await runForJson(async () => {
-          await autoSync(ctx);
-          return await listRunRecords(ctx);
+          await autoSync(ctx!);
+          return await listRunRecords(ctx!);
         });
         printJson({ command: "runs", ok: true, backend: ctx.executionBackendKind, count: runs.length, runs });
       } catch (error) {
-        printJson({ command: "runs", ok: false, backend: ctx.executionBackendKind, error: { message: formatErrorMessage(error) } });
+        printJson({ command: "runs", ok: false, backend: ctx?.executionBackendKind ?? null, error: { message: formatErrorMessage(error) } });
         throw error;
       }
     } else {
+      const ctx = await openContext(commandCwd, dependencies);
       await autoSync(ctx);
       await printRuns(ctx);
     }
@@ -207,19 +222,21 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<runId>", "Run id")
     .option("--json", "Print machine-readable JSON")
     .action(async (runId: string, options: { json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
       if (options.json) {
+        let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
         try {
+          ctx = await openContext(commandCwd, dependencies);
           const inspection = await runForJson(async () => {
-            await autoSync(ctx);
-            return await inspectRun(ctx, runId);
+            await autoSync(ctx!);
+            return await inspectRun(ctx!, runId);
           });
           printJson({ command: "inspect", ok: true, backend: ctx.executionBackendKind, runId, ...inspection });
         } catch (error) {
-          printJson({ command: "inspect", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } });
+          printJson({ command: "inspect", ok: false, backend: ctx?.executionBackendKind ?? null, runId, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         await autoSync(ctx);
         await printRunInspection(ctx, runId);
       }
@@ -230,19 +247,21 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<runId>", "Run id")
     .option("--json", "Print machine-readable JSON")
     .action(async (runId: string, options: { json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
       if (options.json) {
+        let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
         try {
+          ctx = await openContext(commandCwd, dependencies);
           const handoff = await runForJson(async () => {
-            await autoSync(ctx);
-            return await getRunHandoff(ctx, runId);
+            await autoSync(ctx!);
+            return await getRunHandoff(ctx!, runId);
           });
           printJson({ command: "handoff", ok: true, backend: ctx.executionBackendKind, ...handoff });
         } catch (error) {
-          printJson({ command: "handoff", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } });
+          printJson({ command: "handoff", ok: false, backend: ctx?.executionBackendKind ?? null, runId, error: { message: formatErrorMessage(error) } });
           throw error;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         await autoSync(ctx);
         await printRunHandoff(ctx, runId);
       }
@@ -299,13 +318,14 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .argument("<runId>", "Run id")
     .option("--json", "Print machine-readable JSON/NDJSON")
     .action(async (runId: string, options: { json?: boolean }) => {
-      const ctx = await openContext(commandCwd, dependencies);
       if (options.json) {
+        let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
         let outcome: Awaited<ReturnType<typeof watchRun>>;
         try {
-          outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx, runId, dependencies, { json: true })), { allowRunEvents: true });
+          ctx = await openContext(commandCwd, dependencies);
+          outcome = await runForJson(async () => await withRunEvents(async () => await watchRun(ctx!, runId, dependencies, { json: true })), { allowRunEvents: true });
         } catch (error) {
-          printJson({ kind: "watch_result", command: "watch", ok: false, backend: ctx.executionBackendKind, runId, error: { message: formatErrorMessage(error) } }, { compact: true });
+          printJson({ kind: "watch_result", command: "watch", ok: false, backend: ctx?.executionBackendKind ?? null, runId, error: { message: formatErrorMessage(error) } }, { compact: true });
           process.exitCode = 1;
           return;
         }
@@ -329,6 +349,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           process.exitCode = 1;
         }
       } else {
+        const ctx = await openContext(commandCwd, dependencies);
         await watchRun(ctx, runId, dependencies);
       }
     });
@@ -536,22 +557,33 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
     .option("--json", "Print machine-readable JSON")
     .addOption(new Option("--backend <backend>", "Execution backend").choices([...executionBackendChoices]))
     .action(async (workItemId: string, options: { json?: boolean; backend?: typeof executionBackendChoices[number] }) => {
-      const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
-      const followUpAction = async () => {
-        await autoSync(ctx);
-        return await runPullRequestFollowUp(ctx, workItemId);
-      };
       if (options.json) {
+        let ctx: Awaited<ReturnType<typeof openContext>> | undefined;
         try {
-          const outcome = await runForJson(followUpAction);
-          printJson({ command: "follow-up", ok: true, workItemId, backend: ctx.executionBackendKind, ...outcome });
+          ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
+          const outcome = await runForJson(async () => {
+            await autoSync(ctx!);
+            return await runPullRequestFollowUp(ctx!, workItemId);
+          });
+          const ok = outcome.status === "completed";
+          printJson({
+            command: "follow-up",
+            ok,
+            workItemId,
+            backend: ctx.executionBackendKind,
+            ...outcome,
+            ...(!ok ? { error: { message: `Follow-up run ${outcome.status ?? "failed"}` } } : {})
+          });
+          if (!ok) {
+            process.exitCode = 1;
+          }
         } catch (error) {
           const terminalFailure = terminalFailureFromError(error);
           printJson({
             command: "follow-up",
             ok: false,
             workItemId,
-            backend: ctx.executionBackendKind,
+            backend: ctx?.executionBackendKind ?? options.backend ?? null,
             ...(terminalFailure ? { terminalFailure } : {}),
             error: {
               ...(terminalFailure ? { category: terminalFailure.category } : {}),
@@ -561,7 +593,9 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
           throw error;
         }
       } else {
-        const outcome = await followUpAction();
+        const ctx = await openContext(commandCwd, { ...dependencies, ...(options.backend ? { backendOverride: options.backend } : {}) });
+        await autoSync(ctx);
+        const outcome = await runPullRequestFollowUp(ctx, workItemId);
         printRunOutcome(outcome);
       }
     });
