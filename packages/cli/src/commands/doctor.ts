@@ -19,6 +19,7 @@ export interface DoctorReport {
   ok: boolean;
   checks: Array<{ label: string; ok: true; detail: string } | { label: string; ok: false; error: string }>;
   failures: string[];
+  commitSigningPolicy: CliContext["commitSigningPolicy"];
 }
 
 export async function getDoctorReport(ctx: CliContext): Promise<DoctorReport> {
@@ -64,10 +65,25 @@ export async function getDoctorReport(ctx: CliContext): Promise<DoctorReport> {
     results.push({ label: "github remote", ok: true, detail: `${ctx.remote.owner}/${ctx.remote.repo}` });
   }
 
+  if (!ctx.commitSigningPolicy.publishable) {
+    results.push({
+      label: "commit signing policy",
+      ok: false,
+      error: ctx.commitSigningPolicy.failure?.message ?? "Commit signing policy is not satisfied"
+    });
+  } else {
+    results.push({
+      label: "commit signing policy",
+      ok: true,
+      detail: `${ctx.commitSigningPolicy.requirement}; ${ctx.commitSigningPolicy.enforced ? `verified ${ctx.commitSigningPolicy.capability.format} capability` : "signing not required"}`
+    });
+  }
+
   const failures = results.flatMap((result) => result.ok ? [] : [result.error]);
   return {
     ok: failures.length === 0,
     checks: results,
-    failures
+    failures,
+    commitSigningPolicy: ctx.commitSigningPolicy
   };
 }

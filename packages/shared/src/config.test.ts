@@ -96,6 +96,21 @@ describe("projectConfigSchema — runner model fields", () => {
     expect(config.execution.backend).toBe("local-process");
   });
 
+  it("defaults commit signing to auto without making signatures universal", () => {
+    const config = projectConfigSchema.parse(baseConfig());
+
+    expect(config.git.signing).toEqual({ mode: "auto" });
+  });
+
+  it("accepts explicitly enabled commit signing with a non-secret key selector", () => {
+    const config = projectConfigSchema.parse({
+      ...baseConfig(),
+      git: { signing: { mode: "enabled", key: "release@example.com" } }
+    });
+
+    expect(config.git.signing).toEqual({ mode: "enabled", key: "release@example.com" });
+  });
+
   it("configures smoke profile with a no-key command runner", () => {
     const config = projectConfigSchema.parse(baseConfig());
     const profiled = applyRunnerProfile(config, "smoke");

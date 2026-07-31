@@ -198,6 +198,17 @@ github:
   enabled: true
 ```
 
+Commit signing is policy-aware and is not a universal requirement. The default `auto` mode reads the effective rules for `baseBranch` from GitHub when GitHub integration is enabled; local repositories continue to use ordinary unsigned commits. Use `enabled` to require signing even when the target branch does not, or `disabled` to force unsigned commits only where the target permits them:
+
+```yaml
+git:
+  signing:
+    mode: auto # auto | enabled | disabled
+    # key: release@example.com # optional Git signing key selector; never a private key value
+```
+
+When signing is enforced, AFK probes the configured backend without changing branch history, signs work, fix, and follow-up commits, verifies every commit in the AFK branch range locally, and confirms GitHub's verification result after push. Missing policy access, unavailable signing, unsigned commits, or host-rejected signatures make `final-result.json` non-publishable. Structured doctor, run, inspect, and handoff output expose the effective policy and non-secret capability status.
+
 Add `runner.requiredEnv` only when you want CI-style non-interactive credential checks.
 
 ## Safe First Workflow

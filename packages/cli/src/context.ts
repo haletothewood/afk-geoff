@@ -12,6 +12,7 @@ import { LocalDockerExecutionBackend } from "./local-docker-execution-backend.js
 import { LocalProcessWorkspaceRuntime } from "./local-process-runtime.js";
 import { GitHubSourceUpdater, NoOpSourceUpdater, parseGitHubIssueUrl } from "./source-updater.js";
 import type { CliContext, CliDependencies } from "./types.js";
+import { resolveCommitSigningPolicy } from "./commit-signing-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,6 +32,19 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
       ? dependencies.githubFactory(githubToken)
       : new GitHubMirror(githubToken)
     : undefined;
+  const commitSigningPolicy = await resolveCommitSigningPolicy({
+    repoRoot,
+    baseBranch: config.baseBranch,
+    mode: config.git.signing.mode,
+    ...(config.git.signing.key ? { key: config.git.signing.key } : {}),
+    githubEnabled: config.github.enabled,
+    ...(remote ? { remote } : {}),
+    ...(githubToken ? { githubToken } : {}),
+    ...(dependencies.targetCommitSignaturePolicyResolver
+      ? { targetPolicyResolver: dependencies.targetCommitSignaturePolicyResolver }
+      : {}),
+    ...(dependencies.signingCapabilityResolver ? { capabilityResolver: dependencies.signingCapabilityResolver } : {})
+  });
   const executionBackend = createExecutionBackend(executionBackendKind, {
     repoRoot,
     config,
@@ -39,6 +53,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
     git,
     runtime,
     runner,
+    commitSigningPolicy,
     ...(githubToken ? { githubToken } : {})
   });
   const resultPublisher = github && remote
@@ -74,6 +89,7 @@ export async function openContext(cwd: string, dependencies: CliDependencies): P
     executionBackend,
     resultPublisher,
     remote,
+    commitSigningPolicy,
     sourceUpdaterFactory
   };
 }

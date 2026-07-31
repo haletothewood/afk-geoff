@@ -174,10 +174,16 @@ export async function retryRunVerification(
   const whyNotPublishable = passed ? [] : results
     .filter((result) => !result.passed)
     .map((result) => `${failureLabel(result)} failed: ${result.command} (exit ${result.exitCode})`);
+  const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isRecord(evidencePacket.commitSigning) ? evidencePacket.commitSigning : undefined;
+  const signingSatisfied = commitSigning?.satisfied !== false;
+  const publishable = passed && signingSatisfied;
+  const signatureBlockers = signingSatisfied ? [] : getStringArray(finalResult.whyNotPublishable)
+    .filter((message) => /sign(?:ature|ing)/i.test(message));
+  const effectiveWhyNotPublishable = [...whyNotPublishable, ...signatureBlockers];
   const summary = passed
     ? `Verification retry passed on reviewed commit ${currentHead.slice(0, 12)}`
     : `Verification retry failed on reviewed commit ${currentHead.slice(0, 12)}`;
-  const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
   const updatedEvidence = {
     ...evidencePacket,
     verification: {
@@ -190,33 +196,33 @@ export async function retryRunVerification(
       }))
     },
     publishability: {
-      publishable: passed,
-      blockers: passed ? [] : whyNotPublishable.map((message) => ({ category: "verification", message }))
+      publishable,
+      blockers: effectiveWhyNotPublishable.map((message) => ({ category: /sign(?:ature|ing)/i.test(message) ? "policy" : "verification", message }))
     },
-    recommendedHumanAction: passed ? "publish" : "retry",
+    recommendedHumanAction: publishable ? "publish" : signingSatisfied ? "retry" : "fix_environment",
     recovery
   };
   fs.writeFileSync(finalResultPath, JSON.stringify({
     ...finalResult,
-    status: passed ? "done" : "blocked",
+    status: publishable ? "done" : "blocked",
     summary,
     verificationSummaries,
-    publishable: passed,
-    whyNotPublishable,
+    publishable,
+    whyNotPublishable: effectiveWhyNotPublishable,
     publishabilityBlockers: updatedEvidence.publishability.blockers,
     recovery,
     evidencePacket: updatedEvidence
   }, null, 2));
 
   await ctx.store.updateRun(runId, { status: "completed", summary });
-  await ctx.store.updateWorkItemStatus(run.workItemId, passed ? "done" : "blocked");
+  await ctx.store.updateWorkItemStatus(run.workItemId, publishable ? "done" : "blocked");
   await refreshRequirementStatuses(ctx);
 
   return {
     runId,
     workItemId: run.workItemId,
-    status: passed ? "done" : "blocked",
-    publishable: passed,
+    status: publishable ? "done" : "blocked",
+    publishable,
     reusedStages: recovery.reusedStages,
     retriedStages: recovery.retriedStages,
     verification: { status: passed ? "passed" : "failed", commands: results },
@@ -630,6 +636,10 @@ function summarizeReviewEvidence(reviewResults: Array<Record<string, unknown>>):
     addressedIssueCount: Math.max(0, issueCount - remainingIssues.length),
     remainingIssues
   };
+}
+
+function getStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

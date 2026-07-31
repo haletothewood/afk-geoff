@@ -76,7 +76,7 @@ describe("afk CLI — doctor command", () => {
     expect(payload.ok).toBe(true);
     expect(payload.backend).toBe("local-docker");
     expect(payload.failures).toEqual([]);
-    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "failures", "ok"]);
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "commitSigningPolicy", "failures", "ok"]);
     expect(payload.checks.some((check) => check.label === "git" && check.ok)).toBe(true);
     expect(payload.checks.some((check) => check.label === "runner" && check.ok)).toBe(true);
     expect(output).not.toContain("Doctor checks passed");
@@ -104,7 +104,7 @@ describe("afk CLI — doctor command", () => {
 
     expect(payload.command).toBe("doctor");
     expect(payload.ok).toBe(false);
-    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "error", "failures", "ok"]);
+    expect(Object.keys(payload).sort()).toEqual(["backend", "checks", "command", "commitSigningPolicy", "error", "failures", "ok"]);
     expect(payload.error.message).toBe("Doctor checks failed (2 issues)");
     expect(payload.failures).toHaveLength(2);
     expect(payload.checks.find((check) => check.label === "env:OPENAI_API_KEY")?.error).toBe("Missing required env var OPENAI_API_KEY");
@@ -196,6 +196,11 @@ describe("afk CLI — doctor command", () => {
         label: "github",
         ok: false,
         error: "GitHub is enabled but origin remote owner/repo could not be resolved."
+      },
+      {
+        label: "commit signing policy",
+        ok: false,
+        error: "Commit signature policy for target branch main is unavailable: GitHub repository identity is unavailable"
       }
     ]);
   });

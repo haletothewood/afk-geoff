@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { PullRequestReviewSource } from "@afk-geoff/core";
+import type { CommitSignatureVerificationSource, PullRequestReviewSource } from "@afk-geoff/core";
 import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificationEntries, verificationCommands } from "@afk-geoff/shared";
 import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage, terminalFailureFromError } from "../cli-utils.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
@@ -147,6 +147,26 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
       await markWorkItemRunFailed(ctx, workItem.id, terminalFailure.message, terminalFailure.category);
       throw attachTerminalFailure(error, terminalFailure);
     }
+    if (ctx.commitSigningPolicy.enforced) {
+      try {
+        await assertGitHubVerifiedSignatures(ctx, result.worktreePath);
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : String(error);
+        const blockedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (blockedRun) {
+          markHostSignatureVerificationFailure(blockedRun.runDir, summary);
+          await ctx.store.updateRun(blockedRun.id, { status: "completed", summary });
+        }
+        await ctx.store.updateWorkItemStatus(workItem.id, "blocked");
+        return {
+          workItemId: workItem.id,
+          ...(blockedRun ? { runId: blockedRun.id, status: "blocked" as const } : { status: "blocked" as const }),
+          branchName: result.branchName,
+          actionableReviewComments,
+          ...(pullRef.url ? { prUrl: pullRef.url } : {})
+        };
+      }
+    }
   }
 
   const followUpRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -186,6 +206,42 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     ...(verification ? { verification } : {}),
     ...(prUrl ? { prUrl } : {})
   };
+}
+
+async function assertGitHubVerifiedSignatures(ctx: CliContext, worktreePath: string): Promise<void> {
+  if (!ctx.git.listCommitsSince || !ctx.github || !("verifyCommitSignatures" in ctx.github)) {
+    throw new Error("GitHub verified-signature confirmation is unavailable after follow-up push");
+  }
+  const verifier = ctx.github as typeof ctx.github & CommitSignatureVerificationSource;
+  const shas = await ctx.git.listCommitsSince({ cwd: worktreePath, baseBranch: ctx.config.baseBranch });
+  const verification = await verifier.verifyCommitSignatures({ owner: ctx.remote!.owner, repo: ctx.remote!.repo, shas });
+  const rejected = verification.filter((commit) => !commit.verified);
+  if (rejected.length > 0) {
+    throw new Error(`GitHub rejected commit signature verification for ${rejected.map((commit) => `${commit.sha}${commit.reason ? ` (${commit.reason})` : ""}`).join(", ")}`);
+  }
+}
+
+function markHostSignatureVerificationFailure(runDir: string, message: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonObject(finalResultPath);
+  if (!finalResult) return;
+  const whyNotPublishable = [...new Set([...(Array.isArray(finalResult.whyNotPublishable) ? finalResult.whyNotPublishable.filter((value): value is string => typeof value === "string") : []), message])];
+  const evidencePacket = isObject(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isObject(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const blocker = { category: "policy", message };
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    status: "blocked",
+    publishable: false,
+    whyNotPublishable,
+    publishabilityBlockers: [blocker],
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: false, hostVerification: { verified: false, message } },
+      publishability: { publishable: false, blockers: [blocker] },
+      recommendedHumanAction: "fix_environment"
+    }
+  }, null, 2));
 }
 
 function asPullRequestReviewSource(value: unknown): PullRequestReviewSource | undefined {

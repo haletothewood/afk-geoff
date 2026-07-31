@@ -5,9 +5,10 @@ import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { vi } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
-import type { ChangeRequest, ChangeRequestPublisher, ExternalRef, IssueMirror, PullRequestReviewSource, Requirement, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
+import type { ChangeRequest, ChangeRequestPublisher, CommitSignatureVerificationSource, ExternalRef, IssueMirror, PullRequestReviewSource, Requirement, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { runCli } from "../index.js";
+import type { SigningCapabilityResolver, TargetPolicyResolver } from "../commit-signing-policy.js";
 
 export interface FixtureOptions {
   githubEnabled?: boolean;
@@ -27,6 +28,9 @@ export interface FixtureOptions {
   gitRemoteChecker?: (repoRoot: string) => Promise<void>;
   /** Override GitHub auth verification for preflight. Defaults to no-op (tests use mock GitHub). */
   githubAuthVerifier?: (token: string, remote: { owner: string; repo: string }) => Promise<void>;
+  targetCommitSignaturePolicyResolver?: TargetPolicyResolver;
+  signingCapabilityResolver?: SigningCapabilityResolver;
+  signing?: { mode: "auto" | "enabled" | "disabled"; key?: string };
 }
 
 export interface WorkflowFixture {
@@ -75,12 +79,16 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
     ...(options.onAfterPoll ? { onAfterPoll: options.onAfterPoll } : {}),
     ...(options.gitRemoteChecker !== undefined ? { gitRemoteChecker: options.gitRemoteChecker } : {}),
     // Default: no-op so tests never make real GitHub API calls; override explicitly for auth-failure tests.
-    githubAuthVerifier: options.githubAuthVerifier ?? (async () => {})
+    githubAuthVerifier: options.githubAuthVerifier ?? (async () => {}),
+    targetCommitSignaturePolicyResolver: options.targetCommitSignaturePolicyResolver
+      ?? (async () => ({ requirement: "optional", source: "github-branch-rules" as const })),
+    ...(options.signingCapabilityResolver ? { signingCapabilityResolver: options.signingCapabilityResolver } : {})
   };
 
   await runFixtureCli(repoDir, ["init"], dependencies);
   rewriteConfig(repoDir, {
     githubEnabled: options.githubEnabled ?? false,
+    ...(options.signing ? { signing: options.signing } : {}),
     ...(options.verification ? { verification: options.verification } : {})
   });
 
@@ -154,12 +162,15 @@ export async function firstRequirement(store: SqliteStateStore): Promise<Require
   return requirement;
 }
 
-export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; runnerRequiredEnv?: string[]; runnerCommand?: string[]; runnerModel?: string; runnerReviewModel?: string; verification?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
+export function rewriteConfig(repoDir: string, options: { githubEnabled: boolean; signing?: { mode: "auto" | "enabled" | "disabled"; key?: string }; runnerRequiredEnv?: string[]; runnerCommand?: string[]; runnerModel?: string; runnerReviewModel?: string; verification?: string[]; timeouts?: { runTimeoutMs?: number; heartbeatStaleMs?: number } }): void {
   const configPath = path.join(repoDir, ".afk", "config.yaml");
   const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
   config.github.enabled = options.githubEnabled;
   config.github.owner = options.githubEnabled ? "acme" : undefined;
   config.github.repo = options.githubEnabled ? "demo" : undefined;
+  if (options.signing) {
+    config.git.signing = options.signing;
+  }
   config.runner.command = options.runnerCommand ?? ["node", "fake-runner.mjs", "{prompt}"];
   config.runner.requiredEnv = options.runnerRequiredEnv ?? [];
   config.runner.envAllowlist = [];
@@ -480,7 +491,7 @@ export async function waitForProcessExit(pid: number, timeoutMs: number): Promis
   }
 }
 
-export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
+export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, CommitSignatureVerificationSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
   public readonly requirementMirrorIds: string[] = [];
   public readonly workItemMirrorIds: string[] = [];
   public readonly pullRequestRequests: ChangeRequest[] = [];
@@ -493,6 +504,8 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
   public reviewComments: Array<{ id: string; body: string; path?: string; line?: number }> = [];
   public openPullRequestError: Error | undefined;
   public workflowDispatchErrors: Error[] = [];
+  public rejectedCommitSignatures = new Map<string, string>();
+  public rejectAllCommitSignatures: string | undefined;
   private readonly pullRequestStates = new Map<number, { state: "open" | "closed"; merged: boolean }>();
 
   public async mirrorRequirement(input: { owner: string; repo: string; requirement: Requirement }): Promise<ExternalRef> {
@@ -521,6 +534,13 @@ export class MockGitHubMirror implements IssueMirror, ChangeRequestPublisher, Pu
     const ref = createRef("work_item", input.changeRequest.workItemId, "pull_request", this.pullRequestRequests.length + 200);
     this.pullRequestStates.set(ref.remoteNumber, { state: "open", merged: false });
     return ref;
+  }
+
+  public async verifyCommitSignatures(input: { shas: string[] }): Promise<Array<{ sha: string; verified: boolean; reason?: string }>> {
+    return input.shas.map((sha) => {
+      const reason = this.rejectAllCommitSignatures ?? this.rejectedCommitSignatures.get(sha);
+      return { sha, verified: !reason, ...(reason ? { reason } : {}) };
+    });
   }
 
   public async closePullRequest(input: { owner: string; repo: string; pullNumber: number }): Promise<void> {
