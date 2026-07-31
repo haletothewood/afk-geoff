@@ -608,16 +608,70 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         : undefined;
 
       // Commit changes from this iteration before running verification and review.
-      const commit = await this.git.commitAll({
-        cwd: worktreePath,
-        sign: this.commitSigningPolicy.enforced,
-        ...(this.config.git.signing.key ? { signingKey: this.config.git.signing.key } : {}),
-        message: isFollowUp && iteration === 1
-          ? `afk: address PR feedback for ${input.workItem.title}`
-          : iteration === 1
-          ? `afk: ${input.workItem.title}`
-          : `afk: ${input.workItem.title} (fix ${iteration - 1})`
-      });
+      let commit: { created: boolean; sha?: string };
+      try {
+        commit = await this.git.commitAll({
+          cwd: worktreePath,
+          sign: this.commitSigningPolicy.enforced,
+          ...(this.config.git.signing.key ? { signingKey: this.config.git.signing.key } : {}),
+          message: isFollowUp && iteration === 1
+            ? `afk: address PR feedback for ${input.workItem.title}`
+            : iteration === 1
+            ? `afk: ${input.workItem.title}`
+            : `afk: ${input.workItem.title} (fix ${iteration - 1})`
+        });
+      } catch (error) {
+        if (!this.commitSigningPolicy.enforced) {
+          throw error;
+        }
+
+        const detail = error instanceof Error ? error.message : String(error);
+        const summary = `Verified commit signing capability failed after the capability probe: ${detail}`;
+        const failedSigningPolicy: EffectiveCommitSigningPolicy = {
+          ...this.commitSigningPolicy,
+          publishable: false,
+          failure: {
+            category: "environment",
+            message: summary,
+            remediation: "Restore access to the configured signing key or signing agent, verify a signed commit succeeds, then retry the run."
+          }
+        };
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          generatedArtifacts,
+          branchName,
+          worktreePath,
+          baseBranch: this.config.baseBranch,
+          commitSigningPolicy: failedSigningPolicy,
+          publishable: false,
+          whyNotPublishable: [summary]
+        });
+        emitRunEvent({
+          event: "run_completed",
+          runId,
+          workItemId: input.workItem.id,
+          status: "blocked",
+          message: summary,
+          branchName,
+          worktreePath,
+          runDir,
+          finalResultPath: path.join(runDir, "final-result.json")
+        });
+        return {
+          status: "blocked",
+          summary,
+          issueComment: `**AFK run blocked by commit signing failure**\n\n${summary}\n\n${failedSigningPolicy.failure?.remediation}`,
+          hasDiff: false
+        };
+      }
       if (workerCommit) {
         commits.push({ iteration, phase, ...workerCommit });
       }

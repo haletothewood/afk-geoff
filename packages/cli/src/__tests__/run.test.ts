@@ -120,6 +120,60 @@ describe("afk CLI — run command", () => {
     expect(JSON.parse(handoffOutput)).toMatchObject({ publishable: false, recommendedAction: "report_failure" });
   });
 
+  it("Given the signing probe succeeds but the signed commit fails, then the signing failure is authoritative", async () => {
+    const missingSigningKey = path.join(tempDir, "key-removed-after-probe");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: new MockGitHubMirror(),
+      signing: { mode: "auto", key: missingSigningKey },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      terminalFailure?: unknown;
+      whyNotPublishable: string[];
+      commitSigningPolicy: { enforced: boolean; publishable: boolean; capability: { verified: boolean }; failure?: { category: string } };
+      commitSignatureEvidence: Array<{ signed: boolean; verified: boolean }>;
+      evidencePacket: {
+        commitSigning: { satisfied: boolean; policy: { failure?: { category: string } } };
+        publishability: { publishable: boolean; blockers: Array<{ category: string }> };
+      };
+    };
+    expect(finalResult).toMatchObject({ status: "blocked", publishable: false });
+    expect(finalResult.terminalFailure).toBeUndefined();
+    expect(finalResult.whyNotPublishable.join(" ")).toContain("signing capability failed after the capability probe");
+    expect(finalResult.commitSigningPolicy).toMatchObject({
+      enforced: true,
+      publishable: false,
+      capability: { verified: true },
+      failure: { category: "environment" }
+    });
+    expect(finalResult.commitSignatureEvidence).toEqual([]);
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: false,
+      policy: { failure: { category: "environment" } }
+    });
+    expect(finalResult.evidencePacket.publishability).toMatchObject({
+      publishable: false,
+      blockers: expect.arrayContaining([expect.objectContaining({ category: "environment" })])
+    });
+
+    const inspectOutput = await captureConsole(async () => fixture.cli(["inspect", run!.id, "--json"]));
+    const handoffOutput = await captureConsole(async () => fixture.cli(["handoff", run!.id, "--json"]));
+    expect(JSON.parse(inspectOutput).derived.publishable).toBe(false);
+    expect(JSON.parse(handoffOutput)).toMatchObject({ publishable: false, recommendedAction: "report_failure" });
+  });
+
   it("Given explicitly enabled compatible signing, then work and fix commits are signed and verified", async () => {
     const privateKeyPath = path.join(tempDir, "afk-signing-key");
     const allowedSignersPath = path.join(tempDir, "allowed-signers");
