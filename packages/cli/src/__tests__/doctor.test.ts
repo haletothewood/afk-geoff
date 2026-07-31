@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole, createFixture, makeTempDir, rewriteConfig } from "./test-helpers.js";
@@ -201,7 +202,18 @@ describe("afk CLI — doctor command", () => {
 
   it("Given the local Docker backend executable is missing, when doctor --json runs, then it reports the backend-specific failure", async () => {
     const fixture = await createFixture(tempDir);
-    process.env.PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+    const isolatedBin = path.join(tempDir, "doctor-bin");
+    fs.mkdirSync(isolatedBin);
+    const requiredExecutables: Array<[string, string]> = [
+      ["node", process.execPath],
+      ["git", execFileSync("which", ["git"], { encoding: "utf8" }).trim()],
+      ["gh", execFileSync("which", ["gh"], { encoding: "utf8" }).trim()],
+      ["which", execFileSync("which", ["which"], { encoding: "utf8" }).trim()]
+    ];
+    for (const [name, executable] of requiredExecutables) {
+      fs.symlinkSync(executable, path.join(isolatedBin, name));
+    }
+    process.env.PATH = isolatedBin;
 
     const output = await captureConsoleForRejected(async () => {
       await fixture.cli(["doctor", "--json"]);
