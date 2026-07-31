@@ -193,6 +193,18 @@ const schemas = [
   z.strictObject({
     ...envelopeShape,
     ...runIdentityShape,
+    ...stageExecutionShape,
+    event: z.literal("review_contract_failed"),
+    stage: z.literal("review"),
+    iteration: positiveInteger,
+    phase: z.literal("review"),
+    failureKind: z.enum(["missing", "empty", "malformed"]),
+    message: nonEmptyString,
+    resultPath: nonEmptyString
+  }),
+  z.strictObject({
+    ...envelopeShape,
+    ...runIdentityShape,
     event: z.literal("run_completed"),
     stage: z.enum(["run", "watch"]),
     attempt: positiveInteger,
@@ -259,7 +271,7 @@ const schemas = [
     event: z.literal("evidence_reused"),
     sourceRunId: nonEmptyString,
     reusedStages: z.array(z.enum(["work", "verification", "review"])).min(1),
-    retriedStage: z.enum(["verification", "publishing"])
+    retriedStage: z.enum(["verification", "review", "publishing"])
   })
 ] as const;
 

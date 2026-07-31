@@ -261,7 +261,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     let previousReviewFailure: FailureObservation | undefined;
     const finishOrchestratorFailure = async (
       summary: string,
-      issueComment: string
+      issueComment: string,
+      reviewContractFailure?: ReviewContractFailure
     ): Promise<ExecutionBackendResult> => {
       const terminalFailure: TerminalFailure = {
         category: "orchestrator",
@@ -283,6 +284,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           branchName,
           worktreePath,
           baseBranch: this.config.baseBranch,
+          ...(reviewContractFailure ? { reviewContractFailure } : {}),
           publishable: false,
           whyNotPublishable: [summary],
           terminalFailure
@@ -829,7 +831,32 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
       if (!fs.existsSync(reviewResultPath)) {
         const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})`;
-        return await finishOrchestratorFailure(summary, `**AFK run failed**\n\n${summary}`);
+        emitRunEvent({
+          event: "review_contract_failed",
+          runId,
+          workItemId: input.workItem.id,
+          stage: "review",
+          attempt: 1,
+          reused: false,
+          iteration,
+          phase: "review",
+          failureKind: "missing",
+          message: summary,
+          resultPath: reviewResultPath
+        });
+        return await finishOrchestratorFailure(
+          summary,
+          `**AFK run failed**\n\n${summary}`,
+          {
+            kind: "missing",
+            reviewedHead: headAfterIteration,
+            iteration,
+            attempt: 1,
+            maxAttempts: 3,
+            promptPath: reviewPromptPath,
+            resultPath: reviewResultPath
+          }
+        );
       }
 
       let reviewResult: import("@afk-geoff/shared").ReviewResult;
@@ -838,8 +865,34 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           parseJsonWithRecovery(fs.readFileSync(reviewResultPath, "utf8"))
         );
       } catch {
-        const summary = `Review agent produced malformed output (iteration ${iteration})`;
-        return await finishOrchestratorFailure(summary, `**AFK run failed**\n\n${summary}`);
+        const kind = fs.readFileSync(reviewResultPath, "utf8").trim() ? "malformed" : "empty";
+        const summary = `Review agent produced ${kind} output (iteration ${iteration})`;
+        emitRunEvent({
+          event: "review_contract_failed",
+          runId,
+          workItemId: input.workItem.id,
+          stage: "review",
+          attempt: 1,
+          reused: false,
+          iteration,
+          phase: "review",
+          failureKind: kind,
+          message: summary,
+          resultPath: reviewResultPath
+        });
+        return await finishOrchestratorFailure(
+          summary,
+          `**AFK run failed**\n\n${summary}`,
+          {
+            kind,
+            reviewedHead: headAfterIteration,
+            iteration,
+            attempt: 1,
+            maxAttempts: 3,
+            promptPath: reviewPromptPath,
+            resultPath: reviewResultPath
+          }
+        );
       }
       reviewResults.push({
         iteration,
@@ -1212,6 +1265,16 @@ interface RepeatedFailureSummary {
   unchangedHead: string;
 }
 
+interface ReviewContractFailure {
+  kind: "missing" | "empty" | "malformed";
+  reviewedHead: string;
+  iteration: number;
+  attempt: number;
+  maxAttempts: number;
+  promptPath: string;
+  resultPath: string;
+}
+
 type ProgressBase = Pick<RunProgress, "runId" | "workItemId" | "branchName" | "worktreePath" | "runDir" | "startedAt">;
 
 interface WorktreeStatusSummary {
@@ -1234,6 +1297,7 @@ function writeFinalRunResult(pathname: string, result: {
   commits: CommitPhaseSummary[];
   generatedArtifacts: GeneratedArtifactSummary[];
   repeatedFailure?: RepeatedFailureSummary;
+  reviewContractFailure?: ReviewContractFailure;
   branchName: string;
   worktreePath: string;
   baseBranch?: string;
@@ -1573,7 +1637,7 @@ function buildProgress(base: ProgressBase, progress: Omit<RunProgress, keyof Pro
   };
 }
 
-function formatInvocation(command: string, args: string[]): string {
+export function formatInvocation(command: string, args: string[]): string {
   return [command, ...args].join(" ");
 }
 
@@ -1833,7 +1897,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
-function spawnReviewProcess(
+export function spawnReviewProcess(
   invocation: { command: string; args: string[]; promptTransport: "arg" | "stdin" },
   prompt: string | undefined,
   cwd: string,

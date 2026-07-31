@@ -3,7 +3,7 @@ import { inspectRun } from "./inspect.js";
 import type { TerminalFailure } from "@afk-geoff/core";
 import type { CliContext } from "../types.js";
 
-export type RecommendedHandoffAction = "publish" | "report_failure" | "investigate" | "retry";
+export type RecommendedHandoffAction = "publish" | "report_failure" | "investigate" | "retry" | "inspect";
 
 export interface RunHandoff {
   runId: string;
@@ -95,6 +95,10 @@ function recommendAction(inspection: RunInspection): RecommendedHandoffAction {
 
   if (inspection.run.status === "running" || !inspection.derived.complete) {
     return "investigate";
+  }
+
+  if (inspection.evidencePacket?.recommendedHumanAction === "inspect") {
+    return "inspect";
   }
 
   return "report_failure";

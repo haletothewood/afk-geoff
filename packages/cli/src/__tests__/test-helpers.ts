@@ -260,6 +260,10 @@ if (reviewMatch) {
     fs.writeFileSync(reviewOutputPath, "{ verdict: PASS "); // missing closing brace + unquoted key
     process.exit(0);
   }
+  if (verdict === "__EMPTY__") {
+    fs.writeFileSync(reviewOutputPath, "");
+    process.exit(0);
+  }
   // Special sentinel: exit successfully without writing the required verdict artifact.
   if (verdict === "__MISSING__") {
     process.exit(0);

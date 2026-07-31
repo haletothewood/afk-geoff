@@ -12,7 +12,7 @@ import { showEntity } from "./commands/show.js";
 import { listRunRecords, printRuns } from "./commands/runs.js";
 import { inspectRun, printRunInspection } from "./commands/inspect.js";
 import { getRunHandoff, printRunHandoff } from "./commands/handoff.js";
-import { retryRunVerification } from "./commands/retry.js";
+import { retryRunStage } from "./commands/retry.js";
 import { printRunLogs } from "./commands/logs.js";
 import { watchRun } from "./commands/watch.js";
 import {
@@ -278,13 +278,13 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
   program
     .command("retry")
     .argument("<runId>", "Terminal run id")
-    .addOption(new Option("--stage <stage>", "Recovery stage").choices(["verification"]).default("verification"))
+    .addOption(new Option("--stage <stage>", "Recovery stage").choices(["verification", "review"]).default("verification"))
     .option("--json", "Print machine-readable JSON")
-    .action(async (runId: string, options: { stage: "verification"; json?: boolean }) => {
+    .action(async (runId: string, options: { stage: "verification" | "review"; json?: boolean }) => {
       const ctx = await openContext(commandCwd, dependencies);
       const retryAction = async () => {
         await autoSync(ctx);
-        return await retryRunVerification(ctx, runId);
+        return await retryRunStage(ctx, runId, options.stage);
       };
       if (options.json) {
         try {
@@ -305,7 +305,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
         }
       } else {
         const outcome = await retryAction();
-        console.log(`Run ${outcome.runId} verification retry ${outcome.verification.status}`);
+        console.log(`Run ${outcome.runId} ${options.stage} retry ${outcome.status}`);
         console.log(`Reused stages: ${outcome.reusedStages.join(", ")}`);
         console.log(`Retried stages: ${outcome.retriedStages.join(", ")}`);
         console.log(`Publishable: ${outcome.publishable}`);

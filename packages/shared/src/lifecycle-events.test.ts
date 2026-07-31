@@ -243,10 +243,23 @@ describe("lifecycleEventSchema", () => {
       {
         ...common,
         ...run,
+        event: "review_contract_failed",
+        stage: "review",
+        attempt: 2,
+        reused: false,
+        iteration: 1,
+        phase: "review",
+        failureKind: "malformed",
+        message: "Reviewer produced malformed output",
+        resultPath: "/repo/.afk/runs/run_123/review-result-retry-2.json"
+      },
+      {
+        ...common,
+        ...run,
         event: "evidence_reused",
         sourceRunId: "run_123",
-        reusedStages: ["work", "review"],
-        retriedStage: "verification"
+        reusedStages: ["work", "verification"],
+        retriedStage: "review"
       }
     ];
 
