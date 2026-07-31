@@ -158,7 +158,38 @@ describe("afk CLI — run command", () => {
     expect(finalResult.evidencePacket.commitSigning.satisfied).toBe(true);
   });
 
-  it("Given GitHub rejects an otherwise valid signature, then publication fails and final-result becomes non-publishable", async () => {
+  it("Given an enforced signed run without GitHub verification, then final-result remains non-publishable", async () => {
+    const privateKeyPath = path.join(tempDir, "pending-signing-key");
+    const allowedSignersPath = path.join(tempDir, "pending-allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`);
+    const fixture = await createFixture(tempDir, {
+      signing: { mode: "enabled", key: privateKeyPath },
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      publishable: boolean;
+      whyNotPublishable: string[];
+      evidencePacket: { commitSigning: { satisfied: boolean; hostVerification?: { verified: boolean } } };
+    };
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable.join(" ")).toContain("GitHub verification is pending");
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: false,
+      hostVerification: { verified: false }
+    });
+  });
+
+  it("Given GitHub rejects an otherwise valid signature on a non-PR run, then final-result becomes non-publishable", async () => {
     const privateKeyPath = path.join(tempDir, "rejected-signing-key");
     const allowedSignersPath = path.join(tempDir, "rejected-allowed-signers");
     execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
@@ -178,7 +209,7 @@ describe("afk CLI — run command", () => {
     await fixture.seedQueue(requirement.id);
     const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
 
-    await expect(fixture.cli(["run", backend!.id, "--pr"])).rejects.toThrow("GitHub rejected commit signature verification");
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("GitHub rejected commit signature verification");
 
     const [run] = await fixture.store.listRuns();
     const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {

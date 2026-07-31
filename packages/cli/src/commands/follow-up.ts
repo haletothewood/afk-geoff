@@ -5,6 +5,7 @@ import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificati
 import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage, terminalFailureFromError } from "../cli-utils.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
+import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE } from "../commit-signing-policy.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
@@ -150,6 +151,10 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     if (ctx.commitSigningPolicy.enforced) {
       try {
         await assertGitHubVerifiedSignatures(ctx, result.worktreePath);
+        const verifiedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (verifiedRun) {
+          markHostSignatureVerificationSuccess(verifiedRun.runDir);
+        }
       } catch (error) {
         const summary = error instanceof Error ? error.message : String(error);
         const blockedRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -219,6 +224,37 @@ async function assertGitHubVerifiedSignatures(ctx: CliContext, worktreePath: str
   if (rejected.length > 0) {
     throw new Error(`GitHub rejected commit signature verification for ${rejected.map((commit) => `${commit.sha}${commit.reason ? ` (${commit.reason})` : ""}`).join(", ")}`);
   }
+}
+
+function markHostSignatureVerificationSuccess(runDir: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonObject(finalResultPath);
+  if (!finalResult) return;
+  const whyNotPublishable = Array.isArray(finalResult.whyNotPublishable)
+    ? finalResult.whyNotPublishable.filter((value): value is string =>
+        typeof value === "string" && value !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const evidencePacket = isObject(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isObject(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const blockers = Array.isArray(finalResult.publishabilityBlockers)
+    ? finalResult.publishabilityBlockers.filter((blocker) =>
+        isObject(blocker) && blocker.message !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const publishable = whyNotPublishable.length === 0 && blockers.length === 0;
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    publishable,
+    whyNotPublishable,
+    publishabilityBlockers: blockers,
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: true, hostVerification: { verified: true } },
+      publishability: { publishable, blockers },
+      recommendedHumanAction: publishable ? "publish" : "fix_environment"
+    }
+  }, null, 2));
 }
 
 function markHostSignatureVerificationFailure(runDir: string, message: string): void {

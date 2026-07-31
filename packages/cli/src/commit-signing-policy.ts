@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const SIGNING_PROBE_TIMEOUT_MS = 10_000;
 const GITHUB_POLICY_TIMEOUT_MS = 8_000;
+export const HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE = "GitHub verification is pending for every branch commit signature";
 
 export type CommitSigningMode = "auto" | "enabled" | "disabled";
 export type CommitSignatureRequirement = "required" | "optional" | "unavailable";
@@ -188,8 +189,8 @@ export async function fetchGitHubTargetPolicy(input: {
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), GITHUB_POLICY_TIMEOUT_MS);
   try {
-    const endpoint = `https://api.github.com/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/rules/branches/${encodeURIComponent(input.branch)}`;
-    const response = await fetch(endpoint, {
+    const repositoryEndpoint = `https://api.github.com/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}`;
+    const request = {
       headers: {
         Authorization: `Bearer ${input.token}`,
         Accept: "application/vnd.github+json",
@@ -197,23 +198,78 @@ export async function fetchGitHubTargetPolicy(input: {
         "User-Agent": "afk-geoff/commit-signing-policy"
       },
       signal: abortController.signal
-    });
-    if (!response.ok) {
-      return { requirement: "unavailable", source: "github-branch-rules", reason: `GitHub branch-rules API returned HTTP ${response.status}` };
-    }
-    const rules = await response.json() as Array<{ type?: string }>;
-    return {
-      requirement: rules.some((rule) => rule.type === "required_signatures") ? "required" : "optional",
-      source: "github-branch-rules"
-    };
-  } catch (error) {
-    const reason = error instanceof Error && error.name === "AbortError"
-      ? `GitHub branch-rules API timed out after ${GITHUB_POLICY_TIMEOUT_MS}ms`
-      : error instanceof Error ? error.message : String(error);
-    return { requirement: "unavailable", source: "github-branch-rules", reason };
+    } satisfies RequestInit;
+    const [rulesetsPolicy, classicProtectionPolicy] = await Promise.all([
+      fetchRulesetsSignaturePolicy(
+        `${repositoryEndpoint}/rules/branches/${encodeURIComponent(input.branch)}`,
+        request
+      ),
+      fetchClassicProtectionSignaturePolicy(
+        `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}/protection/required_signatures`,
+        request
+      )
+    ]);
+    return reconcileGitHubSignaturePolicies(rulesetsPolicy, classicProtectionPolicy);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchRulesetsSignaturePolicy(endpoint: string, request: RequestInit): Promise<TargetCommitSignaturePolicy> {
+  try {
+    const response = await fetch(endpoint, request);
+    if (!response.ok) {
+      return unavailableGitHubPolicy("branch-rules", response.status);
+    }
+    const rules = await response.json() as Array<{ type?: string }>;
+    return githubPolicy(rules.some((rule) => rule.type === "required_signatures") ? "required" : "optional");
+  } catch (error) {
+    return unavailableGitHubPolicy("branch-rules", error);
+  }
+}
+
+async function fetchClassicProtectionSignaturePolicy(endpoint: string, request: RequestInit): Promise<TargetCommitSignaturePolicy> {
+  try {
+    const response = await fetch(endpoint, request);
+    if (response.status === 404) {
+      return githubPolicy("optional");
+    }
+    if (!response.ok) {
+      return unavailableGitHubPolicy("required-signatures", response.status);
+    }
+    const setting = await response.json() as { enabled?: boolean };
+    return githubPolicy(setting.enabled === false ? "optional" : "required");
+  } catch (error) {
+    return unavailableGitHubPolicy("required-signatures", error);
+  }
+}
+
+function reconcileGitHubSignaturePolicies(...policies: TargetCommitSignaturePolicy[]): TargetCommitSignaturePolicy {
+  if (policies.some((policy) => policy.requirement === "required")) {
+    return githubPolicy("required");
+  }
+  const unavailable = policies.filter((policy) => policy.requirement === "unavailable");
+  if (unavailable.length > 0) {
+    return {
+      requirement: "unavailable",
+      source: "github-branch-rules",
+      reason: unavailable.map((policy) => policy.reason).filter(Boolean).join("; ")
+    };
+  }
+  return githubPolicy("optional");
+}
+
+function githubPolicy(requirement: "required" | "optional"): TargetCommitSignaturePolicy {
+  return { requirement, source: "github-branch-rules" };
+}
+
+function unavailableGitHubPolicy(api: string, error: number | unknown): TargetCommitSignaturePolicy {
+  const reason = typeof error === "number"
+    ? `GitHub ${api} API returned HTTP ${error}`
+    : error instanceof Error && error.name === "AbortError"
+      ? `GitHub ${api} API timed out after ${GITHUB_POLICY_TIMEOUT_MS}ms`
+      : error instanceof Error ? error.message : String(error);
+  return { requirement: "unavailable", source: "github-branch-rules", reason };
 }
 
 export async function probeSigningCapability(input: { repoRoot: string; key?: string }): Promise<CommitSigningCapability> {

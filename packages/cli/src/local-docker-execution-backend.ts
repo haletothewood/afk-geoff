@@ -27,7 +27,7 @@ import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { attachTerminalFailure, formatErrorMessage } from "./cli-utils.js";
 import { emitRunEvent, isRunEventsEnabled } from "./run-events.js";
-import type { EffectiveCommitSigningPolicy } from "./commit-signing-policy.js";
+import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE, type EffectiveCommitSigningPolicy } from "./commit-signing-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1375,6 +1375,9 @@ function writeFinalRunResult(pathname: string, result: {
         .filter((commit) => !commit.signed || !commit.verified)
         .map((commit) => `Commit signature verification failed for ${commit.sha}: ${commit.reason ?? (commit.signed ? "signature is unverifiable" : "commit is unsigned")}`)
     : [];
+  const hostSignatureIssues = result.commitSigningPolicy.enforced && result.commitSigningPolicy.publishable && signatureIssues.length === 0
+    ? [HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE]
+    : [];
   const verificationIssues = terminalVerificationResults
     .filter((verification) => !verification.passed)
     .map((verification) => {
@@ -1389,6 +1392,7 @@ function writeFinalRunResult(pathname: string, result: {
   const whyNotPublishable = [
     ...verificationIssues,
     ...signatureIssues,
+    ...hostSignatureIssues,
     ...(result.commitSigningPolicy.publishable ? [] : [result.commitSigningPolicy.failure?.message ?? "Commit signature policy is not satisfied"]),
     ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
     ...(result.whyNotPublishable ?? [])
@@ -1447,6 +1451,7 @@ interface EvidencePacket {
     policy: EffectiveCommitSigningPolicy;
     commits: CommitSignatureEvidence[];
     satisfied: boolean;
+    hostVerification?: { verified: boolean; message?: string };
   };
   verification: {
     status: "passed" | "failed" | "skipped";
@@ -1514,7 +1519,10 @@ function buildEvidencePacket(result: {
     commitSigning: {
       policy: result.commitSigningPolicy,
       commits: result.commitSignatureEvidence,
-      satisfied: result.commitSigningPolicy.publishable && result.commitSignatureEvidence.every((commit) => !result.commitSigningPolicy.enforced || (commit.signed && commit.verified))
+      satisfied: result.commitSigningPolicy.publishable && result.commitSignatureEvidence.every((commit) => !result.commitSigningPolicy.enforced || (commit.signed && commit.verified)) && !result.commitSigningPolicy.enforced,
+      ...(result.commitSigningPolicy.enforced
+        ? { hostVerification: { verified: false, message: HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE } }
+        : {})
     },
     verification: {
       status: verificationStatus,

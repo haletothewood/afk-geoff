@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { resolveCommitSigningPolicy } from "../commit-signing-policy.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchGitHubTargetPolicy, resolveCommitSigningPolicy } from "../commit-signing-policy.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("commit signing policy", () => {
   it("keeps unsigned commits optional for a local repository in auto mode", async () => {
@@ -90,5 +94,52 @@ describe("commit signing policy", () => {
 
     expect(policy.publishable).toBe(false);
     expect(policy.failure?.message).toContain("mode is disabled");
+  });
+
+  it("detects required signatures configured through classic branch protection", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const policy = await fetchGitHubTargetPolicy({
+      owner: "acme",
+      repo: "demo",
+      branch: "release/v1",
+      token: "token"
+    });
+
+    expect(policy.requirement).toBe("required");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/branches/release%2Fv1/protection/required_signatures");
+  });
+
+  it("treats a missing classic required-signatures setting as absent", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 })));
+
+    await expect(fetchGitHubTargetPolicy({
+      owner: "acme",
+      repo: "demo",
+      branch: "main",
+      token: "token"
+    })).resolves.toMatchObject({ requirement: "optional" });
+  });
+
+  it("does not treat an unavailable classic protection check as absent", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 403 })));
+
+    await expect(fetchGitHubTargetPolicy({
+      owner: "acme",
+      repo: "demo",
+      branch: "main",
+      token: "token"
+    })).resolves.toMatchObject({
+      requirement: "unavailable",
+      reason: expect.stringContaining("required-signatures API returned HTTP 403")
+    });
   });
 });
