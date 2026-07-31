@@ -141,6 +141,9 @@ export async function runTrackedWorkItem(
         modelLabel: describeRunnerModel(ctx),
         ...(result.pullRequest ? { pullRequest: result.pullRequest } : {})
       });
+      if (!publication.url) {
+        throw new Error("Publisher did not return a pull request URL");
+      }
       if (publication.externalRef) {
         await ctx.store.saveExternalRef(publication.externalRef);
       }

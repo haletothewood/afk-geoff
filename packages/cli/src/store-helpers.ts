@@ -49,12 +49,13 @@ export async function markWorkItemRunFailed(
   ctx: CliContext,
   workItemId: string,
   summary: string,
-  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator"
+  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator",
+  options: { persistFinalResult?: boolean } = {}
 ): Promise<void> {
   await ctx.store.updateWorkItemStatus(workItemId, "failed");
   const latestRun = await latestRunForWorkItem(ctx, workItemId);
   if (latestRun) {
-    await markRunFailed(ctx, latestRun, summary, category);
+    await markRunFailed(ctx, latestRun, summary, category, options);
   }
   await refreshRequirementStatuses(ctx);
 }
@@ -63,11 +64,14 @@ export async function markRunFailed(
   ctx: CliContext,
   run: Awaited<ReturnType<CliContext["store"]["listRuns"]>>[number],
   summary: string,
-  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator"
+  category: Extract<FailureCategory, "orchestrator" | "publishing"> = "orchestrator",
+  options: { persistFinalResult?: boolean } = {}
 ): Promise<void> {
   const terminalFailure: TerminalFailure = { category, message: summary };
   await ctx.store.updateRun(run.id, { status: "failed", summary, terminalFailure });
-  writeTerminalFailure(run.runDir, terminalFailure);
+  if (options.persistFinalResult !== false) {
+    writeTerminalFailure(run.runDir, terminalFailure);
+  }
 }
 
 function writeTerminalFailure(runDir: string, terminalFailure: TerminalFailure): void {
