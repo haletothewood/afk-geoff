@@ -8,6 +8,8 @@ For the shortest operational path, start with [Agent Orchestrator Quickstart](ag
 
 The frozen field-level contract for local preflight and run command results is [Local Execution JSON Contract](local-execution-json-contract.md).
 
+The frozen field-level contract for remote GitHub Actions submission, run and artifact discovery, and artifact download is [GitHub Actions Execution JSON Contract](github-actions-json-contract.md).
+
 ## Operating Model
 
 Treat AFK as a backend worker, not as an interactive assistant.

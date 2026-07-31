@@ -32,6 +32,7 @@ export interface OctokitLike {
       data: {
         workflow_runs: Array<{
           id: number;
+          display_title?: string | null;
           name?: string | null;
           status?: string | null;
           conclusion?: string | null;
@@ -256,7 +257,7 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
     repo: string;
     workflowId: string;
     limit: number;
-  }): Promise<Array<{ id: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
+  }): Promise<Array<{ id: string; correlationId?: string; name?: string; status?: string; conclusion?: string; branch?: string; event?: string; url?: string; createdAt?: string; updatedAt?: string }>> {
     const response = await this.client.actions.listWorkflowRuns({
       owner: input.owner,
       repo: input.repo,
@@ -266,6 +267,7 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
 
     return response.data.workflow_runs.map((run) => ({
       id: String(run.id),
+      ...(run.display_title ? { correlationId: run.display_title } : {}),
       ...(run.name ? { name: run.name } : {}),
       ...(run.status ? { status: run.status } : {}),
       ...(run.conclusion ? { conclusion: run.conclusion } : {}),

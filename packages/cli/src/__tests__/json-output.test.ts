@@ -1260,26 +1260,32 @@ describe("afk CLI — JSON output", () => {
       backend: string;
       workflowId: string;
       ref: string;
+      correlationId: string;
       issueUrl: string;
       requirePullRequest: boolean;
       inputs: Record<string, string>;
     };
 
-    expect(payload.command).toBe("submit");
-    expect(payload.ok).toBe(true);
-    expect(payload.target).toBe("issue");
-    expect(payload.value).toBe(issueUrl);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.workflowId).toBe("afk-run.yml");
-    expect(payload.ref).toBe("main");
-    expect(payload.issueUrl).toBe(issueUrl);
-    expect(payload.requirePullRequest).toBe(true);
-    expect(payload.inputs).toEqual({
-      issue_url: issueUrl,
-      backend: "local-docker",
-      require_pr: "true",
-      afk_repository: "haletothewood/afk-geoff",
-      afk_ref: "main"
+    expect(payload.correlationId).toMatch(/^dispatch_[0-9a-f]{32}$/);
+    expect(payload).toEqual({
+      command: "submit",
+      ok: true,
+      target: "issue",
+      value: issueUrl,
+      backend: "github-actions",
+      workflowId: "afk-run.yml",
+      ref: "main",
+      correlationId: payload.correlationId,
+      issueUrl,
+      requirePullRequest: true,
+      inputs: {
+        correlation_id: payload.correlationId,
+        issue_url: issueUrl,
+        backend: "local-docker",
+        require_pr: "true",
+        afk_repository: "haletothewood/afk-geoff",
+        afk_ref: "main"
+      }
     });
     expect(githubMirror.workflowDispatches).toEqual([
       {
@@ -1288,6 +1294,7 @@ describe("afk CLI — JSON output", () => {
         workflowId: "afk-run.yml",
         ref: "main",
         inputs: {
+          correlation_id: payload.correlationId,
           issue_url: issueUrl,
           backend: "local-docker",
           require_pr: "true",
@@ -1296,6 +1303,60 @@ describe("afk CLI — JSON output", () => {
         }
       }
     ]);
+  });
+
+  it("Given an installed legacy workflow, when correlation_id is rejected, then submit returns the frozen upgrade-required failure", async () => {
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.workflowDispatchErrors.push(
+      Object.assign(new Error('Unexpected inputs provided: ["correlation_id"]'), { status: 422 })
+    );
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+
+    expect(JSON.parse(output)).toEqual({
+      command: "submit",
+      ok: false,
+      target: "issue",
+      value: issueUrl,
+      backend: "github-actions",
+      error: {
+        message: "The remote afk-run.yml workflow does not accept the required correlation_id input. Upgrade the workflow before submitting GitHub Actions runs."
+      }
+    });
+    expect(githubMirror.workflowDispatches).toEqual([
+      expect.objectContaining({
+        inputs: expect.objectContaining({
+          correlation_id: expect.stringMatching(/^dispatch_[0-9a-f]{32}$/)
+        })
+      })
+    ]);
+  });
+
+  it("Given submit issue --backend github-actions --json is not configured, then it returns the frozen preflight failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+
+    expect(JSON.parse(output)).toEqual({
+      command: "submit",
+      ok: false,
+      target: "issue",
+      value: issueUrl,
+      backend: "github-actions",
+      error: {
+        message: "GitHub Actions submission requires GitHub to be configured."
+      }
+    });
   });
 
   it("Given submit issue overrides AFK repo and ref, when dispatched, then those workflow inputs are sent", async () => {
@@ -1332,6 +1393,7 @@ describe("afk CLI — JSON output", () => {
     githubMirror.workflowRuns = [
       {
         id: "123",
+        correlationId: "dispatch_0123456789abcdef0123456789abcdef",
         name: "Run AFK work from issue",
         status: "completed",
         conclusion: "success",
@@ -1358,23 +1420,73 @@ describe("afk CLI — JSON output", () => {
       runs: Array<{ id: string; status: string; conclusion: string; url: string }>;
     };
 
-    expect(payload.command).toBe("remote-runs");
-    expect(payload.ok).toBe(true);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.workflowId).toBe("afk-run.yml");
-    expect(payload.runs).toEqual([
+    expect(payload).toEqual({
+      command: "remote-runs",
+      ok: true,
+      backend: "github-actions",
+      workflowId: "afk-run.yml",
+      runs: [
+        {
+          id: "123",
+          correlationId: "dispatch_0123456789abcdef0123456789abcdef",
+          name: "Run AFK work from issue",
+          status: "completed",
+          conclusion: "success",
+          branch: "main",
+          event: "workflow_dispatch",
+          url: "https://github.com/acme/demo/actions/runs/123",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:01:00Z"
+        }
+      ]
+    });
+  });
+
+  it("Given a submitted correlation ID, when runs are discovered, then the created run is identifiable without heuristics", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+    const issueUrl = "https://github.com/acme/demo/issues/42";
+
+    const submitOutput = await captureConsole(async () => {
+      await fixture.cli(["submit", "issue", issueUrl, "--backend", "github-actions", "--json"]);
+    });
+    const submission = JSON.parse(submitOutput) as {
+      correlationId: string;
+      inputs: Record<string, string>;
+    };
+
+    expect(submission.inputs.correlation_id).toBe(submission.correlationId);
+    githubMirror.workflowRuns = [
       {
         id: "123",
-        name: "Run AFK work from issue",
-        status: "completed",
-        conclusion: "success",
-        branch: "main",
-        event: "workflow_dispatch",
-        url: "https://github.com/acme/demo/actions/runs/123",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:01:00Z"
+        correlationId: submission.correlationId,
+        status: "queued",
+        event: "workflow_dispatch"
+      },
+      {
+        id: "122",
+        correlationId: "dispatch_ffffffffffffffffffffffffffffffff",
+        status: "in_progress",
+        event: "workflow_dispatch"
       }
-    ]);
+    ];
+
+    const runsOutput = await captureConsole(async () => {
+      await fixture.cli(["remote-runs", "--workflow", "afk-run.yml", "--json"]);
+    });
+    const discovery = JSON.parse(runsOutput) as {
+      runs: Array<{ id: string; correlationId?: string }>;
+    };
+
+    expect(discovery.runs.find((run) => run.correlationId === submission.correlationId)).toEqual({
+      id: "123",
+      correlationId: submission.correlationId,
+      status: "queued",
+      event: "workflow_dispatch"
+    });
   });
 
   it("Given remote-runs --json has an invalid limit, then stdout includes a structured error payload", async () => {
@@ -1391,11 +1503,54 @@ describe("afk CLI — JSON output", () => {
       error: { message: string };
     };
 
-    expect(payload.command).toBe("remote-runs");
-    expect(payload.ok).toBe(false);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.workflowId).toBe("afk-run.yml");
-    expect(payload.error.message).toBe("--limit must be a positive integer");
+    expect(payload).toEqual({
+      command: "remote-runs",
+      ok: false,
+      backend: "github-actions",
+      workflowId: "afk-run.yml",
+      error: { message: "--limit must be a positive integer" }
+    });
+  });
+
+  it("Given remote-runs --json encounters a GitHub API failure, then it returns the frozen remote failure envelope", async () => {
+    const githubMirror = new MockGitHubMirror();
+    vi.spyOn(githubMirror, "listWorkflowRuns").mockRejectedValue(new Error("GitHub API request failed"));
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror
+    });
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["remote-runs", "--json"]);
+    });
+
+    expect(JSON.parse(output)).toEqual({
+      command: "remote-runs",
+      ok: false,
+      backend: "github-actions",
+      workflowId: "afk-run.yml",
+      error: { message: "GitHub API request failed" }
+    });
+  });
+
+  it("Given remote-runs --json cannot load repository context, then it still returns a structured backend envelope", async () => {
+    const fixture = await createFixture(tempDir, { githubEnabled: true });
+    fs.writeFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "execution: [");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["remote-runs", "--json"]);
+    });
+    const payload = JSON.parse(output) as Record<string, unknown>;
+
+    expect(payload).toEqual({
+      command: "remote-runs",
+      ok: false,
+      backend: "github-actions",
+      workflowId: "afk-run.yml",
+      error: {
+        message: expect.any(String)
+      }
+    });
   });
 
   it("Given remote-artifacts --json, when a workflow run has artifacts, then it lists artifact metadata", async () => {
@@ -1429,23 +1584,25 @@ describe("afk CLI — JSON output", () => {
       artifacts: Array<{ id: string; name: string; archiveDownloadUrl: string }>;
     };
 
-    expect(payload.command).toBe("remote-artifacts");
-    expect(payload.ok).toBe(true);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.runId).toBe("123");
-    expect(payload.artifacts).toEqual([
-      {
-        id: "456",
-        name: "afk-run-json",
-        sizeInBytes: 2048,
-        expired: false,
-        url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
-        archiveDownloadUrl: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
-        createdAt: "2026-01-01T00:02:00Z",
-        updatedAt: "2026-01-01T00:03:00Z",
-        expiresAt: "2026-04-01T00:02:00Z"
-      }
-    ]);
+    expect(payload).toEqual({
+      command: "remote-artifacts",
+      ok: true,
+      backend: "github-actions",
+      runId: "123",
+      artifacts: [
+        {
+          id: "456",
+          name: "afk-run-json",
+          sizeInBytes: 2048,
+          expired: false,
+          url: "https://api.github.com/repos/acme/demo/actions/artifacts/456",
+          archiveDownloadUrl: "https://api.github.com/repos/acme/demo/actions/artifacts/456/zip",
+          createdAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:03:00Z",
+          expiresAt: "2026-04-01T00:02:00Z"
+        }
+      ]
+    });
   });
 
   it("Given remote-artifacts --json has a non-numeric run id, then stdout includes a structured error payload", async () => {
@@ -1462,11 +1619,13 @@ describe("afk CLI — JSON output", () => {
       error: { message: string };
     };
 
-    expect(payload.command).toBe("remote-artifacts");
-    expect(payload.ok).toBe(false);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.runId).toBe("run_123");
-    expect(payload.error.message).toBe("runId must be a GitHub Actions numeric run id");
+    expect(payload).toEqual({
+      command: "remote-artifacts",
+      ok: false,
+      backend: "github-actions",
+      runId: "run_123",
+      error: { message: "runId must be a GitHub Actions numeric run id" }
+    });
   });
 
   it("Given remote-download --json, when an artifact exists, then it saves the artifact ZIP and reports the path", async () => {
@@ -1490,12 +1649,14 @@ describe("afk CLI — JSON output", () => {
       bytes: number;
     };
 
-    expect(payload.command).toBe("remote-download");
-    expect(payload.ok).toBe(true);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.artifactId).toBe("456");
-    expect(payload.outputPath).toBe(outputPath);
-    expect(payload.bytes).toBe(9);
+    expect(payload).toEqual({
+      command: "remote-download",
+      ok: true,
+      backend: "github-actions",
+      artifactId: "456",
+      outputPath,
+      bytes: 9
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("zip-bytes");
   });
 
@@ -1513,11 +1674,13 @@ describe("afk CLI — JSON output", () => {
       error: { message: string };
     };
 
-    expect(payload.command).toBe("remote-download");
-    expect(payload.ok).toBe(false);
-    expect(payload.backend).toBe("github-actions");
-    expect(payload.artifactId).toBe("artifact_456");
-    expect(payload.error.message).toBe("artifactId must be a GitHub Actions numeric artifact id");
+    expect(payload).toEqual({
+      command: "remote-download",
+      ok: false,
+      backend: "github-actions",
+      artifactId: "artifact_456",
+      error: { message: "artifactId must be a GitHub Actions numeric artifact id" }
+    });
   });
 });
 

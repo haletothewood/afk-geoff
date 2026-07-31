@@ -165,6 +165,7 @@ export interface WorkflowRunSource {
     limit: number;
   }): Promise<Array<{
     id: string;
+    correlationId?: string;
     name?: string;
     status?: string;
     conclusion?: string;
