@@ -446,6 +446,26 @@ describe("afk CLI — JSON output", () => {
     expect(payload.runs[0]?.diagnostics.finalResultExists).toBe(true);
   });
 
+  it("Given runs --json cannot load configuration, then it returns the shared structured failure envelope", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "version: 2\n");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["runs", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: null;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("runs");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.error.message).toBeTruthy();
+  });
+
   it("Given inspect --json, when a completed run exists, then it prints run diagnostics and final result summary", async () => {
     const fixture = await createFixture(tempDir);
     writeBrief(fixture.repoDir, { verification: ["node -e \"process.exit(0)\""] });
@@ -949,6 +969,28 @@ describe("afk CLI — JSON output", () => {
     expect(payload.focusedWorkItem.id).toBe(run!.workItemId);
     expect(payload.focusedWorkItem.status).toBe("done");
     expect(payload.nextActions).toEqual(["- All work items are complete"]);
+  });
+
+  it("Given status --json cannot load configuration, then it retains the focus id in a structured failure", async () => {
+    const fixture = await createFixture(tempDir);
+    fs.writeFileSync(path.join(fixture.repoDir, ".afk", "config.yaml"), "version: 2\n");
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["status", "wi_focus", "--json"]);
+    });
+    const payload = JSON.parse(output) as {
+      command: string;
+      ok: boolean;
+      backend: null;
+      workItemId: string;
+      error: { message: string };
+    };
+
+    expect(payload.command).toBe("status");
+    expect(payload.ok).toBe(false);
+    expect(payload.backend).toBeNull();
+    expect(payload.workItemId).toBe("wi_focus");
+    expect(payload.error.message).toBeTruthy();
   });
 
   it("Given follow-up --json, when review comments exist, then it reports the same PR and actionable comment details", async () => {

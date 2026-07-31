@@ -378,6 +378,7 @@ function buildRunOutcome(
 }
 
 function buildRunArtifactOutcome(run: NonNullable<Awaited<ReturnType<typeof latestRunForWorkItem>>>): RunOutcome {
+  const resultPath = path.join(run.runDir, "result.json");
   const finalResultPath = path.join(run.runDir, "final-result.json");
   const finalVerdict = readFinalVerdict(finalResultPath);
   return {
@@ -386,8 +387,8 @@ function buildRunArtifactOutcome(run: NonNullable<Awaited<ReturnType<typeof late
     ...(run.branchName ? { branchName: run.branchName } : {}),
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
     runDir: run.runDir,
-    resultPath: path.join(run.runDir, "result.json"),
-    finalResultPath,
+    ...(fs.existsSync(resultPath) ? { resultPath } : {}),
+    ...(fs.existsSync(finalResultPath) ? { finalResultPath } : {}),
     ...(finalVerdict ? { finalVerdict } : {}),
     ...(run.terminalFailure ? { terminalFailure: run.terminalFailure } : {})
   };

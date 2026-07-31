@@ -53,8 +53,8 @@ export async function inspectRun(ctx: CliContext, runId: string): Promise<RunIns
     diagnostics,
     paths: {
       runDir: run.runDir,
-      ...(fs.existsSync(resultPath) ? { resultPath } : {}),
-      ...(fs.existsSync(finalResultPath) ? { finalResultPath } : {}),
+      ...(diagnostics.resultExists ? { resultPath } : {}),
+      ...(diagnostics.finalResultExists ? { finalResultPath } : {}),
       ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
       ...(diagnostics.detachLogPaths ? { detachLogPaths: diagnostics.detachLogPaths } : {})
     },
