@@ -62,6 +62,7 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
   if (followUpWorktreePath) {
     resolvePackageManagerContract(followUpWorktreePath, verificationCommands(verificationContract));
   }
+  const previousRun = await latestRunForWorkItem(ctx, workItem.id);
   let result: Awaited<ReturnType<CliContext["executionBackend"]["run"]>>;
   try {
     result = await ctx.executionBackend.run({
@@ -79,16 +80,19 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
       category: "orchestrator" as const,
       message: `Follow-up orchestration failed: ${formatErrorMessage(error)}`
     };
-    try {
-      await markWorkItemRunFailed(
-        ctx,
-        workItem.id,
-        terminalFailure.message,
-        terminalFailure.category,
-        { persistFinalResult: false }
-      );
-    } catch {
-      // Preserve the original orchestration failure when terminal state persistence is also unavailable.
+    const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+    if (latestRun && latestRun.id !== previousRun?.id) {
+      try {
+        await markWorkItemRunFailed(
+          ctx,
+          workItem.id,
+          terminalFailure.message,
+          terminalFailure.category,
+          { persistFinalResult: false }
+        );
+      } catch {
+        // Preserve the original orchestration failure when terminal state persistence is also unavailable.
+      }
     }
     throw attachTerminalFailure(error, terminalFailure);
   }
