@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { CommitSignatureVerificationSource } from "@afk-geoff/core";
 import {
   dedupeVerificationEntries,
   parseJsonWithRecovery,
@@ -9,7 +10,14 @@ import {
   tagVerificationEntries,
   type VerificationCommandResult
 } from "@afk-geoff/shared";
-import { formatInvocation, resolvePackageManager, runVerificationCommands, spawnReviewProcess } from "../local-docker-execution-backend.js";
+import {
+  formatInvocation,
+  readCommitSignatureEvidence,
+  resolvePackageManager,
+  runVerificationCommands,
+  spawnReviewProcess,
+  type CommitSignatureEvidence
+} from "../local-docker-execution-backend.js";
 import { emitRunEvent } from "../run-events.js";
 import { mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext } from "../types.js";
@@ -175,14 +183,15 @@ export async function retryRunVerification(
     .filter((result) => !result.passed)
     .map((result) => `${failureLabel(result)} failed: ${result.command} (exit ${result.exitCode})`);
   const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
-  const commitSigning = isRecord(evidencePacket.commitSigning) ? evidencePacket.commitSigning : undefined;
-  const signingSatisfied = commitSigning?.satisfied !== false;
+  const signing = await reevaluateCommitSigning(ctx, run.worktreePath, run.branchName);
+  const signingSatisfied = signing.satisfied;
   const publishable = passed && signingSatisfied;
-  const signatureBlockers = signingSatisfied ? [] : getStringArray(finalResult.whyNotPublishable)
-    .filter((message) => /sign(?:ature|ing)/i.test(message));
+  const signatureBlockers = signing.blockers;
   const effectiveWhyNotPublishable = [...whyNotPublishable, ...signatureBlockers];
-  const summary = passed
+  const summary = passed && signingSatisfied
     ? `Verification retry passed on reviewed commit ${currentHead.slice(0, 12)}`
+    : passed
+      ? `Verification retry passed, but commit signature policy blocks reviewed commit ${currentHead.slice(0, 12)}`
     : `Verification retry failed on reviewed commit ${currentHead.slice(0, 12)}`;
   const updatedEvidence = {
     ...evidencePacket,
@@ -194,6 +203,12 @@ export async function retryRunVerification(
         exitCode: result.exitCode,
         ...(result.failureCategory ? { failureCategory: result.failureCategory } : {})
       }))
+    },
+    commitSigning: {
+      policy: ctx.commitSigningPolicy,
+      commits: signing.commits,
+      satisfied: signingSatisfied,
+      ...(signing.hostVerification ? { hostVerification: signing.hostVerification } : {})
     },
     publishability: {
       publishable,
@@ -207,6 +222,8 @@ export async function retryRunVerification(
     status: publishable ? "done" : "blocked",
     summary,
     verificationSummaries,
+    commitSigningPolicy: ctx.commitSigningPolicy,
+    commitSignatureEvidence: signing.commits,
     publishable,
     whyNotPublishable: effectiveWhyNotPublishable,
     publishabilityBlockers: updatedEvidence.publishability.blockers,
@@ -593,6 +610,72 @@ async function persistReviewContractRetryFailure(input: {
     recovery: input.recovery,
     finalResultPath: input.finalResultPath
   };
+}
+
+async function reevaluateCommitSigning(
+  ctx: CliContext,
+  worktreePath: string,
+  branchName: string | undefined
+): Promise<{
+  commits: CommitSignatureEvidence[];
+  satisfied: boolean;
+  blockers: string[];
+  hostVerification?: { verified: boolean; message?: string };
+}> {
+  const policy = ctx.commitSigningPolicy;
+  if (!policy.publishable) {
+    return {
+      commits: [],
+      satisfied: false,
+      blockers: [policy.failure?.message ?? "Commit signature policy is unavailable"]
+    };
+  }
+  if (!policy.enforced) {
+    return { commits: [], satisfied: true, blockers: [] };
+  }
+
+  const commits = readCommitSignatureEvidence(worktreePath, ctx.config.baseBranch, true);
+  const localBlockers = commits
+    .filter((commit) => !commit.signed || !commit.verified)
+    .map((commit) => `Commit signature verification failed for ${commit.sha}: ${commit.reason ?? (commit.signed ? "signature is unverifiable" : "commit is unsigned")}`);
+  if (localBlockers.length > 0) {
+    return {
+      commits,
+      satisfied: false,
+      blockers: localBlockers,
+      hostVerification: { verified: false, message: "GitHub verification was not attempted because local signature verification failed" }
+    };
+  }
+
+  try {
+    if (!branchName || !ctx.remote || !ctx.github || !("verifyCommitSignatures" in ctx.github) || typeof ctx.github.verifyCommitSignatures !== "function") {
+      throw new Error("GitHub verified-signature confirmation is unavailable during verification retry");
+    }
+    await ctx.git.pushBranch({ cwd: worktreePath, branchName });
+    const verifier = ctx.github as typeof ctx.github & CommitSignatureVerificationSource;
+    const shas = commits.map((commit) => commit.sha);
+    const verification = await verifier.verifyCommitSignatures({
+      owner: ctx.remote.owner,
+      repo: ctx.remote.repo,
+      shas
+    });
+    const bySha = new Map(verification.map((commit) => [commit.sha, commit]));
+    const rejected = shas
+      .map((sha) => bySha.get(sha) ?? { sha, verified: false, reason: "GitHub returned no verification result" })
+      .filter((commit) => !commit.verified);
+    if (rejected.length > 0) {
+      throw new Error(`GitHub rejected commit signature verification for ${rejected.map((commit) => `${commit.sha}${commit.reason ? ` (${commit.reason})` : ""}`).join(", ")}`);
+    }
+    return { commits, satisfied: true, blockers: [], hostVerification: { verified: true } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      commits,
+      satisfied: false,
+      blockers: [message],
+      hostVerification: { verified: false, message }
+    };
+  }
 }
 
 function failureLabel(result: VerificationCommandResult): string {

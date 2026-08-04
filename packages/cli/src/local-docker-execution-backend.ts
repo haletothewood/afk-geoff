@@ -157,6 +157,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         event: "run_completed",
         runId,
         workItemId: input.workItem.id,
+        stage: "run",
+        attempt: 1,
+        reused: false,
         status: "blocked",
         message: summary,
         branchName,
@@ -328,6 +331,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           branchName,
           worktreePath,
           baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy,
           ...(reviewContractFailure ? { reviewContractFailure } : {}),
           publishable: false,
           whyNotPublishable: [summary],
@@ -654,17 +658,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           publishable: false,
           whyNotPublishable: [summary]
         });
-        emitRunEvent({
-          event: "run_completed",
-          runId,
-          workItemId: input.workItem.id,
-          status: "blocked",
-          message: summary,
-          branchName,
-          worktreePath,
-          runDir,
-          finalResultPath: path.join(runDir, "final-result.json")
-        });
+        emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
         return {
           status: "blocked",
           summary,
@@ -1663,14 +1657,14 @@ function classifyPublishabilityBlocker(message: string): EvidencePacket["publish
   return "product";
 }
 
-interface CommitSignatureEvidence {
+export interface CommitSignatureEvidence {
   sha: string;
   signed: boolean;
   verified: boolean;
   reason?: string;
 }
 
-function readCommitSignatureEvidence(worktreePath: string, baseBranch: string | undefined, enabled: boolean): CommitSignatureEvidence[] {
+export function readCommitSignatureEvidence(worktreePath: string, baseBranch: string | undefined, enabled: boolean): CommitSignatureEvidence[] {
   if (!enabled || !baseBranch) {
     return [];
   }

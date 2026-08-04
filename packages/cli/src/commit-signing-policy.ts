@@ -206,6 +206,7 @@ export async function fetchGitHubTargetPolicy(input: {
       ),
       fetchClassicProtectionSignaturePolicy(
         `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}/protection/required_signatures`,
+        `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}/protection`,
         `${repositoryEndpoint}/branches/${encodeURIComponent(input.branch)}`,
         request
       )
@@ -240,12 +241,23 @@ async function fetchRulesetsSignaturePolicy(endpoint: string, request: RequestIn
 
 async function fetchClassicProtectionSignaturePolicy(
   endpoint: string,
+  protectionEndpoint: string,
   branchEndpoint: string,
   request: RequestInit
 ): Promise<TargetCommitSignaturePolicy> {
   try {
     const response = await fetch(endpoint, request);
     if (response.status === 404) {
+      const protectionResponse = await fetch(protectionEndpoint, request);
+      if (protectionResponse.ok) {
+        const protection = await protectionResponse.json() as {
+          required_signatures?: { enabled?: boolean } | null;
+        };
+        return githubPolicy(protection.required_signatures?.enabled === true ? "required" : "optional");
+      }
+      if (protectionResponse.status !== 404) {
+        return unavailableGitHubPolicy("branch-protection", protectionResponse.status);
+      }
       const branchResponse = await fetch(branchEndpoint, request);
       if (!branchResponse.ok) {
         return unavailableGitHubPolicy("branch", branchResponse.status);

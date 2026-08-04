@@ -114,7 +114,7 @@ describe("commit signing policy", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toContain("/branches/release%2Fv1/protection/required_signatures");
   });
 
-  it("treats a missing classic required-signatures setting as absent", async () => {
+  it("treats an authorized missing classic required-signatures setting on a protected branch as absent", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/rules/branches/")) {
@@ -123,7 +123,10 @@ describe("commit signing policy", () => {
       if (url.endsWith("/protection/required_signatures")) {
         return new Response(null, { status: 404 });
       }
-      return new Response(JSON.stringify({ protected: false }), { status: 200 });
+      if (url.endsWith("/protection")) {
+        return new Response(JSON.stringify({ required_status_checks: { strict: true } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ protected: true }), { status: 200 });
     }));
 
     await expect(fetchGitHubTargetPolicy({
@@ -143,6 +146,9 @@ describe("commit signing policy", () => {
       if (url.endsWith("/protection/required_signatures")) {
         return new Response(null, { status: 404 });
       }
+      if (url.endsWith("/protection")) {
+        return new Response(null, { status: 403 });
+      }
       return new Response(JSON.stringify({ protected: true }), { status: 200 });
     }));
 
@@ -153,7 +159,7 @@ describe("commit signing policy", () => {
       token: "token"
     })).resolves.toMatchObject({
       requirement: "unavailable",
-      reason: expect.stringContaining("required-signatures API returned HTTP 404")
+      reason: expect.stringContaining("branch-protection API returned HTTP 403")
     });
   });
 
