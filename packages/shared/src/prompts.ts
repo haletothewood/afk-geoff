@@ -64,10 +64,14 @@ export function buildWorkerPrompt(input: {
   issueUrl?: string;
   overrideText?: string;
   executionMode?: ResolvedExecutionMode;
+  createCommit?: boolean;
 }): string {
   const override = input.overrideText ? `\n# Additional project instructions\n${input.overrideText}\n` : "";
   const issue = input.issueUrl ? `\nGitHub issue: ${input.issueUrl}\n` : "\n";
   const modeSection = input.executionMode ? `\n${formatExecutionModeSection(input.executionMode)}\n` : "";
+  const commitRule = input.createCommit === false
+    ? "- Do not create commits. Leave repository changes for the AFK host to commit with its configured signing capability."
+    : "- Create a commit if you changed repo files.";
 
   return `You are executing exactly one work item in a git worktree.
 
@@ -100,7 +104,7 @@ The JSON must match this schema:
 Rules:
 - Work only on the assigned item.
 - Use git normally inside this worktree.
-- Create a commit if you changed repo files.
+${commitRule}
 - Overwrite the progress file when you start, when you move to a new major phase, and before long-running verification.
 - Keep the progress fields truthful; use concise operator-facing phase and message values.
 - Run verification commands before marking status "done".
@@ -220,9 +224,13 @@ export function buildFixWorkerPrompt(input: {
   reviewIssues: string[];
   issueUrl?: string;
   overrideText?: string;
+  createCommit?: boolean;
 }): string {
   const override = input.overrideText ? `\n# Additional project instructions\n${input.overrideText}\n` : "";
   const issue = input.issueUrl ? `\nGitHub issue: ${input.issueUrl}\n` : "\n";
+  const commitRule = input.createCommit === false
+    ? "- Do not create commits. Leave repository changes for the AFK host to commit with its configured signing capability."
+    : "- Create a commit if you changed repo files.";
 
   return `You are fixing issues identified by an autonomous review in a git worktree.
 
@@ -255,7 +263,7 @@ The JSON must match this schema:
 Rules:
 - Fix ONLY the issues listed below. Do not make unrelated changes.
 - Use git normally inside this worktree.
-- Create a commit if you changed repo files.
+${commitRule}
 - Overwrite the progress file when you start, when you move to a new major phase, and before long-running verification.
 - Run verification commands before marking status "done".
 - Use "blocked" only if the issues cannot be fixed due to a real dependency or ambiguity.

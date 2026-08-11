@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { captureConsole, createFixture, makeTempDir, MockGitHubMirror } from "./test-helpers.js";
+import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, writeReviewVerdicts } from "./test-helpers.js";
 
 describe("afk CLI — run command", () => {
   const originalCwd = process.cwd();
@@ -63,6 +63,264 @@ describe("afk CLI — run command", () => {
 
     const refreshed = await fixture.items(requirement.id);
     expect(refreshed.find((item) => item.id === backend!.id)?.status).toBe("done");
+  });
+
+  it("Given a required-signature target without a verified signing capability, then the run is authoritatively non-publishable", async () => {
+    const githubMirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      targetCommitSignaturePolicyResolver: async () => ({
+        requirement: "required",
+        source: "github-branch-rules"
+      }),
+      signingCapabilityResolver: async () => ({
+        available: false,
+        verified: false,
+        format: "ssh",
+        reason: "test signing key is unavailable"
+      })
+    });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      commitSigningPolicy: { requirement: string; capability: { verified: boolean } };
+      evidencePacket: {
+        commitSigning: { satisfied: boolean };
+        publishability: { publishable: boolean; blockers: Array<{ category: string }> };
+        recommendedHumanAction: string;
+      };
+    };
+
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.commitSigningPolicy).toMatchObject({
+      requirement: "required",
+      capability: { verified: false }
+    });
+    expect(finalResult.evidencePacket.commitSigning.satisfied).toBe(false);
+    expect(finalResult.evidencePacket.publishability).toMatchObject({
+      publishable: false,
+      blockers: [expect.objectContaining({ category: "environment" })]
+    });
+    expect(finalResult.evidencePacket.recommendedHumanAction).not.toBe("publish");
+
+    const inspectOutput = await captureConsole(async () => fixture.cli(["inspect", run!.id, "--json"]));
+    const handoffOutput = await captureConsole(async () => fixture.cli(["handoff", run!.id, "--json"]));
+    expect(JSON.parse(inspectOutput).derived.publishable).toBe(false);
+    expect(JSON.parse(handoffOutput)).toMatchObject({ publishable: false, recommendedAction: "report_failure" });
+  });
+
+  it("Given the signing probe succeeds but the signed commit fails, then the signing failure is authoritative", async () => {
+    const missingSigningKey = path.join(tempDir, "key-removed-after-probe");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: new MockGitHubMirror(),
+      signing: { mode: "auto", key: missingSigningKey },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      terminalFailure?: unknown;
+      whyNotPublishable: string[];
+      commitSigningPolicy: { enforced: boolean; publishable: boolean; capability: { verified: boolean }; failure?: { category: string } };
+      commitSignatureEvidence: Array<{ signed: boolean; verified: boolean }>;
+      evidencePacket: {
+        commitSigning: { satisfied: boolean; policy: { failure?: { category: string } } };
+        publishability: { publishable: boolean; blockers: Array<{ category: string }> };
+      };
+    };
+    expect(finalResult).toMatchObject({ status: "blocked", publishable: false });
+    expect(finalResult.terminalFailure).toBeUndefined();
+    expect(finalResult.whyNotPublishable.join(" ")).toContain("signing capability failed after the capability probe");
+    expect(finalResult.commitSigningPolicy).toMatchObject({
+      enforced: true,
+      publishable: false,
+      capability: { verified: true },
+      failure: { category: "environment" }
+    });
+    expect(finalResult.commitSignatureEvidence).toEqual([]);
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: false,
+      policy: { failure: { category: "environment" } }
+    });
+    expect(finalResult.evidencePacket.publishability).toMatchObject({
+      publishable: false,
+      blockers: expect.arrayContaining([expect.objectContaining({ category: "environment" })])
+    });
+
+    const inspectOutput = await captureConsole(async () => fixture.cli(["inspect", run!.id, "--json"]));
+    const handoffOutput = await captureConsole(async () => fixture.cli(["handoff", run!.id, "--json"]));
+    expect(JSON.parse(inspectOutput).derived.publishable).toBe(false);
+    expect(JSON.parse(handoffOutput)).toMatchObject({ publishable: false, recommendedAction: "report_failure" });
+  });
+
+  it("Given explicitly enabled compatible signing, then work and fix commits are signed and verified", async () => {
+    const privateKeyPath = path.join(tempDir, "afk-signing-key");
+    const allowedSignersPath = path.join(tempDir, "allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    const publicKey = fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim();
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${publicKey}\n`);
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: new MockGitHubMirror(),
+      signing: { mode: "enabled", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "optional", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" }),
+      runnerScriptSuffix: 'if (prompt.includes("Issues to fix")) fs.writeFileSync(path.join(process.cwd(), "fixed.txt"), "fixed\\n");'
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Add the missing fix"] },
+      { verdict: "PASS" }
+    ]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      publishable: boolean;
+      commitSignatureEvidence: Array<{ signed: boolean; verified: boolean }>;
+      evidencePacket: { commitSigning: { satisfied: boolean; commits: Array<{ signed: boolean; verified: boolean }> } };
+      commits: Array<{ source?: string }>;
+    };
+    expect(finalResult.publishable).toBe(true);
+    expect(finalResult.commitSignatureEvidence).toHaveLength(2);
+    expect(finalResult.commitSignatureEvidence.every((commit) => commit.signed && commit.verified)).toBe(true);
+    expect(finalResult.evidencePacket.commitSigning.satisfied).toBe(true);
+    expect(finalResult.commits.every((commit) => commit.source === "afk")).toBe(true);
+    expect(fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8")).toContain(
+      "Do not create commits. Leave repository changes for the AFK host to commit"
+    );
+    expect(fs.readFileSync(path.join(run!.runDir, "fix-prompt-2.md"), "utf8")).toContain(
+      "Do not create commits. Leave repository changes for the AFK host to commit"
+    );
+  });
+
+  it("Given an enforced signed worker blocks before creating a commit, then its real blocker remains authoritative", async () => {
+    const privateKeyPath = path.join(tempDir, "blocked-signing-key");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    const fixture = await createFixture(tempDir, {
+      writeWorktreeChange: false,
+      signing: { mode: "enabled", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "optional", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" }),
+      runnerScriptSuffix: [
+        'fs.writeFileSync(outputPath, JSON.stringify({ status: "blocked", summary: "Waiting for an external dependency", issueComment: "Dependency is unavailable." }, null, 2));',
+        "process.exit(0);"
+      ].join("\n")
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      evidencePacket: { publishability: { blockers: Array<{ message: string }> } };
+    };
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable).toContain("Waiting for an external dependency");
+    expect(finalResult.whyNotPublishable).not.toContain("GitHub verification is pending for every branch commit signature");
+    expect(finalResult.evidencePacket.publishability.blockers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: "Waiting for an external dependency" })])
+    );
+  });
+
+  it("Given an enforced signed run without GitHub verification, then final-result remains non-publishable", async () => {
+    const privateKeyPath = path.join(tempDir, "pending-signing-key");
+    const allowedSignersPath = path.join(tempDir, "pending-allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`);
+    const fixture = await createFixture(tempDir, {
+      signing: { mode: "enabled", key: privateKeyPath },
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      publishable: boolean;
+      whyNotPublishable: string[];
+      evidencePacket: { commitSigning: { satisfied: boolean; hostVerification?: { verified: boolean } } };
+    };
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable.join(" ")).toContain("GitHub verification is pending");
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: false,
+      hostVerification: { verified: false }
+    });
+  });
+
+  it("Given GitHub rejects an otherwise valid signature on a non-PR run, then final-result becomes non-publishable", async () => {
+    const privateKeyPath = path.join(tempDir, "rejected-signing-key");
+    const allowedSignersPath = path.join(tempDir, "rejected-allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`);
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.rejectAllCommitSignatures = "unknown_key";
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      signing: { mode: "auto", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("GitHub rejected commit signature verification");
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      publishable: boolean;
+      whyNotPublishable: string[];
+      terminalFailure: { category: string; message: string };
+      evidencePacket: { publishability: { publishable: boolean } };
+    };
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable.join(" ")).toContain("GitHub rejected commit signature verification");
+    expect(finalResult.terminalFailure.category).toBe("publishing");
+    expect(finalResult.evidencePacket.publishability.publishable).toBe(false);
+    expect(githubMirror.pullRequestRequests).toHaveLength(0);
   });
 
   it("Given an execution brief file, when run file is used, then it creates tracked state and passes brief verification into the worker prompt", async () => {
@@ -550,12 +808,21 @@ describe("afk CLI — run command", () => {
   });
 
   it("Given post-run PR publishing fails, when the failed work item is retried, then reviewed evidence is reused for publishing", async () => {
+    const privateKeyPath = path.join(tempDir, "retry-signing-key");
+    const allowedSignersPath = path.join(tempDir, "retry-allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`);
     const githubMirror = new MockGitHubMirror();
     githubMirror.openPullRequestError = new Error("simulated PR failure");
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
-      githubMirror
+      githubMirror,
+      signing: { mode: "enabled", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "optional", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
     });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
     const briefPath = path.join(fixture.repoDir, "brief.md");
     fs.writeFileSync(
       briefPath,

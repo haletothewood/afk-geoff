@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { PullRequestReviewSource } from "@afk-geoff/core";
+import type { CommitSignatureVerificationSource, PullRequestReviewSource } from "@afk-geoff/core";
 import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificationEntries, verificationCommands } from "@afk-geoff/shared";
 import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage, terminalFailureFromError } from "../cli-utils.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
+import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE } from "../commit-signing-policy.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
   const workItem = await mustGetWorkItem(ctx, workItemId);
@@ -147,6 +148,30 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
       await markWorkItemRunFailed(ctx, workItem.id, terminalFailure.message, terminalFailure.category);
       throw attachTerminalFailure(error, terminalFailure);
     }
+    if (ctx.commitSigningPolicy.enforced) {
+      try {
+        await assertGitHubVerifiedSignatures(ctx, result.worktreePath);
+        const verifiedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (verifiedRun) {
+          markHostSignatureVerificationSuccess(verifiedRun.runDir);
+        }
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : String(error);
+        const blockedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (blockedRun) {
+          markHostSignatureVerificationFailure(blockedRun.runDir, summary);
+          await ctx.store.updateRun(blockedRun.id, { status: "completed", summary });
+        }
+        await ctx.store.updateWorkItemStatus(workItem.id, "blocked");
+        return {
+          workItemId: workItem.id,
+          ...(blockedRun ? { runId: blockedRun.id, status: "blocked" as const } : { status: "blocked" as const }),
+          branchName: result.branchName,
+          actionableReviewComments,
+          ...(pullRef.url ? { prUrl: pullRef.url } : {})
+        };
+      }
+    }
   }
 
   const followUpRun = await latestRunForWorkItem(ctx, workItem.id);
@@ -186,6 +211,73 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
     ...(verification ? { verification } : {}),
     ...(prUrl ? { prUrl } : {})
   };
+}
+
+async function assertGitHubVerifiedSignatures(ctx: CliContext, worktreePath: string): Promise<void> {
+  if (!ctx.git.listCommitsSince || !ctx.github || !("verifyCommitSignatures" in ctx.github)) {
+    throw new Error("GitHub verified-signature confirmation is unavailable after follow-up push");
+  }
+  const verifier = ctx.github as typeof ctx.github & CommitSignatureVerificationSource;
+  const shas = await ctx.git.listCommitsSince({ cwd: worktreePath, baseBranch: ctx.config.baseBranch });
+  const verification = await verifier.verifyCommitSignatures({ owner: ctx.remote!.owner, repo: ctx.remote!.repo, shas });
+  const rejected = verification.filter((commit) => !commit.verified);
+  if (rejected.length > 0) {
+    throw new Error(`GitHub rejected commit signature verification for ${rejected.map((commit) => `${commit.sha}${commit.reason ? ` (${commit.reason})` : ""}`).join(", ")}`);
+  }
+}
+
+function markHostSignatureVerificationSuccess(runDir: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonObject(finalResultPath);
+  if (!finalResult) return;
+  const whyNotPublishable = Array.isArray(finalResult.whyNotPublishable)
+    ? finalResult.whyNotPublishable.filter((value): value is string =>
+        typeof value === "string" && value !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const evidencePacket = isObject(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isObject(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const blockers = Array.isArray(finalResult.publishabilityBlockers)
+    ? finalResult.publishabilityBlockers.filter((blocker) =>
+        isObject(blocker) && blocker.message !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const publishable = whyNotPublishable.length === 0 && blockers.length === 0;
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    publishable,
+    whyNotPublishable,
+    publishabilityBlockers: blockers,
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: true, hostVerification: { verified: true } },
+      publishability: { publishable, blockers },
+      recommendedHumanAction: publishable ? "publish" : "fix_environment"
+    }
+  }, null, 2));
+}
+
+function markHostSignatureVerificationFailure(runDir: string, message: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonObject(finalResultPath);
+  if (!finalResult) return;
+  const whyNotPublishable = [...new Set([...(Array.isArray(finalResult.whyNotPublishable) ? finalResult.whyNotPublishable.filter((value): value is string => typeof value === "string") : []), message])];
+  const evidencePacket = isObject(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isObject(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const blocker = { category: "policy", message };
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    status: "blocked",
+    publishable: false,
+    whyNotPublishable,
+    publishabilityBlockers: [blocker],
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: false, hostVerification: { verified: false, message } },
+      publishability: { publishable: false, blockers: [blocker] },
+      recommendedHumanAction: "fix_environment"
+    }
+  }, null, 2));
 }
 
 function asPullRequestReviewSource(value: unknown): PullRequestReviewSource | undefined {

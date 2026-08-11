@@ -73,6 +73,7 @@ describe("afk CLI — JSON output", () => {
       "backend",
       "branchName",
       "command",
+      "commitSigningPolicy",
       "detached",
       "finalResultPath",
       "finalVerdict",
@@ -136,6 +137,7 @@ describe("afk CLI — JSON output", () => {
         "backend",
         "branchName",
         "command",
+        "commitSigningPolicy",
         "detachLogPaths",
         "detached",
         "kind",
@@ -196,6 +198,7 @@ describe("afk CLI — JSON output", () => {
       "backend",
       "branchName",
       "command",
+      "commitSigningPolicy",
       "detachLogPaths",
       "detached",
       "kind",
@@ -239,6 +242,7 @@ describe("afk CLI — JSON output", () => {
     expect(Object.keys(payload).sort()).toEqual([
       "backend",
       "command",
+      "commitSigningPolicy",
       "detached",
       "error",
       "kind",
@@ -278,6 +282,7 @@ describe("afk CLI — JSON output", () => {
       expect(Object.keys(payload).sort()).toEqual([
         "backend",
         "command",
+        "commitSigningPolicy",
         "detached",
         "error",
         "kind",
@@ -317,6 +322,7 @@ describe("afk CLI — JSON output", () => {
     expect(Object.keys(payload).sort()).toEqual([
       "backend",
       "command",
+      "commitSigningPolicy",
       "detached",
       "error",
       "kind",

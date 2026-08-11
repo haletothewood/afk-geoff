@@ -21,6 +21,7 @@ import { emitRunEvent } from "../run-events.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import { MarkdownFileWorkSource, resolveBriefPath } from "../file-work-source.js";
 import type { CliContext, CliDependencies, DetachedRunOptions, RunOutcome } from "../types.js";
+import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE } from "../commit-signing-policy.js";
 
 export async function runWorkItem(
   ctx: CliContext,
@@ -139,6 +140,7 @@ export async function runTrackedWorkItem(
         summary: result.summary,
         agentName: "Geoff",
         modelLabel: describeRunnerModel(ctx),
+        requireVerifiedCommitSignatures: ctx.commitSigningPolicy.enforced,
         ...(result.pullRequest ? { pullRequest: result.pullRequest } : {})
       });
       if (!publication.url) {
@@ -148,6 +150,9 @@ export async function runTrackedWorkItem(
         await ctx.store.saveExternalRef(publication.externalRef);
       }
       const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+      if (latestRun && ctx.commitSigningPolicy.enforced) {
+        markSignaturePublicationSuccess(latestRun.runDir);
+      }
       await ctx.store.updateWorkItemStatus(workItem.id, "done");
       if (latestRun) {
         await ctx.store.updateRun(latestRun.id, { status: "completed", summary: result.summary });
@@ -185,6 +190,12 @@ export async function runTrackedWorkItem(
       category: "publishing" as const,
       message: `Post-run publication failed: ${formatErrorMessage(error)}`
     };
+    if (/commit signature verification/i.test(terminalFailure.message)) {
+      const latestRun = await latestRunForWorkItem(ctx, workItem.id);
+      if (latestRun) {
+        markSignaturePublicationFailure(latestRun.runDir, terminalFailure.message);
+      }
+    }
     await markWorkItemRunFailed(
       ctx,
       workItem.id,
@@ -193,6 +204,61 @@ export async function runTrackedWorkItem(
     );
     throw attachTerminalFailure(error, terminalFailure);
   }
+}
+
+function markSignaturePublicationFailure(runDir: string, message: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonRecord(finalResultPath);
+  if (!finalResult) return;
+  const existingReasons = Array.isArray(finalResult.whyNotPublishable)
+    ? finalResult.whyNotPublishable.filter((value): value is string => typeof value === "string")
+    : [];
+  const evidencePacket = isJsonRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isJsonRecord(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const blocker = { category: "policy", message };
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    publishable: false,
+    whyNotPublishable: [...new Set([...existingReasons, message])],
+    publishabilityBlockers: [blocker],
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: false, hostVerification: { verified: false, message } },
+      publishability: { publishable: false, blockers: [blocker] },
+      recommendedHumanAction: "fix_environment"
+    }
+  }, null, 2));
+}
+
+function markSignaturePublicationSuccess(runDir: string): void {
+  const finalResultPath = path.join(runDir, "final-result.json");
+  const finalResult = readJsonRecord(finalResultPath);
+  if (!finalResult) return;
+  const remainingReasons = Array.isArray(finalResult.whyNotPublishable)
+    ? finalResult.whyNotPublishable.filter((value): value is string =>
+        typeof value === "string" && value !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const evidencePacket = isJsonRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const commitSigning = isJsonRecord(evidencePacket.commitSigning) ? evidencePacket.commitSigning : {};
+  const existingBlockers = Array.isArray(finalResult.publishabilityBlockers)
+    ? finalResult.publishabilityBlockers.filter((blocker) =>
+        isJsonRecord(blocker) && blocker.message !== HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE
+      )
+    : [];
+  const publishable = remainingReasons.length === 0 && existingBlockers.length === 0;
+  fs.writeFileSync(finalResultPath, JSON.stringify({
+    ...finalResult,
+    publishable,
+    whyNotPublishable: remainingReasons,
+    publishabilityBlockers: existingBlockers,
+    evidencePacket: {
+      ...evidencePacket,
+      commitSigning: { ...commitSigning, satisfied: true, hostVerification: { verified: true } },
+      publishability: { publishable, blockers: existingBlockers },
+      recommendedHumanAction: publishable ? "publish" : "fix_environment"
+    }
+  }, null, 2));
 }
 
 interface RecoveryMetadata {

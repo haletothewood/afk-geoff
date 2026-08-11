@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalDockerExecutionBackend } from "../local-docker-execution-backend.js";
@@ -252,5 +253,58 @@ describe("afk CLI — PR follow-up command", () => {
     expect(storedRun?.status).toBe("completed");
     expect(storedRun?.terminalFailure).toBeUndefined();
     expect(fs.existsSync(`${storedRun?.runDir}/final-result.json`)).toBe(true);
+  });
+
+  it("Given required signatures, then a follow-up commit remains signed and publishable", async () => {
+    const privateKeyPath = path.join(tempDir, "afk-signing-key");
+    const allowedSignersPath = path.join(tempDir, "allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(
+      allowedSignersPath,
+      `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`
+    );
+    const githubMirror = new MockGitHubMirror();
+    githubMirror.reviewComments = [{ id: "comment_1", body: "Please add the follow-up fix." }];
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror,
+      signing: { mode: "auto", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" }),
+      runnerScriptSuffix: 'if (prompt.includes("Please add the follow-up fix")) fs.writeFileSync(path.join(process.cwd(), "follow-up.txt"), "fixed\\n");'
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
+    fs.writeFileSync(
+      path.join(fixture.repoDir, "brief.md"),
+      [
+        "# AFK Execution Brief",
+        "",
+        "## Requirement",
+        "Ship signed changes.",
+        "",
+        "## Work Item Title",
+        "Publish signed changes",
+        "",
+        "## Work Item Body",
+        "Create and follow up on a signed pull request.",
+        "",
+        "## Acceptance Criteria",
+        "- Every AFK commit is signed"
+      ].join("\n")
+    );
+
+    await fixture.cli(["run", "file", "brief.md", "--pr"]);
+    const [initialRun] = await fixture.store.listRuns();
+    await fixture.cli(["follow-up", initialRun!.workItemId]);
+
+    const [followUpRun] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(followUpRun!.runDir, "final-result.json"), "utf8")) as {
+      publishable: boolean;
+      commitSignatureEvidence: Array<{ signed: boolean; verified: boolean }>;
+    };
+    expect(finalResult.publishable).toBe(true);
+    expect(finalResult.commitSignatureEvidence).toHaveLength(2);
+    expect(finalResult.commitSignatureEvidence.every((commit) => commit.signed && commit.verified)).toBe(true);
   });
 });

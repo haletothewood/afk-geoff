@@ -4,6 +4,7 @@ import type { LocalGitCodeHost } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import type { ChangeRequestPublisher } from "@afk-geoff/core";
 import type { VerificationEntryInput } from "@afk-geoff/shared";
+import type { EffectiveCommitSigningPolicy, SigningCapabilityResolver, TargetPolicyResolver } from "./commit-signing-policy.js";
 
 export type ExecutionBackendKind = ReturnType<typeof loadProjectConfig>["execution"]["backend"];
 
@@ -23,6 +24,7 @@ export interface CliContext {
   resultPublisher: ResultPublisher | undefined;
   remote: { owner: string; repo: string } | undefined;
   sourceUpdaterFactory: (issueUrl: string) => SourceUpdater;
+  commitSigningPolicy: EffectiveCommitSigningPolicy;
 }
 
 export interface CliDependencies {
@@ -47,6 +49,10 @@ export interface CliDependencies {
   githubAuthVerifier?: (token: string, remote: { owner: string; repo: string }) => Promise<void>;
   /** Override the configured execution backend for one command invocation. */
   backendOverride?: ExecutionBackendKind;
+  /** Override target-branch signing policy discovery. */
+  targetCommitSignaturePolicyResolver?: TargetPolicyResolver;
+  /** Override the local signing probe. */
+  signingCapabilityResolver?: SigningCapabilityResolver;
 }
 
 export interface RunOutcome {

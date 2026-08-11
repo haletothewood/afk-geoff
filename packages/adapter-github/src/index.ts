@@ -1,8 +1,11 @@
-import type { ChangeRequestPublisher, CodeHost, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
+import type { ChangeRequestPublisher, CodeHost, CommitSignatureVerificationSource, ExternalRef, HydratedWorkItem, IssueMirror, ChangeRequest, PublicationResult, PullRequestReviewSource, Requirement, ResultPublisher, WorkItem, WorkSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource } from "@afk-geoff/core";
 import { createId, parseExecutionBriefMarkdown } from "@afk-geoff/shared";
 import { Octokit } from "@octokit/rest";
 
 export interface OctokitLike {
+  repos?: {
+    getCommit(input: { owner: string; repo: string; ref: string }): Promise<{ data: { sha: string; commit: { verification?: { verified?: boolean; reason?: string | null } | null } } }>;
+  };
   issues: {
     create(input: { owner: string; repo: string; title: string; body: string; labels?: string[] }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
     createComment(input: { owner: string; repo: string; issue_number: number; body: string }): Promise<unknown>;
@@ -101,7 +104,7 @@ export class GitHubIssueWorkSource implements WorkSource<string> {
   }
 }
 
-export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
+export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRequestReviewSource, CommitSignatureVerificationSource, WorkflowArtifactSource, WorkflowDispatcher, WorkflowRunSource {
   private readonly client: OctokitLike;
 
   public constructor(token: string, client?: OctokitLike) {
@@ -236,6 +239,21 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
       }));
   }
 
+  public async verifyCommitSignatures(input: { owner: string; repo: string; shas: string[] }): Promise<Array<{ sha: string; verified: boolean; reason?: string }>> {
+    if (!this.client.repos) {
+      throw new Error("GitHub commit verification API is unavailable");
+    }
+    return await Promise.all(input.shas.map(async (sha) => {
+      const response = await this.client.repos!.getCommit({ owner: input.owner, repo: input.repo, ref: sha });
+      const verification = response.data.commit.verification;
+      return {
+        sha,
+        verified: verification?.verified === true,
+        ...(verification?.reason ? { reason: verification.reason } : {})
+      };
+    }));
+  }
+
   public async dispatchWorkflow(input: {
     owner: string;
     repo: string;
@@ -366,6 +384,7 @@ export class GitHubPullRequestPublisher implements ResultPublisher {
     summary: string;
     agentName: string;
     modelLabel: string;
+    requireVerifiedCommitSignatures?: boolean;
     pullRequest?: {
       title: string;
       body: string;
@@ -376,6 +395,19 @@ export class GitHubPullRequestPublisher implements ResultPublisher {
       cwd: input.worktreePath,
       branchName: input.branchName
     });
+
+    if (input.requireVerifiedCommitSignatures) {
+      const verifier = asCommitSignatureVerificationSource(this.publisher);
+      if (!this.codeHost.listCommitsSince || !verifier) {
+        throw new Error("GitHub verified-signature confirmation is unavailable after push");
+      }
+      const shas = await this.codeHost.listCommitsSince({ cwd: input.worktreePath, baseBranch: input.baseBranch });
+      const verification = await verifier.verifyCommitSignatures({ owner: this.remote.owner, repo: this.remote.repo, shas });
+      const rejected = verification.filter((commit) => !commit.verified);
+      if (rejected.length > 0) {
+        throw new Error(`GitHub rejected commit signature verification for ${rejected.map((commit) => `${commit.sha}${commit.reason ? ` (${commit.reason})` : ""}`).join(", ")}`);
+      }
+    }
 
     const ref = await this.publisher.openPullRequest({
       owner: this.remote.owner,
@@ -394,6 +426,12 @@ export class GitHubPullRequestPublisher implements ResultPublisher {
       ...(ref.url ? { url: ref.url } : {})
     };
   }
+}
+
+function asCommitSignatureVerificationSource(value: ChangeRequestPublisher): CommitSignatureVerificationSource | undefined {
+  return "verifyCommitSignatures" in value && typeof value.verifyCommitSignatures === "function"
+    ? value as ChangeRequestPublisher & CommitSignatureVerificationSource
+    : undefined;
 }
 
 function buildPullRequestBody(input: {

@@ -35,6 +35,11 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
     issueCreates,
     pullCreates,
     workflowDispatches,
+    repos: {
+      async getCommit(input) {
+        return { data: { sha: input.ref, commit: { verification: { verified: true, reason: "valid" } } } };
+      }
+    },
     issues: {
       async create(input) {
         issueCreates.push(input);

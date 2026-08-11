@@ -52,7 +52,7 @@ export class LocalGitCodeHost implements CodeHost {
     await execFileAsync("git", args, { cwd: input.cwd });
   }
 
-  public async commitAll(input: { cwd: string; message: string }): Promise<{ created: boolean; sha?: string }> {
+  public async commitAll(input: { cwd: string; message: string; sign?: boolean; signingKey?: string }): Promise<{ created: boolean; sha?: string }> {
     await this.discardGeneratedArtifacts({ cwd: input.cwd });
     const { stdout: status } = await execFileAsync("git", ["status", "--short"], { cwd: input.cwd });
 
@@ -61,7 +61,11 @@ export class LocalGitCodeHost implements CodeHost {
     }
 
     await execFileAsync("git", ["add", "-A"], { cwd: input.cwd });
-    await execFileAsync("git", ["commit", "-m", input.message], { cwd: input.cwd });
+    const signingArgs = input.sign ? [input.signingKey ? `-S${input.signingKey}` : "-S"] : ["--no-gpg-sign"];
+    await execFileAsync("git", ["commit", ...signingArgs, "-m", input.message], {
+      cwd: input.cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+    });
     const { stdout: sha } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: input.cwd });
     return { created: true, sha: sha.trim() };
   }
@@ -117,6 +121,11 @@ export class LocalGitCodeHost implements CodeHost {
     } catch {
       return true;
     }
+  }
+
+  public async listCommitsSince(input: { cwd: string; baseBranch: string }): Promise<string[]> {
+    const { stdout } = await execFileAsync("git", ["rev-list", "--reverse", `${input.baseBranch}..HEAD`], { cwd: input.cwd });
+    return stdout.trim().split("\n").filter(Boolean);
   }
 }
 

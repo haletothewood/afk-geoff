@@ -27,6 +27,7 @@ import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { attachTerminalFailure, formatErrorMessage } from "./cli-utils.js";
 import { emitRunEvent, isRunEventsEnabled } from "./run-events.js";
+import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE, type EffectiveCommitSigningPolicy } from "./commit-signing-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,6 +43,7 @@ interface LocalDockerExecutionBackendDeps {
   runtime: WorkspaceRuntime;
   runner: AgentRunner;
   githubToken?: string;
+  commitSigningPolicy: EffectiveCommitSigningPolicy;
 }
 
 export class LocalDockerExecutionBackend implements ExecutionBackend {
@@ -53,6 +55,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
   private readonly runtime: WorkspaceRuntime;
   private readonly runner: AgentRunner;
   private readonly githubToken: string | undefined;
+  private readonly commitSigningPolicy: EffectiveCommitSigningPolicy;
 
   public constructor(deps: LocalDockerExecutionBackendDeps) {
     this.repoRoot = deps.repoRoot;
@@ -63,6 +66,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     this.runtime = deps.runtime;
     this.runner = deps.runner;
     this.githubToken = deps.githubToken;
+    this.commitSigningPolicy = deps.commitSigningPolicy;
   }
 
   public async run(input: ExecutionBackendInput): Promise<ExecutionBackendResult> {
@@ -128,6 +132,48 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
     }
     // Detached-resume path: run record and in-progress status were already written by the
     // --detach parent before spawning this background process.
+
+    if (!this.commitSigningPolicy.publishable) {
+      const summary = this.commitSigningPolicy.failure?.message ?? "Commit signature policy is not satisfied";
+      await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+      await this.store.updateRun(runId, { status: "completed", summary });
+      writeFinalRunResult(path.join(runDir, "final-result.json"), {
+        runId,
+        status: "blocked",
+        summary,
+        workerResults: [],
+        reviewResults: [],
+        verificationSummaries: [],
+        commits: [],
+        generatedArtifacts: [],
+        branchName,
+        worktreePath,
+        baseBranch: this.config.baseBranch,
+        commitSigningPolicy: this.commitSigningPolicy,
+        publishable: false,
+        whyNotPublishable: [summary]
+      });
+      emitRunEvent({
+        event: "run_completed",
+        runId,
+        workItemId: input.workItem.id,
+        stage: "run",
+        attempt: 1,
+        reused: false,
+        status: "blocked",
+        message: summary,
+        branchName,
+        worktreePath,
+        runDir,
+        finalResultPath: path.join(runDir, "final-result.json")
+      });
+      return {
+        status: "blocked",
+        summary,
+        issueComment: `**AFK run blocked by commit signature policy**\n\n${summary}\n\n${this.commitSigningPolicy.failure?.remediation ?? "Configure verified commit signing and retry."}`,
+        hasDiff: false
+      };
+    }
 
     // Resolve models for each phase.
     const workModel = this.config.runner.command ? undefined : this.config.runner.model;
@@ -208,7 +254,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
 
     const extraEnv = {
       ...runnerProcessEnv(this.runner, path.join(runtimeRunDir, "runner-home")),
-      ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {})
+      ...(this.githubToken ? { GH_TOKEN: this.githubToken } : {}),
+      ...signingEnvironment(this.commitSigningPolicy, this.config.git.signing.key)
     };
 
     writeProgress(progressPath, buildProgress(progressBase, {
@@ -284,6 +331,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           branchName,
           worktreePath,
           baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy,
           ...(reviewContractFailure ? { reviewContractFailure } : {}),
           publishable: false,
           whyNotPublishable: [summary],
@@ -364,6 +412,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           resultPath: resultContainerPath,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
           ...(workerOverrideText ? { overrideText: workerOverrideText } : {}),
+          createCommit: !this.commitSigningPolicy.enforced,
           executionMode: resolvedMode
         });
       } else {
@@ -375,7 +424,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           resultPath: resultContainerPath,
           reviewIssues: isFollowUp && isFirstIteration ? input.followUp?.reviewComments ?? [] : reviewIssues,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
-          ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
+          ...(workerOverrideText ? { overrideText: workerOverrideText } : {}),
+          createCommit: !this.commitSigningPolicy.enforced
         });
       }
 
@@ -530,7 +580,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath,
-          baseBranch: this.config.baseBranch
+          baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy
         });
         emitRunCompletion(
           agentResult.status,
@@ -563,14 +614,60 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         : undefined;
 
       // Commit changes from this iteration before running verification and review.
-      const commit = await this.git.commitAll({
-        cwd: worktreePath,
-        message: isFollowUp && iteration === 1
-          ? `afk: address PR feedback for ${input.workItem.title}`
-          : iteration === 1
-          ? `afk: ${input.workItem.title}`
-          : `afk: ${input.workItem.title} (fix ${iteration - 1})`
-      });
+      let commit: { created: boolean; sha?: string };
+      try {
+        commit = await this.git.commitAll({
+          cwd: worktreePath,
+          sign: this.commitSigningPolicy.enforced,
+          ...(this.config.git.signing.key ? { signingKey: this.config.git.signing.key } : {}),
+          message: isFollowUp && iteration === 1
+            ? `afk: address PR feedback for ${input.workItem.title}`
+            : iteration === 1
+            ? `afk: ${input.workItem.title}`
+            : `afk: ${input.workItem.title} (fix ${iteration - 1})`
+        });
+      } catch (error) {
+        if (!this.commitSigningPolicy.enforced) {
+          throw error;
+        }
+
+        const detail = error instanceof Error ? error.message : String(error);
+        const summary = `Verified commit signing capability failed after the capability probe: ${detail}`;
+        const failedSigningPolicy: EffectiveCommitSigningPolicy = {
+          ...this.commitSigningPolicy,
+          publishable: false,
+          failure: {
+            category: "environment",
+            message: summary,
+            remediation: "Restore access to the configured signing key or signing agent, verify a signed commit succeeds, then retry the run."
+          }
+        };
+        await this.store.updateWorkItemStatus(input.workItem.id, "blocked");
+        await this.store.updateRun(runId, { status: "completed", summary });
+        writeFinalRunResult(path.join(runDir, "final-result.json"), {
+          runId,
+          status: "blocked",
+          summary,
+          workerResults,
+          reviewResults,
+          verificationSummaries,
+          commits,
+          generatedArtifacts,
+          branchName,
+          worktreePath,
+          baseBranch: this.config.baseBranch,
+          commitSigningPolicy: failedSigningPolicy,
+          publishable: false,
+          whyNotPublishable: [summary]
+        });
+        emitRunCompletion("blocked", summary, path.join(runDir, "final-result.json"));
+        return {
+          status: "blocked",
+          summary,
+          issueComment: `**AFK run blocked by commit signing failure**\n\n${summary}\n\n${failedSigningPolicy.failure?.remediation}`,
+          hasDiff: false
+        };
+      }
       if (workerCommit) {
         commits.push({ iteration, phase, ...workerCommit });
       }
@@ -688,6 +785,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           branchName,
           worktreePath,
           baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy,
           hasDiff: true,
           publishable: false
         });
@@ -732,6 +830,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
             branchName,
             worktreePath,
             baseBranch: this.config.baseBranch,
+            commitSigningPolicy: this.commitSigningPolicy,
             hasDiff: await this.git.hasDiffAgainst({ cwd: worktreePath, baseBranch: this.config.baseBranch }),
             publishable: false
           });
@@ -968,6 +1067,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
               branchName,
               worktreePath,
               baseBranch: this.config.baseBranch,
+              commitSigningPolicy: this.commitSigningPolicy,
               hasDiff: true,
               publishable: false,
               whyNotPublishable: verificationIssues
@@ -1003,7 +1103,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath,
-          baseBranch: this.config.baseBranch
+          baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy
         });
         emitRunCompletion("blocked", reason, path.join(runDir, "final-result.json"));
         return {
@@ -1046,6 +1147,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           branchName,
           worktreePath,
           baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy,
           hasDiff: await this.git.hasDiffAgainst({ cwd: worktreePath, baseBranch: this.config.baseBranch }),
           publishable: false,
           whyNotPublishable: repeatedIssues
@@ -1076,7 +1178,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           generatedArtifacts,
           branchName,
           worktreePath,
-          baseBranch: this.config.baseBranch
+          baseBranch: this.config.baseBranch,
+          commitSigningPolicy: this.commitSigningPolicy
         });
         emitRunCompletion("blocked", capSummary, path.join(runDir, "final-result.json"));
         return {
@@ -1119,6 +1222,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         branchName,
         worktreePath,
         baseBranch: this.config.baseBranch,
+        commitSigningPolicy: this.commitSigningPolicy,
         hasDiff: true,
         publishable: false,
         whyNotPublishable: [`Dirty worktree: ${finalWorktreeStatus.shortStatus}`]
@@ -1152,6 +1256,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
         branchName,
         worktreePath,
         baseBranch: this.config.baseBranch,
+        commitSigningPolicy: this.commitSigningPolicy,
         hasDiff: false,
         publishable: false,
         whyNotPublishable: ["No changes relative to the base branch"]
@@ -1188,6 +1293,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       branchName,
       worktreePath,
       baseBranch: this.config.baseBranch,
+      commitSigningPolicy: this.commitSigningPolicy,
       hasDiff: true,
       publishable: true
     });
@@ -1301,6 +1407,7 @@ function writeFinalRunResult(pathname: string, result: {
   branchName: string;
   worktreePath: string;
   baseBranch?: string;
+  commitSigningPolicy: EffectiveCommitSigningPolicy;
   hasDiff?: boolean;
   publishable?: boolean;
   whyNotPublishable?: string[];
@@ -1308,6 +1415,16 @@ function writeFinalRunResult(pathname: string, result: {
 }): void {
   const worktreeStatus = readWorktreeStatus(result.worktreePath);
   const terminalVerificationResults = latestVerificationResults(result.verificationSummaries);
+  const commitSignatureEvidence = readCommitSignatureEvidence(
+    result.worktreePath,
+    result.baseBranch,
+    result.commitSigningPolicy.enforced
+  );
+  const signatureIssues = result.commitSigningPolicy.enforced
+    ? commitSignatureEvidence
+        .filter((commit) => !commit.signed || !commit.verified)
+        .map((commit) => `Commit signature verification failed for ${commit.sha}: ${commit.reason ?? (commit.signed ? "signature is unverifiable" : "commit is unsigned")}`)
+    : [];
   const verificationIssues = terminalVerificationResults
     .filter((verification) => !verification.passed)
     .map((verification) => {
@@ -1319,25 +1436,39 @@ function writeFinalRunResult(pathname: string, result: {
           : "Product verification";
       return `${label} failed: ${verification.command} (exit ${verification.exitCode})`;
     });
-  const whyNotPublishable = [
-    ...verificationIssues,
-    ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
-    ...(result.whyNotPublishable ?? [])
-  ];
   const requestedPublishable = result.publishable ?? (
     result.status === "done" &&
     result.hasDiff === true &&
     worktreeStatus.clean &&
     verificationIssues.length === 0
   );
+  const hostSignatureIssues = result.commitSigningPolicy.enforced
+    && result.commitSigningPolicy.publishable
+    && requestedPublishable
+    && signatureIssues.length === 0
+    ? [HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE]
+    : [];
+  const whyNotPublishable = [
+    ...verificationIssues,
+    ...signatureIssues,
+    ...hostSignatureIssues,
+    ...(result.commitSigningPolicy.publishable ? [] : [result.commitSigningPolicy.failure?.message ?? "Commit signature policy is not satisfied"]),
+    ...(result.status === "blocked" || result.status === "failed" ? [result.summary] : []),
+    ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
+    ...(result.whyNotPublishable ?? [])
+  ];
   const uniqueWhyNotPublishable = whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [];
-  const publishable = requestedPublishable && uniqueWhyNotPublishable.length === 0;
+  const publishable = requestedPublishable
+    && result.commitSigningPolicy.publishable
+    && signatureIssues.length === 0
+    && uniqueWhyNotPublishable.length === 0;
   const baseEvidencePacket = buildEvidencePacket({
     ...result,
     worktreeStatus,
     publishable,
     whyNotPublishable: uniqueWhyNotPublishable,
-    changedFiles: readChangedFiles(result.worktreePath, result.baseBranch)
+    changedFiles: readChangedFiles(result.worktreePath, result.baseBranch),
+    commitSignatureEvidence
   });
   const evidencePacket: EvidencePacket = result.terminalFailure
     ? {
@@ -1356,6 +1487,8 @@ function writeFinalRunResult(pathname: string, result: {
         whyNotPublishable: uniqueWhyNotPublishable,
         publishabilityBlockers: evidencePacket.publishability.blockers,
         evidencePacket,
+        commitSigningPolicy: result.commitSigningPolicy,
+        commitSignatureEvidence,
         latestWorkerSummary: result.summary,
         summary: buildAggregateSummary(result)
       },
@@ -1368,6 +1501,12 @@ function writeFinalRunResult(pathname: string, result: {
 interface EvidencePacket {
   changedFiles: string[];
   commits: Array<{ iteration: number; phase: string; sha?: string; source?: "worker" | "afk" }>;
+  commitSigning: {
+    policy: EffectiveCommitSigningPolicy;
+    commits: CommitSignatureEvidence[];
+    satisfied: boolean;
+    hostVerification?: { verified: boolean; message?: string };
+  };
   verification: {
     status: "passed" | "failed" | "skipped";
     commands: VerificationPhaseSummary["results"];
@@ -1381,7 +1520,7 @@ interface EvidencePacket {
   };
   publishability: {
     publishable: boolean;
-    blockers: Array<{ category: "product" | "verification" | "environment" | "review" | "worktree" | "publishing"; message: string }>;
+    blockers: Array<{ category: "product" | "verification" | "environment" | "review" | "worktree" | "publishing" | "policy"; message: string }>;
   };
   understandingBrief: {
     keyFilesChanged: string[];
@@ -1404,6 +1543,8 @@ function buildEvidencePacket(result: {
   publishable: boolean;
   whyNotPublishable: string[];
   changedFiles: string[];
+  commitSigningPolicy: EffectiveCommitSigningPolicy;
+  commitSignatureEvidence: CommitSignatureEvidence[];
 }): EvidencePacket {
   const verificationCommands = latestVerificationResults(result.verificationSummaries);
   const verificationStatus = verificationCommands.length === 0
@@ -1429,6 +1570,14 @@ function buildEvidencePacket(result: {
         ...(commit.sha ? { sha: commit.sha } : {}),
         ...(commit.source ? { source: commit.source } : {})
       })),
+    commitSigning: {
+      policy: result.commitSigningPolicy,
+      commits: result.commitSignatureEvidence,
+      satisfied: result.commitSigningPolicy.publishable && result.commitSignatureEvidence.every((commit) => !result.commitSigningPolicy.enforced || (commit.signed && commit.verified)) && !result.commitSigningPolicy.enforced,
+      ...(result.commitSigningPolicy.enforced
+        ? { hostVerification: { verified: false, message: HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE } }
+        : {})
+    },
     verification: {
       status: verificationStatus,
       commands: verificationCommands
@@ -1484,6 +1633,12 @@ function deriveImportantDesignDecisions(result: {
 
 function classifyPublishabilityBlocker(message: string): EvidencePacket["publishability"]["blockers"][number]["category"] {
   const normalized = message.toLowerCase();
+  if (normalized.includes("signing capability")) {
+    return "environment";
+  }
+  if (normalized.includes("signature") || normalized.includes("signing policy") || normalized.includes("branch-rules")) {
+    return "policy";
+  }
   if (normalized.includes("product verification")) {
     return "product";
   }
@@ -1506,6 +1661,68 @@ function classifyPublishabilityBlocker(message: string): EvidencePacket["publish
     return "publishing";
   }
   return "product";
+}
+
+export interface CommitSignatureEvidence {
+  sha: string;
+  signed: boolean;
+  verified: boolean;
+  reason?: string;
+}
+
+export function readCommitSignatureEvidence(worktreePath: string, baseBranch: string | undefined, enabled: boolean): CommitSignatureEvidence[] {
+  if (!enabled || !baseBranch) {
+    return [];
+  }
+
+  try {
+    const shas = execFileSync("git", ["rev-list", "--reverse", `${baseBranch}..HEAD`], {
+      cwd: worktreePath,
+      encoding: "utf8"
+    }).trim().split("\n").filter(Boolean);
+    return shas.map((sha) => {
+      const rawCommit = execFileSync("git", ["cat-file", "commit", sha], { cwd: worktreePath, encoding: "utf8" });
+      const signed = /^gpgsig(?:-sha256)? /m.test(rawCommit);
+      if (!signed) {
+        return { sha, signed: false, verified: false };
+      }
+      try {
+        execFileSync("git", ["verify-commit", sha], { cwd: worktreePath, stdio: "ignore" });
+        return { sha, signed: true, verified: true };
+      } catch {
+        return { sha, signed: true, verified: false };
+      }
+    });
+  } catch {
+    return [{
+      sha: "unavailable",
+      signed: false,
+      verified: false,
+      reason: "AFK could not inspect the commit range"
+    }];
+  }
+}
+
+function signingEnvironment(policy: EffectiveCommitSigningPolicy, signingKey: string | undefined): NodeJS.ProcessEnv {
+  if (!policy.enforced) {
+    return {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "commit.gpgsign",
+      GIT_CONFIG_VALUE_0: "false"
+    };
+  }
+
+  return {
+    GIT_CONFIG_COUNT: signingKey ? "2" : "1",
+    GIT_CONFIG_KEY_0: "commit.gpgsign",
+    GIT_CONFIG_VALUE_0: "true",
+    ...(signingKey
+      ? {
+          GIT_CONFIG_KEY_1: "user.signingkey",
+          GIT_CONFIG_VALUE_1: signingKey
+        }
+      : {})
+  };
 }
 
 function recommendHumanAction(

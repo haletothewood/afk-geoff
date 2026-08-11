@@ -197,11 +197,14 @@ Treat a run as publishable only when:
 
 - the final command result reports success
 - `final-result.json` has `publishable: true`
+- `commitSigningPolicy.publishable` is true and, when signing is enforced, every entry in `commitSignatureEvidence` is signed and verified
 - `whyNotPublishable` is empty
 - wrapper verification passed
 - the review gate passed
 - there is a committed diff against the base branch
 - the worktree is clean
+
+AFK resolves the target branch's commit-signature requirement through GitHub branch rules when `git.signing.mode` is `auto`, or accepts the operator's explicit `enabled` mode. Policy discovery and signing capability are included in structured preflight/run output and in the final evidence packet. An unavailable policy, missing or unverifiable signing capability, unsigned AFK commit, or host-rejected signature is an actionable policy/environment failure and can never recommend publication. `disabled` and ordinary unsigned commits remain valid only when the target policy is known not to require signatures.
 
 Each failed wrapper-verification command records a `failureCategory`:
 
