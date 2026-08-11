@@ -412,6 +412,7 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           resultPath: resultContainerPath,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
           ...(workerOverrideText ? { overrideText: workerOverrideText } : {}),
+          createCommit: !this.commitSigningPolicy.enforced,
           executionMode: resolvedMode
         });
       } else {
@@ -423,7 +424,8 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
           resultPath: resultContainerPath,
           reviewIssues: isFollowUp && isFirstIteration ? input.followUp?.reviewComments ?? [] : reviewIssues,
           ...(resolvedIssueUrl ? { issueUrl: resolvedIssueUrl } : {}),
-          ...(workerOverrideText ? { overrideText: workerOverrideText } : {})
+          ...(workerOverrideText ? { overrideText: workerOverrideText } : {}),
+          createCommit: !this.commitSigningPolicy.enforced
         });
       }
 
@@ -1423,9 +1425,6 @@ function writeFinalRunResult(pathname: string, result: {
         .filter((commit) => !commit.signed || !commit.verified)
         .map((commit) => `Commit signature verification failed for ${commit.sha}: ${commit.reason ?? (commit.signed ? "signature is unverifiable" : "commit is unsigned")}`)
     : [];
-  const hostSignatureIssues = result.commitSigningPolicy.enforced && result.commitSigningPolicy.publishable && signatureIssues.length === 0
-    ? [HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE]
-    : [];
   const verificationIssues = terminalVerificationResults
     .filter((verification) => !verification.passed)
     .map((verification) => {
@@ -1437,20 +1436,27 @@ function writeFinalRunResult(pathname: string, result: {
           : "Product verification";
       return `${label} failed: ${verification.command} (exit ${verification.exitCode})`;
     });
-  const whyNotPublishable = [
-    ...verificationIssues,
-    ...signatureIssues,
-    ...hostSignatureIssues,
-    ...(result.commitSigningPolicy.publishable ? [] : [result.commitSigningPolicy.failure?.message ?? "Commit signature policy is not satisfied"]),
-    ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
-    ...(result.whyNotPublishable ?? [])
-  ];
   const requestedPublishable = result.publishable ?? (
     result.status === "done" &&
     result.hasDiff === true &&
     worktreeStatus.clean &&
     verificationIssues.length === 0
   );
+  const hostSignatureIssues = result.commitSigningPolicy.enforced
+    && result.commitSigningPolicy.publishable
+    && requestedPublishable
+    && signatureIssues.length === 0
+    ? [HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE]
+    : [];
+  const whyNotPublishable = [
+    ...verificationIssues,
+    ...signatureIssues,
+    ...hostSignatureIssues,
+    ...(result.commitSigningPolicy.publishable ? [] : [result.commitSigningPolicy.failure?.message ?? "Commit signature policy is not satisfied"]),
+    ...(result.status === "blocked" || result.status === "failed" ? [result.summary] : []),
+    ...(worktreeStatus.clean ? [] : [`Dirty worktree: ${worktreeStatus.shortStatus}`]),
+    ...(result.whyNotPublishable ?? [])
+  ];
   const uniqueWhyNotPublishable = whyNotPublishable.length > 0 ? [...new Set(whyNotPublishable)] : [];
   const publishable = requestedPublishable
     && result.commitSigningPolicy.publishable

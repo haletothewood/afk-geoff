@@ -205,11 +205,55 @@ describe("afk CLI — run command", () => {
       publishable: boolean;
       commitSignatureEvidence: Array<{ signed: boolean; verified: boolean }>;
       evidencePacket: { commitSigning: { satisfied: boolean; commits: Array<{ signed: boolean; verified: boolean }> } };
+      commits: Array<{ source?: string }>;
     };
     expect(finalResult.publishable).toBe(true);
     expect(finalResult.commitSignatureEvidence).toHaveLength(2);
     expect(finalResult.commitSignatureEvidence.every((commit) => commit.signed && commit.verified)).toBe(true);
     expect(finalResult.evidencePacket.commitSigning.satisfied).toBe(true);
+    expect(finalResult.commits.every((commit) => commit.source === "afk")).toBe(true);
+    expect(fs.readFileSync(path.join(run!.runDir, "prompt.md"), "utf8")).toContain(
+      "Do not create commits. Leave repository changes for the AFK host to commit"
+    );
+    expect(fs.readFileSync(path.join(run!.runDir, "fix-prompt-2.md"), "utf8")).toContain(
+      "Do not create commits. Leave repository changes for the AFK host to commit"
+    );
+  });
+
+  it("Given an enforced signed worker blocks before creating a commit, then its real blocker remains authoritative", async () => {
+    const privateKeyPath = path.join(tempDir, "blocked-signing-key");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    const fixture = await createFixture(tempDir, {
+      writeWorktreeChange: false,
+      signing: { mode: "enabled", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "optional", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" }),
+      runnerScriptSuffix: [
+        'fs.writeFileSync(outputPath, JSON.stringify({ status: "blocked", summary: "Waiting for an external dependency", issueComment: "Dependency is unavailable." }, null, 2));',
+        "process.exit(0);"
+      ].join("\n")
+    });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+
+    await fixture.cli(["run", backend!.id]);
+
+    const [run] = await fixture.store.listRuns();
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      whyNotPublishable: string[];
+      evidencePacket: { publishability: { blockers: Array<{ message: string }> } };
+    };
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.whyNotPublishable).toContain("Waiting for an external dependency");
+    expect(finalResult.whyNotPublishable).not.toContain("GitHub verification is pending for every branch commit signature");
+    expect(finalResult.evidencePacket.publishability.blockers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: "Waiting for an external dependency" })])
+    );
   });
 
   it("Given an enforced signed run without GitHub verification, then final-result remains non-publishable", async () => {
@@ -764,12 +808,21 @@ describe("afk CLI — run command", () => {
   });
 
   it("Given post-run PR publishing fails, when the failed work item is retried, then reviewed evidence is reused for publishing", async () => {
+    const privateKeyPath = path.join(tempDir, "retry-signing-key");
+    const allowedSignersPath = path.join(tempDir, "retry-allowed-signers");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", privateKeyPath]);
+    fs.writeFileSync(allowedSignersPath, `test@example.com ${fs.readFileSync(`${privateKeyPath}.pub`, "utf8").trim()}\n`);
     const githubMirror = new MockGitHubMirror();
     githubMirror.openPullRequestError = new Error("simulated PR failure");
     const fixture = await createFixture(tempDir, {
       githubEnabled: true,
-      githubMirror
+      githubMirror,
+      signing: { mode: "enabled", key: privateKeyPath },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "optional", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
     });
+    execFileSync("git", ["config", "gpg.format", "ssh"], { cwd: fixture.repoDir });
+    execFileSync("git", ["config", "gpg.ssh.allowedSignersFile", allowedSignersPath], { cwd: fixture.repoDir });
     const briefPath = path.join(fixture.repoDir, "brief.md");
     fs.writeFileSync(
       briefPath,
