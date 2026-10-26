@@ -1035,7 +1035,18 @@ if (prompt.includes("# Issues to fix")) {
     expect(backend).toBeDefined();
 
     const warnSpy = vi.spyOn(console, "warn");
-    await fixture.cli(["run", backend!.id]);
+    // Model an AFK Node installation with isolated package-manager shims.
+    const selectedNode = path.join(fixture.repoDir, "node");
+    fs.symlinkSync(process.execPath, selectedNode);
+    execFileSync("git", ["add", "node"], { cwd: fixture.repoDir });
+    execFileSync("git", ["commit", "-m", "add fixture Node installation"], { cwd: fixture.repoDir });
+    const originalExecPath = process.execPath;
+    process.execPath = selectedNode;
+    try {
+      await fixture.cli(["run", backend!.id]);
+    } finally {
+      process.execPath = originalExecPath;
+    }
 
     expect(fs.readFileSync(corepackLogPath, "utf8")).toContain("pnpm@10.20.0 --version");
     const warnCalls = warnSpy.mock.calls.map((args) => args.join(" "));

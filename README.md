@@ -81,6 +81,13 @@ pnpm afk init
 pnpm afk init --with-github-actions
 ```
 
+Local-process workers, host reviewers, and host verification use the Node
+installation running AFK (`process.execPath`), including its package-manager and
+Corepack shims. Verification restores that installation at the front of PATH
+after login-shell startup; other PATH entries remain available. Start AFK with
+the Node version used to install native dependencies. Docker workers continue to
+use their image's Node runtime.
+
 The repository declares its package manager in `package.json`. If `pnpm --version`
 does not match that declaration, use `corepack pnpm ...` or `/opt/homebrew/bin/pnpm ...`
 so native dependencies such as `better-sqlite3` are installed for the Node version

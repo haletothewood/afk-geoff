@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { WorkspaceRuntime } from "@afk-geoff/core";
 import { runProcess } from "@afk-geoff/shared";
+import { hostNodeEnv } from "./host-node-runtime.js";
 
 export class LocalProcessWorkspaceRuntime implements WorkspaceRuntime {
   public runDirPath(hostRunDir: string): string {
@@ -38,11 +39,11 @@ export class LocalProcessWorkspaceRuntime implements WorkspaceRuntime {
         command: input.command,
         args: input.args,
         cwd: input.worktreePath,
-        env: {
+        env: hostNodeEnv({
           ...process.env,
           ...allowedEnv,
           ...(input.extraEnv ?? {})
-        },
+        }),
         ...(input.stdin === undefined ? {} : { stdin: input.stdin })
       },
       {
