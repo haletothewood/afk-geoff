@@ -233,6 +233,32 @@ export class SqliteStateStore implements RequirementRepository, WorkItemReposito
   }
 
   public async saveExternalRef(ref: ExternalRef): Promise<void> {
+    if (ref.remoteType === "pull_request") {
+      // Publication retries return fresh local ids for the same logical reference.
+      // Keep the original local identity and retire legacy duplicates atomically.
+      this.db.transaction(() => {
+        const rows = this.db.prepare(
+          `SELECT * FROM external_refs WHERE entity_type = ? AND entity_id = ? AND provider = ? AND remote_type = ?
+           ORDER BY created_at, id`
+        ).all(ref.entityType, ref.entityId, ref.provider, ref.remoteType) as DbExternalRef[];
+        const canonical = rows[0];
+        if (canonical) {
+          this.db.prepare(
+            `UPDATE external_refs SET remote_number = ?, remote_id = ?, url = ?, updated_at = ? WHERE id = ?`
+          ).run(ref.remoteNumber, ref.remoteId ?? null, ref.url ?? null, ref.updatedAt, canonical.id);
+          for (const duplicate of rows.slice(1)) {
+            this.db.prepare("DELETE FROM sync_state WHERE external_ref_id = ?").run(duplicate.id);
+            this.db.prepare("DELETE FROM external_refs WHERE id = ?").run(duplicate.id);
+          }
+        } else {
+          this.db.prepare(
+            `INSERT INTO external_refs (id, entity_type, entity_id, provider, remote_type, remote_number, remote_id, url, created_at, updated_at)
+             VALUES (@id, @entity_type, @entity_id, @provider, @remote_type, @remote_number, @remote_id, @url, @created_at, @updated_at)`
+          ).run(this.toDbExternalRef(ref));
+        }
+      })();
+      return;
+    }
     this.db
       .prepare(
         `INSERT INTO external_refs (id, entity_type, entity_id, provider, remote_type, remote_number, remote_id, url, created_at, updated_at)

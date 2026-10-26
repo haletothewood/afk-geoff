@@ -10,6 +10,11 @@ export interface OctokitLike {
     listComments(input: { owner: string; repo: string; issue_number: number; per_page?: number }): Promise<{ data: Array<{ id: number; body?: string; created_at?: string }> }>;
   };
   pulls: {
+    list(input: { owner: string; repo: string; state: "open"; head: string; base: string; per_page: number; page: number }): Promise<{ data: Array<{
+      id: number; number: number; html_url?: string; state: string; merged_at: string | null;
+      head: { ref: string; repo: { full_name: string } | null };
+      base: { ref: string; repo: { full_name: string } | null };
+    }> }>;
     create(input: { owner: string; repo: string; title: string; head: string; base: string; body: string }): Promise<{ data: { id: number; number: number; html_url?: string } }>;
     update(input: { owner: string; repo: string; pull_number: number; state: "open" | "closed" }): Promise<unknown>;
     get(input: { owner: string; repo: string; pull_number: number }): Promise<{ data: { state: string; merged: boolean } }>;
@@ -179,15 +184,44 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
   }
 
   public async openPullRequest(input: { owner: string; repo: string; changeRequest: ChangeRequest }): Promise<ExternalRef> {
-    const response = await this.client.pulls.create({
-      owner: input.owner,
-      repo: input.repo,
-      title: input.changeRequest.title,
-      head: input.changeRequest.branchName,
-      base: input.changeRequest.baseBranch,
-      body: `${input.changeRequest.body}\n\n<!-- afk:work_item:${input.changeRequest.workItemId} -->`
-    });
-    return this.buildExternalRef("work_item", input.changeRequest.workItemId, "pull_request", response.data.id, response.data.number, response.data.html_url);
+    const findExisting = async () => {
+      for (let page = 1; ; page += 1) {
+        const response = await this.client.pulls.list({
+          owner: input.owner, repo: input.repo, state: "open",
+          head: `${input.owner}:${input.changeRequest.branchName}`,
+          base: input.changeRequest.baseBranch, per_page: 100, page
+        });
+        const repository = `${input.owner}/${input.repo}`.toLowerCase();
+        const match = response.data.find((pr) =>
+          pr.state === "open" && pr.merged_at === null &&
+          pr.head.ref === input.changeRequest.branchName &&
+          pr.base.ref === input.changeRequest.baseBranch &&
+          pr.head.repo?.full_name.toLowerCase() === repository &&
+          pr.base.repo?.full_name.toLowerCase() === repository
+        );
+        if (match) return match;
+        if (response.data.length < 100) return undefined;
+      }
+    };
+    let pullRequest = await findExisting();
+    if (!pullRequest) {
+      try {
+        const response = await this.client.pulls.create({
+          owner: input.owner,
+          repo: input.repo,
+          title: input.changeRequest.title,
+          head: input.changeRequest.branchName,
+          base: input.changeRequest.baseBranch,
+          body: `${input.changeRequest.body}\n\n<!-- afk:work_item:${input.changeRequest.workItemId} -->`
+        });
+        return this.buildExternalRef("work_item", input.changeRequest.workItemId, "pull_request", response.data.id, response.data.number, response.data.html_url);
+      } catch (error) {
+        if (!isDuplicatePullRequestError(error)) throw error;
+        pullRequest = await findExisting();
+        if (!pullRequest) throw error;
+      }
+    }
+    return this.buildExternalRef("work_item", input.changeRequest.workItemId, "pull_request", pullRequest.id, pullRequest.number, pullRequest.html_url);
   }
 
   public async closePullRequest(input: { owner: string; repo: string; pullNumber: number }): Promise<void> {
@@ -335,6 +369,15 @@ export class GitHubMirror implements IssueMirror, ChangeRequestPublisher, PullRe
       ...(url ? { url } : {})
     };
   }
+}
+
+function isDuplicatePullRequestError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("status" in error) || error.status !== 422) return false;
+  if (!("response" in error)) return false;
+  const response = error.response as { data?: { errors?: Array<{ message?: string }> } } | undefined;
+  return Array.isArray(response?.data?.errors) && response.data.errors.some(
+    (detail) => typeof detail.message === "string" && /a pull request already exists\b/i.test(detail.message)
+  );
 }
 
 function toUint8Array(data: ArrayBuffer | Uint8Array | Buffer | string): Uint8Array {
