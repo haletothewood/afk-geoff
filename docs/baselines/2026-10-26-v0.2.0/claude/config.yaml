@@ -1,0 +1,24 @@
+version: 1
+baseBranch: main
+github:
+  enabled: false
+runner:
+  kind: claude
+  requiredEnv: []
+  envAllowlist:
+    - GH_TOKEN
+    - ANTHROPIC_API_KEY
+    - CLAUDE_CODE_OAUTH_TOKEN
+execution:
+  backend: local-process
+docker:
+  image: afk-worker:latest
+verification:
+  - node --test
+timeouts:
+  runTimeoutMs: 1800000
+  heartbeatStaleMs: 300000
+paths:
+  state: .afk/state.sqlite
+  runs: .afk/runs
+  worktrees: .afk/worktrees

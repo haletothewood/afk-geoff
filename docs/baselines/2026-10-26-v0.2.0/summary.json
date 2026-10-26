@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-26",
+  "timezone": "Europe/London",
+  "afk": "0.2.0",
+  "node": "24.14.1",
+  "npm": "11.11.0",
+  "codex": "0.164.0",
+  "claude": "2.1.310",
+  "runs": [
+    {
+      "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+      "workItemId": "wi_63a98a724b6c4a4eb38027976c3dfb04",
+      "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+      "status": "completed",
+      "publishable": false,
+      "reviewVerdict": "PASS",
+      "verificationStatus": "passed",
+      "createdCommitCount": 0,
+      "worktreeClean": true,
+      "recommendedAction": "report_failure",
+      "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/final-result.json",
+      "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+      "profile": "smoke",
+      "elapsedSeconds": 0.671
+    },
+    {
+      "runId": "run_f84cc97e3c7943579b98b0b120370625",
+      "workItemId": "wi_80572b153bc64c51a0012257ff84aed3",
+      "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+      "status": "completed",
+      "publishable": true,
+      "reviewVerdict": "PASS",
+      "verificationStatus": "passed",
+      "createdCommitCount": 1,
+      "worktreeClean": true,
+      "recommendedAction": "publish",
+      "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/final-result.json",
+      "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+      "profile": "codex",
+      "elapsedSeconds": 56.927
+    },
+    {
+      "runId": "run_31ea69ba243f42dead72283afe211159",
+      "workItemId": "wi_72a2ca932a154309bdebbcf4e3782b9d",
+      "branchName": "afk/normalize-whitespace-inside-labels-1793035846589",
+      "status": "failed",
+      "publishable": false,
+      "reviewVerdict": null,
+      "verificationStatus": "skipped",
+      "createdCommitCount": null,
+      "worktreeClean": true,
+      "recommendedAction": "retry",
+      "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/claude/.afk/runs/run_31ea69ba243f42dead72283afe211159/final-result.json",
+      "worktreePath": "/private/tmp/afk-baseline-2026-10-26/claude/.afk/worktrees/run_31ea69ba243f42dead72283afe211159",
+      "profile": "claude",
+      "elapsedSeconds": 0.705
+    }
+  ],
+  "supervision": {
+    "humanPrompts": 0,
+    "codingInterventions": 0,
+    "diagnosticEpisodes": 3,
+    "humanActiveMinutes": null,
+    "note": "Agent-operated baseline; human active time was not measured. Diagnostic episodes: Node runtime pinning, watcher recovery, Claude auth investigation."
+  },
+  "codexModel": "gpt-6.1-sol",
+  "codexReportedTokens": [
+    9334,
+    12697
+  ]
+}

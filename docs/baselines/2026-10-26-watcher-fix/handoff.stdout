@@ -1,0 +1,73 @@
+{
+  "command": "handoff",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "workItemId": "wi_0582518f70e347c6bd58555c4529e38a",
+  "status": "completed",
+  "recommendedAction": "publish",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793036417944",
+  "publishable": true,
+  "whyNotPublishable": [],
+  "reviewVerdict": "PASS",
+  "verificationStatus": "passed",
+  "createdCommitCount": 1,
+  "worktreeClean": true,
+  "runDir": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/runs/run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "finalResultPath": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/runs/run_c93bc8c97d064a2f83752b7df1f21f3f/final-result.json",
+  "worktreePath": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/worktrees/run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "evidencePacket": {
+    "changedFiles": [
+      "label.js",
+      "label.test.js"
+    ],
+    "commits": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "sha": "683f47c5a7b2f462083631bebdeb0f38238d7cee",
+        "source": "worker"
+      }
+    ],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": true,
+      "blockers": []
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [
+        "label.js",
+        "label.test.js"
+      ],
+      "importantDesignDecisions": [
+        "Normalized internal label whitespace and committed as 683f47c. All four tests pass; worktree is clean."
+      ],
+      "inspectFirst": [
+        "label.js",
+        "label.test.js"
+      ]
+    },
+    "recommendedHumanAction": "publish"
+  },
+  "summary": "Normalized internal label whitespace and committed as 683f47c. All four tests pass; worktree is clean."
+}

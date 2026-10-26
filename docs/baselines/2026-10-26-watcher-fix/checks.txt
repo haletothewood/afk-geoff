@@ -1,0 +1,14 @@
+Pinned Node 24.14.1. Typecheck and build exited 0.
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  17:39:10
+   Duration  2.85s (transform 136ms, setup 0ms, collect 235ms, tests 2.48s, environment 0ms, prepare 30ms)
+
+
+
+ Test Files  31 passed (31)
+      Tests  296 passed (296)
+   Start at  17:40:33
+   Duration  31.35s (transform 812ms, setup 0ms, collect 6.14s, tests 125.07s, environment 3ms, prepare 1.43s)
+

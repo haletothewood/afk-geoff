@@ -1,0 +1,44 @@
+{
+  "command": "inspect",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_f84cc97e3c7943579b98b0b120370625",
+  "run": {
+    "id": "run_f84cc97e3c7943579b98b0b120370625",
+    "workItemId": "wi_80572b153bc64c51a0012257ff84aed3",
+    "mode": "work",
+    "status": "running",
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+    "createdAt": "2026-10-26T17:30:46.478Z",
+    "updatedAt": "2026-10-26T17:30:46.478Z",
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625"
+  },
+  "diagnostics": {
+    "detachProcessPid": 5707,
+    "detachProcessAlive": true,
+    "worktreeExists": true,
+    "runDirExists": true,
+    "resultExists": true,
+    "finalResultExists": false,
+    "lastProgressAgeSeconds": 1,
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stderr.log"
+    }
+  },
+  "paths": {
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+    "resultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/result.json",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stderr.log"
+    }
+  },
+  "derived": {
+    "complete": false,
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+    "verificationStatus": "skipped"
+  }
+}

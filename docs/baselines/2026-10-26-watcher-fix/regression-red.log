@@ -1,0 +1,94 @@
+
+ RUN  v3.2.4 /Users/david/Documents/ChatGPT/afk-geoff
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T12:00:00.123456+00:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Initialized .afk in /var/folders/hk/dg482nx554n3q2bhyhnc6n3m0000gn/T/afk-vwJO2B/repo
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T12:00:00.123456+00:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Created requirement req_00d50e63a9d4478ba42b8b3af457b4e4
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T12:00:00.123456+00:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Sync complete
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T17:30:00.123456+05:30, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Initialized .afk in /var/folders/hk/dg482nx554n3q2bhyhnc6n3m0000gn/T/afk-go7jR2/repo
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T17:30:00.123456+05:30, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Created requirement req_7ab127ef91cb489e81fc5bac6043ac9d
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T17:30:00.123456+05:30, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Sync complete
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T08:00:00.123456-04:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Initialized .afk in /var/folders/hk/dg482nx554n3q2bhyhnc6n3m0000gn/T/afk-fvusdu/repo
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T08:00:00.123456-04:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Created requirement req_8f23301673134800b3856eccdc574b02
+
+stdout | packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T08:00:00.123456-04:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+Sync complete
+
+ ❯ packages/cli/src/__tests__/watch.test.ts (9 tests | 3 failed | 6 skipped) 940ms
+   ↓ afk CLI — watch command > Given an unknown run id, when watch is used, then it fails fast with a clear error
+   ↓ afk CLI — watch command > Given an already-completed run, when watch is used, then it prints status and exits zero
+   ↓ afk CLI — watch command > Given an already-failed run, when watch is used, then it prints status and exits zero
+   ↓ afk CLI — watch command > Given an active run, when watch is used, then it streams stdout and progress then exits when the run completes
+   × afk CLI — watch command > Given progress timestamp 2001-01-01T12:00:00.123456+00:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events 372ms
+     → expected [ { kind: 'run_event', …(10) } ] to deeply equal ArrayContaining{…}
+   × afk CLI — watch command > Given progress timestamp 2001-01-01T17:30:00.123456+05:30, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events 291ms
+     → expected [ { kind: 'run_event', …(10) } ] to deeply equal ArrayContaining{…}
+   × afk CLI — watch command > Given progress timestamp 2001-01-01T08:00:00.123456-04:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events 277ms
+     → expected [ { kind: 'run_event', …(10) } ] to deeply equal ArrayContaining{…}
+   ↓ afk CLI — watch command > Given an active run with a stale heartbeat, when watch is used, then it prints a stale warning
+   ↓ afk CLI — watch command > Given stale progress is refreshed during a poll, when watch is used, then it suppresses the stale warning
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T12:00:00.123456+00:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+ FAIL  packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T17:30:00.123456+05:30, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+ FAIL  packages/cli/src/__tests__/watch.test.ts > afk CLI — watch command > Given progress timestamp 2001-01-01T08:00:00.123456-04:00, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events
+AssertionError: expected [ { kind: 'run_event', …(10) } ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   ObjectContaining {
+-     "event": "progress_observed",
+-     "progressUpdatedAt": "2001-01-01T12:00:00.123Z",
+-   },
+-   ObjectContaining {
+-     "event": "heartbeat_stale",
+-     "progressUpdatedAt": "2001-01-01T12:00:00.123Z",
++ [
++   {
++     "attempt": 1,
++     "event": "watch_started",
++     "kind": "run_event",
++     "reused": false,
++     "runDir": "/var/folders/hk/dg482nx554n3q2bhyhnc6n3m0000gn/T/afk-vwJO2B/repo/.afk/runs/run_watch_offset",
++     "runId": "run_watch_offset",
++     "schemaVersion": 1,
++     "stage": "watch",
++     "status": "running",
++     "timestamp": "2026-10-26T17:39:00.017Z",
++     "workItemId": "wi_c526a9aae0174fea99de1f695c529bca",
+    },
+  ]
+
+ ❯ packages/cli/src/__tests__/watch.test.ts:203:20
+    201|       expect(lifecycleEventSchema.safeParse(event).success).toBe(true);
+    202|     }
+    203|     expect(events).toEqual(expect.arrayContaining([
+       |                    ^
+    204|       expect.objectContaining({ event: "progress_observed", progressUp…
+    205|       expect.objectContaining({ event: "heartbeat_stale", progressUpda…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 6 skipped (9)
+   Start at  17:38:59
+   Duration  1.38s (transform 150ms, setup 0ms, collect 274ms, tests 940ms, environment 0ms, prepare 38ms)
+

@@ -1,0 +1,106 @@
+{
+  "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "status": "done",
+  "summary": "done: Smoke runner completed without making changes; 1 worker phase; 1 review pass; 0 commits; 1 verification command",
+  "workerResults": [
+    {
+      "iteration": 1,
+      "phase": "work",
+      "status": "done",
+      "summary": "Smoke runner completed without making changes",
+      "resultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/work-result-1.json"
+    }
+  ],
+  "reviewResults": [
+    {
+      "iteration": 1,
+      "verdict": "PASS",
+      "resultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/review-result-1.json"
+    }
+  ],
+  "verificationSummaries": [
+    {
+      "iteration": 1,
+      "results": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "iteration": 1,
+      "phase": "work",
+      "created": false
+    }
+  ],
+  "generatedArtifacts": [],
+  "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+  "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "baseBranch": "main",
+  "hasDiff": false,
+  "publishable": false,
+  "whyNotPublishable": [
+    "No changes relative to the base branch"
+  ],
+  "worktreeStatus": {
+    "clean": true,
+    "shortStatus": ""
+  },
+  "publishabilityBlockers": [
+    {
+      "category": "product",
+      "message": "No changes relative to the base branch"
+    }
+  ],
+  "evidencePacket": {
+    "changedFiles": [],
+    "commits": [],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": false,
+      "blockers": [
+        {
+          "category": "product",
+          "message": "No changes relative to the base branch"
+        }
+      ]
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [],
+      "importantDesignDecisions": [
+        "Smoke runner completed without making changes"
+      ],
+      "inspectFirst": []
+    },
+    "recommendedHumanAction": "narrow_scope"
+  },
+  "latestWorkerSummary": "Smoke runner completed without making changes"
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "profile": "smoke",
+    "step": "git-init",
+    "exit": 0,
+    "seconds": 0.03
+  },
+  {
+    "profile": "smoke",
+    "step": "afk-init",
+    "exit": 0,
+    "seconds": 0.07
+  },
+  {
+    "profile": "smoke",
+    "step": "doctor",
+    "exit": 0,
+    "seconds": 0.18
+  },
+  {
+    "profile": "codex",
+    "step": "git-init",
+    "exit": 0,
+    "seconds": 0.02
+  },
+  {
+    "profile": "codex",
+    "step": "afk-init",
+    "exit": 0,
+    "seconds": 0.07
+  },
+  {
+    "profile": "codex",
+    "step": "doctor",
+    "exit": 0,
+    "seconds": 0.11
+  },
+  {
+    "profile": "claude",
+    "step": "git-init",
+    "exit": 0,
+    "seconds": 0.02
+  },
+  {
+    "profile": "claude",
+    "step": "afk-init",
+    "exit": 0,
+    "seconds": 0.07
+  },
+  {
+    "profile": "claude",
+    "step": "doctor",
+    "exit": 0,
+    "seconds": 0.11
+  }
+]

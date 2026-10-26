@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteStateStore } from "@afk-geoff/adapter-sqlite";
+import { lifecycleEventSchema } from "@afk-geoff/shared";
 import { captureConsole, createFixture, makeTempDir, rewriteConfig } from "./test-helpers.js";
 
 describe("afk CLI — watch command", () => {
@@ -155,6 +156,55 @@ describe("afk CLI — watch command", () => {
     expect(output).toContain("Running checks");
     expect(output).toContain("run_watch_active completed");
     expect(output).toContain("Work done");
+  });
+
+  it.each([
+    "2001-01-01T12:00:00.123456+00:00",
+    "2001-01-01T17:30:00.123456+05:30",
+    "2001-01-01T08:00:00.123456-04:00"
+  ])("Given progress timestamp %s, when JSON watch observes progress and a stale heartbeat, then it reaches completion with UTC events", async (updatedAt) => {
+    const runId = "run_watch_offset";
+    let pollCount = 0;
+    const fixture = await createFixture(tempDir, {
+      watchPollIntervalMs: 0,
+      onAfterPoll: async () => {
+        if (++pollCount === 3) {
+          await fixture.store.updateRun(runId, { status: "completed", summary: "Work done" });
+        }
+      }
+    });
+    const requirement = await fixture.capture("Normalize whitespace inside labels");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+    const runDir = path.join(fixture.repoDir, ".afk", "runs", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    await fixture.store.createRun({
+      id: runId,
+      workItemId: backend!.id,
+      mode: "work",
+      status: "running",
+      runDir,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    fs.writeFileSync(path.join(runDir, "progress.json"), JSON.stringify({
+      phase: "work", message: "Working", iteration: 1, updatedAt
+    }));
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["watch", runId, "--json"]);
+    });
+    const lines = output.trim().split("\n").map((line) => JSON.parse(line));
+    const events = lines.filter((line) => line.kind === "run_event");
+    for (const event of events) {
+      expect(lifecycleEventSchema.safeParse(event).success).toBe(true);
+    }
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "progress_observed", progressUpdatedAt: "2001-01-01T12:00:00.123Z" }),
+      expect.objectContaining({ event: "heartbeat_stale", progressUpdatedAt: "2001-01-01T12:00:00.123Z" })
+    ]));
+    expect(lines.at(-1)).toMatchObject({ kind: "watch_result", ok: true, runId, status: "completed" });
   });
 
   it("Given an active run with a stale heartbeat, when watch is used, then it prints a stale warning", async () => {

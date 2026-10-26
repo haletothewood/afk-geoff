@@ -1,0 +1,18 @@
+{
+  "command": "doctor",
+  "backend": "local-process",
+  "ok": true,
+  "checks": [
+    {
+      "label": "git",
+      "ok": true,
+      "detail": "git"
+    },
+    {
+      "label": "runner",
+      "ok": true,
+      "detail": "codex"
+    }
+  ],
+  "failures": []
+}
