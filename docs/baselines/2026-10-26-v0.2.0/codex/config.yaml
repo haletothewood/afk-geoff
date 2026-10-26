@@ -1,0 +1,23 @@
+version: 1
+baseBranch: main
+github:
+  enabled: false
+runner:
+  kind: codex
+  requiredEnv: []
+  envAllowlist:
+    - GH_TOKEN
+    - OPENAI_API_KEY
+execution:
+  backend: local-process
+docker:
+  image: afk-worker:latest
+verification:
+  - node --test
+timeouts:
+  runTimeoutMs: 1800000
+  heartbeatStaleMs: 300000
+paths:
+  state: .afk/state.sqlite
+  runs: .afk/runs
+  worktrees: .afk/worktrees

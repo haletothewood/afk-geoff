@@ -1,0 +1,216 @@
+{
+  "command": "inspect",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_f84cc97e3c7943579b98b0b120370625",
+  "run": {
+    "id": "run_f84cc97e3c7943579b98b0b120370625",
+    "workItemId": "wi_80572b153bc64c51a0012257ff84aed3",
+    "mode": "work",
+    "status": "completed",
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+    "createdAt": "2026-10-26T17:30:46.478Z",
+    "updatedAt": "2026-10-26T17:31:43.405Z",
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+    "summary": "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+  },
+  "diagnostics": {
+    "detachProcessPid": 5707,
+    "detachProcessAlive": false,
+    "worktreeExists": true,
+    "runDirExists": true,
+    "resultExists": true,
+    "finalResultExists": true,
+    "lastProgressAgeSeconds": 97,
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stderr.log"
+    }
+  },
+  "paths": {
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+    "resultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/result.json",
+    "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/final-result.json",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/detach-stderr.log"
+    }
+  },
+  "finalResult": {
+    "runId": "run_f84cc97e3c7943579b98b0b120370625",
+    "status": "done",
+    "summary": "done: Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree.; 1 worker phase; 1 review pass; 1 commit; 1 verification command",
+    "workerResults": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "status": "done",
+        "summary": "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree.",
+        "resultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/work-result-1.json"
+      }
+    ],
+    "reviewResults": [
+      {
+        "iteration": 1,
+        "verdict": "PASS",
+        "resultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/review-result-1.json"
+      }
+    ],
+    "verificationSummaries": [
+      {
+        "iteration": 1,
+        "results": [
+          {
+            "command": "node --test",
+            "passed": true,
+            "exitCode": 0,
+            "origins": [
+              "project",
+              "brief"
+            ]
+          }
+        ]
+      }
+    ],
+    "commits": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "created": true,
+        "sha": "baa5fea642161c2cf61272e128da0b6efab28046",
+        "source": "worker"
+      }
+    ],
+    "generatedArtifacts": [],
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+    "baseBranch": "main",
+    "hasDiff": true,
+    "publishable": true,
+    "worktreeStatus": {
+      "clean": true,
+      "shortStatus": ""
+    },
+    "whyNotPublishable": [],
+    "publishabilityBlockers": [],
+    "evidencePacket": {
+      "changedFiles": [
+        "label.js",
+        "label.test.js"
+      ],
+      "commits": [
+        {
+          "iteration": 1,
+          "phase": "work",
+          "sha": "baa5fea642161c2cf61272e128da0b6efab28046",
+          "source": "worker"
+        }
+      ],
+      "verification": {
+        "status": "passed",
+        "commands": [
+          {
+            "command": "node --test",
+            "passed": true,
+            "exitCode": 0,
+            "origins": [
+              "project",
+              "brief"
+            ]
+          }
+        ]
+      },
+      "review": {
+        "verdict": "PASS",
+        "passCount": 1,
+        "issueCount": 0,
+        "addressedIssueCount": 0,
+        "remainingIssues": []
+      },
+      "publishability": {
+        "publishable": true,
+        "blockers": []
+      },
+      "understandingBrief": {
+        "keyFilesChanged": [
+          "label.js",
+          "label.test.js"
+        ],
+        "importantDesignDecisions": [
+          "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+        ],
+        "inspectFirst": [
+          "label.js",
+          "label.test.js"
+        ]
+      },
+      "recommendedHumanAction": "publish"
+    },
+    "latestWorkerSummary": "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+  },
+  "evidencePacket": {
+    "changedFiles": [
+      "label.js",
+      "label.test.js"
+    ],
+    "commits": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "sha": "baa5fea642161c2cf61272e128da0b6efab28046",
+        "source": "worker"
+      }
+    ],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": true,
+      "blockers": []
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [
+        "label.js",
+        "label.test.js"
+      ],
+      "importantDesignDecisions": [
+        "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+      ],
+      "inspectFirst": [
+        "label.js",
+        "label.test.js"
+      ]
+    },
+    "recommendedHumanAction": "publish"
+  },
+  "derived": {
+    "complete": true,
+    "publishable": true,
+    "whyNotPublishable": [],
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+    "reviewVerdict": "PASS",
+    "verificationStatus": "passed",
+    "createdCommitCount": 1,
+    "worktreeClean": true
+  }
+}

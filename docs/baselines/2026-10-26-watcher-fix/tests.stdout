@@ -1,0 +1,12 @@
+✔ trims and lowercases labels (0.290708ms)
+✔ collapses internal JavaScript whitespace to ASCII spaces (0.069584ms)
+✔ returns an empty string for empty or whitespace-only labels (0.040375ms)
+✔ rejects non-string inputs with TypeError (0.1525ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 35.803042

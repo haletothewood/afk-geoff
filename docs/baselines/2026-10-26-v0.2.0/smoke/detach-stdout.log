@@ -1,0 +1,16 @@
+[work] runner: claude
+[review] runner: claude
+Mode resolution: Pragmatic Shipper (inferred); overlays: none; risk: medium
+[work] iteration 1: worker running (logs: work-stdout-1.log, work-stderr-1.log)
+[work] iteration 1: done - Smoke runner completed without making changes
+[commit] iteration 1: no changes
+[verify] iteration 1: 1/1 passed
+[review] iteration 1: reviewer running (logs: review-stdout-1.log, review-stderr-1.log)
+[review] iteration 1: PASS
+Run completed: run_9b4d646d10a6482b9a1bd4a1fd33cb05
+Final verdict: done
+Branch: afk/normalize-whitespace-inside-labels-1793035824701
+Worktree: /private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05
+Final result: /private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/final-result.json
+Last worker result: /private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/result.json
+Logs: /private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05

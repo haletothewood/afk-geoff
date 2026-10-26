@@ -1,0 +1,20 @@
+{
+  "runId": "run_f84cc97e3c7943579b98b0b120370625",
+  "workItemId": "wi_80572b153bc64c51a0012257ff84aed3",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+  "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+  "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+  "startedAt": "2026-10-26T17:30:46.637Z",
+  "phase": "review",
+  "message": "Review agent running (iteration 1)",
+  "iteration": 1,
+  "currentCommand": "codex exec --dangerously-bypass-approvals-and-sandbox -",
+  "currentLogPaths": {
+    "stdout": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/review-stdout-1.log",
+    "stderr": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/review-stderr-1.log"
+  },
+  "lastEvent": "review_started",
+  "updatedAt": "2026-10-26T17:31:29.008Z",
+  "elapsedSeconds": 42,
+  "dirtyStatus": ""
+}

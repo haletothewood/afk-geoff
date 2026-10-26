@@ -1,0 +1,73 @@
+{
+  "command": "handoff",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_f84cc97e3c7943579b98b0b120370625",
+  "workItemId": "wi_80572b153bc64c51a0012257ff84aed3",
+  "status": "completed",
+  "recommendedAction": "publish",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793035846477",
+  "publishable": true,
+  "whyNotPublishable": [],
+  "reviewVerdict": "PASS",
+  "verificationStatus": "passed",
+  "createdCommitCount": 1,
+  "worktreeClean": true,
+  "runDir": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625",
+  "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/runs/run_f84cc97e3c7943579b98b0b120370625/final-result.json",
+  "worktreePath": "/private/tmp/afk-baseline-2026-10-26/codex/.afk/worktrees/run_f84cc97e3c7943579b98b0b120370625",
+  "evidencePacket": {
+    "changedFiles": [
+      "label.js",
+      "label.test.js"
+    ],
+    "commits": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "sha": "baa5fea642161c2cf61272e128da0b6efab28046",
+        "source": "worker"
+      }
+    ],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": true,
+      "blockers": []
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [
+        "label.js",
+        "label.test.js"
+      ],
+      "importantDesignDecisions": [
+        "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+      ],
+      "inspectFirst": [
+        "label.js",
+        "label.test.js"
+      ]
+    },
+    "recommendedHumanAction": "publish"
+  },
+  "summary": "Normalized label whitespace and added behavior tests; committed baa5fea with a clean worktree."
+}

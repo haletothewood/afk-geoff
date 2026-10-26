@@ -96,7 +96,7 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
           phase: progress.phase,
           iteration: progress.iteration,
           message: progress.message,
-          progressUpdatedAt: progress.updatedAt
+          progressUpdatedAt: new Date(progress.updatedAt).toISOString()
         });
       } else {
         console.log(`[progress] phase=${progress.phase} iteration=${progress.iteration} ${progress.message}`);
@@ -158,7 +158,7 @@ export async function watchRun(ctx: CliContext, runId: string, dependencies: Cli
             phase: progress.phase,
             iteration: progress.iteration,
             message: `last progress update ${staleSeconds}s ago`,
-            progressUpdatedAt: progress.updatedAt,
+            progressUpdatedAt: new Date(progress.updatedAt).toISOString(),
             heartbeatAgeMs,
             staleThresholdMs: heartbeatStaleMs
           });

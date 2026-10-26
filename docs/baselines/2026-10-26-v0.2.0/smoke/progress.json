@@ -1,0 +1,20 @@
+{
+  "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "workItemId": "wi_63a98a724b6c4a4eb38027976c3dfb04",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+  "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "runDir": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "startedAt": "2026-10-26T17:30:24.858Z",
+  "phase": "review",
+  "message": "Review agent running (iteration 1)",
+  "iteration": 1,
+  "currentCommand": "node .afk/smoke-runner.mjs /private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/review-prompt-1.md",
+  "currentLogPaths": {
+    "stdout": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/review-stdout-1.log",
+    "stderr": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/review-stderr-1.log"
+  },
+  "lastEvent": "review_started",
+  "updatedAt": "2026-10-26T17:30:25.250Z",
+  "elapsedSeconds": 0,
+  "dirtyStatus": ""
+}

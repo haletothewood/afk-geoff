@@ -1,0 +1,4 @@
+[work] runner: claude
+[review] runner: claude
+Mode resolution: Pragmatic Shipper (inferred); overlays: none; risk: medium
+[work] iteration 1: worker running (logs: work-stdout-1.log, work-stderr-1.log)

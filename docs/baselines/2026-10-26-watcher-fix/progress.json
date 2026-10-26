@@ -1,0 +1,20 @@
+{
+  "runId": "run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "workItemId": "wi_0582518f70e347c6bd58555c4529e38a",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793036417944",
+  "worktreePath": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/worktrees/run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "runDir": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/runs/run_c93bc8c97d064a2f83752b7df1f21f3f",
+  "startedAt": "2026-10-26T17:40:18.100Z",
+  "phase": "review",
+  "message": "Review agent running (iteration 1)",
+  "iteration": 1,
+  "currentCommand": "codex exec --dangerously-bypass-approvals-and-sandbox -",
+  "currentLogPaths": {
+    "stdout": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/runs/run_c93bc8c97d064a2f83752b7df1f21f3f/review-stdout-1.log",
+    "stderr": "/private/tmp/afk-watcher-rerun-2026-10-26/repo/.afk/runs/run_c93bc8c97d064a2f83752b7df1f21f3f/review-stderr-1.log"
+  },
+  "lastEvent": "review_started",
+  "updatedAt": "2026-10-26T17:40:54.752Z",
+  "elapsedSeconds": 37,
+  "dirtyStatus": ""
+}

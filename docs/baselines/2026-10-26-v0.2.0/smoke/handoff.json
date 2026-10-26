@@ -1,0 +1,64 @@
+{
+  "command": "handoff",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "workItemId": "wi_63a98a724b6c4a4eb38027976c3dfb04",
+  "status": "completed",
+  "recommendedAction": "report_failure",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+  "publishable": false,
+  "whyNotPublishable": [
+    "No changes relative to the base branch"
+  ],
+  "reviewVerdict": "PASS",
+  "verificationStatus": "passed",
+  "createdCommitCount": 0,
+  "worktreeClean": true,
+  "runDir": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/final-result.json",
+  "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "evidencePacket": {
+    "changedFiles": [],
+    "commits": [],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": false,
+      "blockers": [
+        {
+          "category": "product",
+          "message": "No changes relative to the base branch"
+        }
+      ]
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [],
+      "importantDesignDecisions": [
+        "Smoke runner completed without making changes"
+      ],
+      "inspectFirst": []
+    },
+    "recommendedHumanAction": "narrow_scope"
+  },
+  "summary": "Smoke runner completed without making changes"
+}

@@ -1,0 +1,201 @@
+{
+  "command": "inspect",
+  "ok": true,
+  "backend": "local-process",
+  "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+  "run": {
+    "id": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "workItemId": "wi_63a98a724b6c4a4eb38027976c3dfb04",
+    "mode": "work",
+    "status": "completed",
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "createdAt": "2026-10-26T17:30:24.701Z",
+    "updatedAt": "2026-10-26T17:30:25.372Z",
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "summary": "Smoke runner completed without making changes"
+  },
+  "diagnostics": {
+    "detachProcessPid": 5499,
+    "detachProcessAlive": false,
+    "worktreeExists": true,
+    "runDirExists": true,
+    "resultExists": true,
+    "finalResultExists": true,
+    "lastProgressAgeSeconds": 160,
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/detach-stderr.log"
+    }
+  },
+  "paths": {
+    "runDir": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "resultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/result.json",
+    "finalResultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/final-result.json",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "detachLogPaths": {
+      "stdout": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/detach-stdout.log",
+      "stderr": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/detach-stderr.log"
+    }
+  },
+  "finalResult": {
+    "runId": "run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "status": "done",
+    "summary": "done: Smoke runner completed without making changes; 1 worker phase; 1 review pass; 0 commits; 1 verification command",
+    "workerResults": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "status": "done",
+        "summary": "Smoke runner completed without making changes",
+        "resultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/work-result-1.json"
+      }
+    ],
+    "reviewResults": [
+      {
+        "iteration": 1,
+        "verdict": "PASS",
+        "resultPath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/runs/run_9b4d646d10a6482b9a1bd4a1fd33cb05/review-result-1.json"
+      }
+    ],
+    "verificationSummaries": [
+      {
+        "iteration": 1,
+        "results": [
+          {
+            "command": "node --test",
+            "passed": true,
+            "exitCode": 0,
+            "origins": [
+              "project",
+              "brief"
+            ]
+          }
+        ]
+      }
+    ],
+    "commits": [
+      {
+        "iteration": 1,
+        "phase": "work",
+        "created": false
+      }
+    ],
+    "generatedArtifacts": [],
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+    "worktreePath": "/private/tmp/afk-baseline-2026-10-26/smoke/.afk/worktrees/run_9b4d646d10a6482b9a1bd4a1fd33cb05",
+    "baseBranch": "main",
+    "hasDiff": false,
+    "publishable": false,
+    "whyNotPublishable": [
+      "No changes relative to the base branch"
+    ],
+    "worktreeStatus": {
+      "clean": true,
+      "shortStatus": ""
+    },
+    "publishabilityBlockers": [
+      {
+        "category": "product",
+        "message": "No changes relative to the base branch"
+      }
+    ],
+    "evidencePacket": {
+      "changedFiles": [],
+      "commits": [],
+      "verification": {
+        "status": "passed",
+        "commands": [
+          {
+            "command": "node --test",
+            "passed": true,
+            "exitCode": 0,
+            "origins": [
+              "project",
+              "brief"
+            ]
+          }
+        ]
+      },
+      "review": {
+        "verdict": "PASS",
+        "passCount": 1,
+        "issueCount": 0,
+        "addressedIssueCount": 0,
+        "remainingIssues": []
+      },
+      "publishability": {
+        "publishable": false,
+        "blockers": [
+          {
+            "category": "product",
+            "message": "No changes relative to the base branch"
+          }
+        ]
+      },
+      "understandingBrief": {
+        "keyFilesChanged": [],
+        "importantDesignDecisions": [
+          "Smoke runner completed without making changes"
+        ],
+        "inspectFirst": []
+      },
+      "recommendedHumanAction": "narrow_scope"
+    },
+    "latestWorkerSummary": "Smoke runner completed without making changes"
+  },
+  "evidencePacket": {
+    "changedFiles": [],
+    "commits": [],
+    "verification": {
+      "status": "passed",
+      "commands": [
+        {
+          "command": "node --test",
+          "passed": true,
+          "exitCode": 0,
+          "origins": [
+            "project",
+            "brief"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "verdict": "PASS",
+      "passCount": 1,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": false,
+      "blockers": [
+        {
+          "category": "product",
+          "message": "No changes relative to the base branch"
+        }
+      ]
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [],
+      "importantDesignDecisions": [
+        "Smoke runner completed without making changes"
+      ],
+      "inspectFirst": []
+    },
+    "recommendedHumanAction": "narrow_scope"
+  },
+  "derived": {
+    "complete": true,
+    "publishable": false,
+    "whyNotPublishable": [
+      "No changes relative to the base branch"
+    ],
+    "branchName": "afk/normalize-whitespace-inside-labels-1793035824701",
+    "reviewVerdict": "PASS",
+    "verificationStatus": "passed",
+    "createdCommitCount": 0,
+    "worktreeClean": true
+  }
+}
