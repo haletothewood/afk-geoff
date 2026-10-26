@@ -1,0 +1,28 @@
+{
+  "command": "doctor",
+  "backend": "local-process",
+  "ok": false,
+  "checks": [
+    {
+      "label": "git",
+      "ok": true,
+      "detail": "git"
+    },
+    {
+      "label": "runner",
+      "ok": true,
+      "detail": "claude"
+    },
+    {
+      "label": "runner auth",
+      "ok": false,
+      "error": "Claude authentication missing for --bare execution. Configure ANTHROPIC_API_KEY or supported provider credentials; subscription login alone is not used."
+    }
+  ],
+  "failures": [
+    "Claude authentication missing for --bare execution. Configure ANTHROPIC_API_KEY or supported provider credentials; subscription login alone is not used."
+  ],
+  "error": {
+    "message": "Doctor checks failed (1 issue)"
+  }
+}

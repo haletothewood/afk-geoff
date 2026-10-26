@@ -1,11 +1,12 @@
 import path from "node:path";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureConsole, createFixture, makeTempDir, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
+import { captureConsole, createFixture, makeTempDir, rewriteConfig, writeFakeDocker, writeReviewVerdicts } from "./test-helpers.js";
 
-describe("afk CLI — autonomous review gate loop", () => {
+// Each case runs real git, shell and Node subprocesses; allow for full-suite load.
+describe("afk CLI — autonomous review gate loop", { timeout: 30_000 }, () => {
   const originalCwd = process.cwd();
   const originalPath = process.env.PATH ?? "";
   const originalGhToken = process.env.GH_TOKEN;
@@ -29,6 +30,53 @@ describe("afk CLI — autonomous review gate loop", () => {
 
     fs.rmSync(tempDir, { recursive: true, force: true });
     vi.restoreAllMocks();
+  });
+
+  it("fake-runner fixtures never consult host GitHub credentials", async () => {
+    delete process.env.GH_TOKEN;
+    const fixture = await createFixture(tempDir);
+    const markerPath = path.join(tempDir, "gh-called");
+    fs.writeFileSync(path.join(tempDir, "bin", "gh"), `#!/bin/sh\ntouch '${markerPath}'\nexit 1\n`, { mode: 0o755 });
+
+    await fixture.capture("Exercise isolated credential resolution.");
+
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("fake Docker cancellation reaps the runner and removes rewritten prompts", async () => {
+    writeFakeDocker(tempDir);
+    const promptPath = path.join(tempDir, "prompt.md");
+    const startedPath = path.join(tempDir, "started.json");
+    fs.writeFileSync(promptPath, "Test prompt");
+    const script = `const fs = require('fs');
+      fs.writeFileSync(process.argv[1], JSON.stringify({ pid: process.pid, prompt: process.argv[2] }));
+      setInterval(() => {}, 1000);`;
+    const child = spawn(path.join(tempDir, "docker"), [
+      "run", "fixture", process.execPath, "-e", script, startedPath, promptPath
+    ], { stdio: "ignore" });
+    const exited = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => resolve());
+    });
+    let runnerPid: number | undefined;
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(startedPath)).toBe(true), { timeout: 5000 });
+      const started = JSON.parse(fs.readFileSync(startedPath, "utf8")) as { pid: number; prompt: string };
+      runnerPid = started.pid;
+      expect(started.prompt).not.toBe(promptPath);
+      expect(fs.existsSync(started.prompt)).toBe(true);
+      child.kill("SIGTERM");
+      await exited;
+      expect(() => process.kill(started.pid, 0)).toThrow();
+      expect(fs.existsSync(started.prompt)).toBe(false);
+    } finally {
+      // Also clean up if an assertion fails before cancellation.
+      if (runnerPid !== undefined) {
+        try { process.kill(-runnerPid, "SIGKILL"); } catch { /* already exited */ }
+      }
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await exited;
+    }
   });
 
   // -----------------------------------------------------------------------

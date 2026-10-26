@@ -461,7 +461,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }
 
       if (!fs.existsSync(hostResultPath)) {
-        const summary = `No result.json found (exit code ${exitCode}, iteration ${iteration})`;
+        const loginError = exitCode !== 0 && this.runner.kind === "claude"
+          ? readClaudeLoginError(stdoutPath, stderrPath) : undefined;
+        const summary = `No result.json found (exit code ${exitCode}, iteration ${iteration})${loginError ? `: ${loginError}` : ""}`;
         const message = `Worker did not produce result.json for ${input.workItem.id} (iteration ${iteration})`;
         await finishOrchestratorFailure(
           summary,
@@ -830,7 +832,9 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       }
 
       if (!fs.existsSync(reviewResultPath)) {
-        const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})`;
+        const loginError = reviewExitCode !== 0 && this.runner.kind === "claude"
+          ? readClaudeLoginError(reviewStdoutPath, reviewStderrPath) : undefined;
+        const summary = `Review agent did not produce a verdict (exit code ${reviewExitCode}, iteration ${iteration})${loginError ? `: ${loginError}` : ""}`;
         emitRunEvent({
           event: "review_contract_failed",
           runId,
@@ -1203,6 +1207,31 @@ export class LocalDockerExecutionBackend implements ExecutionBackend {
       ...(pullRequest ? { pullRequest } : {})
     };
   }
+}
+
+/** Preserve recognized login diagnostics without copying arbitrary runner output. */
+function readClaudeLoginError(...logPaths: string[]): string | undefined {
+  for (const logPath of logPaths) {
+    let descriptor: number | undefined;
+    try {
+      descriptor = fs.openSync(logPath, "r");
+      const size = fs.fstatSync(descriptor).size;
+      const tail = Buffer.alloc(Math.min(size, 8192));
+      fs.readSync(descriptor, tail, 0, tail.length, size - tail.length);
+      const text = tail.toString("utf8").replace(/\u001b\[[0-9;]*m/g, "");
+      const match = text.match(/(?:Not logged in|Invalid API key)(?:[ \t]*[·:.\-][ \t]*)?(?:Please run \/login)?/i);
+      if (match) {
+        return match[0].trim();
+      }
+    } catch {
+      // Log availability must not prevent persistence of the original failure.
+    } finally {
+      if (descriptor !== undefined) {
+        fs.closeSync(descriptor);
+      }
+    }
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

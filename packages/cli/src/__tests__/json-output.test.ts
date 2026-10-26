@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole, createFixture, createRef, makeTempDir, MockGitHubMirror, rewriteConfig, writeReviewVerdicts } from "./test-helpers.js";
 
@@ -23,6 +24,64 @@ describe("afk CLI — JSON output", () => {
       process.env.GH_TOKEN = originalGhToken;
     }
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it.each(["stdout", "stderr"])("Given Claude prints a login error on %s, when it fails, then handoff retains that error", async (stream) => {
+    const fixture = await createFixture(tempDir);
+    const requirement = await fixture.capture("Normalize whitespace inside labels");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.runner = { kind: "claude", requiredEnv: [], envAllowlist: [] };
+    config.execution = { backend: "local-process" };
+    fs.writeFileSync(configPath, YAML.stringify(config));
+    const claudePath = path.join(tempDir, "bin", "claude");
+    fs.writeFileSync(claudePath, `#!${process.execPath}
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.${stream}.write('Unrelated diagnostic private-test-value\\n\\u001b[31mNot logged in · Please run /login\\u001b[0m\\n');
+  process.exitCode = 1;
+});
+`);
+    fs.chmodSync(claudePath, 0o755);
+
+    await expect(fixture.cli(["run", backend!.id])).rejects.toThrow("did not produce result.json");
+    const [run] = await fixture.store.listRuns();
+    const output = await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    });
+    const handoff = JSON.parse(output);
+    expect(handoff).toMatchObject({
+      status: "failed", publishable: false,
+      terminalFailure: { category: "orchestrator", message: expect.stringContaining("Not logged in · Please run /login") }
+    });
+    const finalResult = JSON.parse(fs.readFileSync(handoff.finalResultPath, "utf8"));
+    expect(finalResult.terminalFailure).toEqual(handoff.terminalFailure);
+    expect(handoff.whyNotPublishable).toContain(handoff.terminalFailure.message);
+    expect(output).not.toContain("private-test-value");
+  });
+
+  it("Given the Claude reviewer cannot log in, when handoff runs, then it retains the review login error", async () => {
+    const fixture = await createFixture(tempDir);
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+    config.runner.reviewCommand = [process.execPath, "-e", "process.stderr.write('Not logged in · Please run /login\\n'); process.exit(1)"];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+    const requirement = await fixture.capture("Normalize whitespace inside labels");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const output = await captureConsole(async () => {
+      await fixture.cli(["handoff", run!.id, "--json"]);
+    });
+    expect(JSON.parse(output)).toMatchObject({
+      status: "failed", publishable: false,
+      terminalFailure: { message: expect.stringContaining("Not logged in · Please run /login") }
+    });
   });
 
   it("Given run file --pr --json, when the run completes, then stdout streams events and ends with the result payload", async () => {

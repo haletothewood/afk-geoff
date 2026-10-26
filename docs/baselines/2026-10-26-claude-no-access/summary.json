@@ -1,0 +1,19 @@
+{
+  "runId": "run_eed7b00f81e245d794d81dd83c5b47d3",
+  "workItemId": "wi_031bc2ec37e9417d9c0608dead65d1a5",
+  "branchName": "afk/normalize-whitespace-inside-labels-1793039259992",
+  "status": "failed",
+  "publishable": false,
+  "reviewVerdict": null,
+  "verificationStatus": "skipped",
+  "worktreeClean": true,
+  "finalResultPath": "/private/tmp/afk-claude-no-access-2026-10-26/repo/.afk/runs/run_eed7b00f81e245d794d81dd83c5b47d3/final-result.json",
+  "worktreePath": "/private/tmp/afk-claude-no-access-2026-10-26/repo/.afk/worktrees/run_eed7b00f81e245d794d81dd83c5b47d3",
+  "userConfirmedClaudeAccess": false,
+  "elapsedSeconds": 0.622,
+  "createdCommitCount": 0,
+  "postKickoffInterventions": 0,
+  "successfulImplementationBaseline": false,
+  "requiredPrerequisite": "Usable Claude access; none provisioned",
+  "buildCommit": "fba4ba436316c87876cc8d03ac02a6a0ef7727b1"
+}

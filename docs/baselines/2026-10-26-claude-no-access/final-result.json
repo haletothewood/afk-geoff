@@ -1,0 +1,77 @@
+{
+  "runId": "run_eed7b00f81e245d794d81dd83c5b47d3",
+  "status": "failed",
+  "summary": "failed: No result.json found (exit code 1, iteration 1); 0 worker phases; 0 review passes; 0 commits",
+  "workerResults": [],
+  "reviewResults": [],
+  "verificationSummaries": [],
+  "commits": [],
+  "generatedArtifacts": [],
+  "branchName": "afk/normalize-whitespace-inside-labels-1793039259992",
+  "worktreePath": "/private/tmp/afk-claude-no-access-2026-10-26/repo/.afk/worktrees/run_eed7b00f81e245d794d81dd83c5b47d3",
+  "baseBranch": "main",
+  "publishable": false,
+  "whyNotPublishable": [
+    "No result.json found (exit code 1, iteration 1)"
+  ],
+  "terminalFailure": {
+    "category": "orchestrator",
+    "message": "No result.json found (exit code 1, iteration 1)"
+  },
+  "worktreeStatus": {
+    "clean": true,
+    "shortStatus": ""
+  },
+  "publishabilityBlockers": [
+    {
+      "category": "product",
+      "message": "No result.json found (exit code 1, iteration 1)"
+    },
+    {
+      "category": "orchestrator",
+      "message": "No result.json found (exit code 1, iteration 1)"
+    }
+  ],
+  "evidencePacket": {
+    "changedFiles": [],
+    "commits": [],
+    "verification": {
+      "status": "skipped",
+      "commands": []
+    },
+    "review": {
+      "verdict": "UNKNOWN",
+      "passCount": 0,
+      "issueCount": 0,
+      "addressedIssueCount": 0,
+      "remainingIssues": []
+    },
+    "publishability": {
+      "publishable": false,
+      "blockers": [
+        {
+          "category": "product",
+          "message": "No result.json found (exit code 1, iteration 1)"
+        },
+        {
+          "category": "orchestrator",
+          "message": "No result.json found (exit code 1, iteration 1)"
+        }
+      ]
+    },
+    "understandingBrief": {
+      "keyFilesChanged": [],
+      "importantDesignDecisions": [
+        "No result.json found (exit code 1, iteration 1)",
+        "No verification commands were configured for this run."
+      ],
+      "inspectFirst": []
+    },
+    "recommendedHumanAction": "retry",
+    "terminalFailure": {
+      "category": "orchestrator",
+      "message": "No result.json found (exit code 1, iteration 1)"
+    }
+  },
+  "latestWorkerSummary": "No result.json found (exit code 1, iteration 1)"
+}

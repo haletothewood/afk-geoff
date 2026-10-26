@@ -69,7 +69,8 @@ export async function createFixture(tempDir: string, options: FixtureOptions = {
   const dependencies = {
     ...(options.githubMirror ? { githubFactory: () => options.githubMirror as IssueMirror & ChangeRequestPublisher } : {}),
     ...(options.githubIssueWorkSource ? { githubIssueWorkSourceFactory: () => options.githubIssueWorkSource as WorkSource<string> } : {}),
-    ...(options.githubTokenResolver ? { githubTokenResolver: options.githubTokenResolver } : {}),
+    // Keep fake-runner tests independent of host gh/keychain credentials.
+    githubTokenResolver: options.githubTokenResolver ?? (async () => undefined),
     ...(options.detachLauncher ? { detachLauncher: options.detachLauncher } : {}),
     ...(options.watchPollIntervalMs !== undefined ? { watchPollIntervalMs: options.watchPollIntervalMs } : {}),
     ...(options.onAfterPoll ? { onAfterPoll: options.onAfterPoll } : {}),
@@ -332,7 +333,7 @@ export function writeFakeDocker(fakeBinDir: string): void {
   fs.writeFileSync(
     dockerPath,
     `#!/usr/bin/env node
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -451,11 +452,33 @@ if (rewrittenPromptPaths.size > 0) {
   });
 }
 
-const result = spawnSync(command, commandArgs, {
+const cleanup = () => {
+  for (const promptPath of rewrittenPromptPaths.values()) {
+    fs.rmSync(promptPath, { force: true });
+  }
+};
+// Own the entire shell/runner group so cancellation cannot orphan descendants.
+const child = spawn(command, commandArgs, {
   cwd: worktree,
-  stdio: "inherit"
+  stdio: "inherit",
+  detached: true
 });
-process.exit(result.status ?? 1);
+const terminate = (signal) => {
+  if (child.pid) {
+    try { process.kill(-child.pid, signal); } catch {}
+  }
+};
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => terminate(signal));
+}
+child.on("error", () => {
+  cleanup();
+  process.exit(1);
+});
+child.on("close", (code) => {
+  cleanup();
+  process.exit(code ?? 1);
+});
 `
   );
   fs.chmodSync(dockerPath, 0o755);
