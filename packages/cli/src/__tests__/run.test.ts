@@ -607,6 +607,13 @@ describe("afk CLI — run command", () => {
 
     const promptPath = path.join(run!.runDir, "prompt.md");
     const promptModifiedAt = fs.statSync(promptPath).mtimeMs;
+    // A prior publication may have been persisted before recovery was requested.
+    await fixture.store.saveExternalRef({
+      id: "xref_previous", entityType: "work_item", entityId: workItem!.id,
+      provider: "github", remoteType: "pull_request", remoteNumber: 200,
+      remoteId: "200", url: "https://example.com/pull_request/200",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
     githubMirror.openPullRequestError = undefined;
 
     const retryOutput = await captureConsole(async () => {
@@ -625,6 +632,18 @@ describe("afk CLI — run command", () => {
         retriedStage: "publishing"
       })
     );
+
+    for (const command of ["inspect", "handoff"]) {
+      const output = await captureConsole(() => fixture.cli([command, run!.id, "--json"]));
+      expect(JSON.parse(output).pullRequest).toMatchObject({
+        remoteNumber: 201, url: "https://example.com/pull_request/201"
+      });
+    }
+    expect((await fixture.store.listExternalRefs("work_item", "pull_request"))
+      .filter((ref) => ref.entityId === workItem!.id)).toHaveLength(1);
+
+    const returned = retryPayloads.find((payload) => payload.kind === "run_result");
+    expect(returned).toMatchObject({ prUrl: "https://example.com/pull_request/201" });
 
     const [retriedRun] = await fixture.store.listRuns();
     const [retriedWorkItem] = await fixture.items(requirement!.id);
@@ -669,6 +688,9 @@ describe("afk CLI — run command", () => {
     );
     expect(finalResult.terminalFailure).toBeUndefined();
     expect(finalResult.evidencePacket.terminalFailure).toBeUndefined();
+    githubMirror.reviewComments = [{ id: "retry_review", body: "Please address this review." }];
+    const followUpOutput = await captureConsole(() => fixture.cli(["follow-up", workItem!.id, "--json"]));
+    expect(JSON.parse(followUpOutput)).toMatchObject({ prUrl: "https://example.com/pull_request/201" });
   });
 
   it("Given GH_TOKEN is unset but GitHub auth can be resolved, when run file is used with --pr, then publishing still works", async () => {

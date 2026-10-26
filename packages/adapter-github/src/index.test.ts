@@ -80,6 +80,7 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
       }
     },
     pulls: {
+      async list() { return { data: [] }; },
       async create(input) {
         pullCreates.push(input);
         return { data: { id: 44, number: 55, html_url: "https://example.com/pulls/55" } };
@@ -312,7 +313,7 @@ describe("GitHubMirror adapter scenarios", () => {
       repo: "demo"
     });
 
-    const result = await publisher.publish({
+    const publicationInput: Parameters<typeof publisher.publish>[0] = {
       workItem: {
         id: "wi_1",
         requirementId: "req_1",
@@ -338,7 +339,26 @@ describe("GitHubMirror adapter scenarios", () => {
         body: "Implemented the requested change.\n\nDone by Claude Code",
         manualQa: ["Open the page and confirm the new state renders"]
       }
+    };
+    const result = await publisher.publish(publicationInput);
+    const existing = {
+      id: 44, number: 55, html_url: "https://example.com/pulls/55", state: "open", merged_at: null,
+      head: { ref: publicationInput.branchName, repo: { full_name: "acme/demo" } },
+      base: { ref: "main", repo: { full_name: "acme/demo" } }
+    };
+    const list = vi.fn(async () => {
+      expect(codeHost.pushBranch).toHaveBeenCalledTimes(2);
+      return { data: [existing] };
     });
+    Object.assign(client.pulls, { list });
+    const reused = await publisher.publish(publicationInput);
+    expect(reused.url).toBe(result.url);
+    expect(reused.externalRef).toMatchObject({ remoteId: "44", remoteNumber: 55 });
+    expect(client.pullCreates).toHaveLength(1);
+    codeHost.pushBranch.mockRejectedValueOnce(new Error("Push failed"));
+    await expect(publisher.publish(publicationInput)).rejects.toThrow("Push failed");
+    expect(list).toHaveBeenCalledTimes(1);
+
 
     expect(codeHost.pushBranch).toHaveBeenCalledWith({
       cwd: "/tmp/worktree",
@@ -354,6 +374,96 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(client.pullCreates[0]?.body).not.toContain("Claude Code");
     expect(result.url).toBe("https://example.com/pulls/55");
   });
+
+  it("reuses an existing open PR without editing operator content", async () => {
+    const client = createMockClient();
+    const existing = {
+      id: 44, number: 55, html_url: "https://example.com/pulls/55",
+      state: "open", merged_at: null,
+      head: { ref: "afk/change", repo: { full_name: "acme/demo" } },
+      base: { ref: "main", repo: { full_name: "acme/demo" } }
+    };
+    const list = vi.fn().mockResolvedValue({ data: [existing] });
+    Object.assign(client.pulls, { list });
+    const update = vi.spyOn(client.pulls, "update");
+    const mirror = new GitHubMirror("fake-token", client);
+    const input = { owner: "acme", repo: "demo", changeRequest: {
+      workItemId: "wi_1", branchName: "afk/change", baseBranch: "main",
+      title: "Generated title", body: "Generated body"
+    } };
+    const first = await mirror.openPullRequest(input);
+    const second = await mirror.openPullRequest(input);
+    expect(first).toMatchObject({ remoteId: "44", remoteNumber: 55, url: existing.html_url });
+    expect(second).toMatchObject({ remoteId: "44", remoteNumber: 55, url: existing.html_url });
+    expect(client.pullCreates).toHaveLength(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("recovers a duplicate creation race by finding the matching open PR", async () => {
+    const client = createMockClient();
+    const existing = {
+      id: 44, number: 55, html_url: "https://example.com/pulls/55",
+      state: "open", merged_at: null,
+      head: { ref: "afk/change", repo: { full_name: "acme/demo" } },
+      base: { ref: "main", repo: { full_name: "acme/demo" } }
+    };
+    const list = vi.fn().mockResolvedValueOnce({ data: [] }).mockResolvedValue({ data: [existing] });
+    Object.assign(client.pulls, { list });
+    vi.spyOn(client.pulls, "create").mockRejectedValue({
+      status: 422, response: { data: { errors: [{ message: "A pull request already exists for acme:afk/change." }] } }
+    });
+    const mirror = new GitHubMirror("fake-token", client);
+    const result = await mirror.openPullRequest({ owner: "acme", repo: "demo", changeRequest: {
+      workItemId: "wi_1", branchName: "afk/change", baseBranch: "main", title: "Title", body: "Body"
+    } });
+    expect(result).toMatchObject({ remoteId: "44", remoteNumber: 55, url: existing.html_url });
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenCalledWith({
+      owner: "acme", repo: "demo", head: "acme:afk/change", base: "main", state: "open", per_page: 100, page: 1
+    });
+  });
+
+  it.each([
+    { status: 422, response: { data: { errors: [{ message: "No commits between branches" }] } } },
+    { status: 401, message: "Bad credentials" },
+    new Error("Network unavailable"),
+    { status: 422, response: { data: { errors: [{ message: "A pull request already exists." }] } } }
+  ])("propagates creation failure when no matching PR can recover it: %j", async (failure) => {
+    const client = createMockClient();
+    const list = vi.fn().mockResolvedValue({ data: [] });
+    Object.assign(client.pulls, { list });
+    vi.spyOn(client.pulls, "create").mockRejectedValue(failure);
+    await expect(new GitHubMirror("fake-token", client).openPullRequest({
+      owner: "acme", repo: "demo", changeRequest: {
+        workItemId: "wi_1", branchName: "afk/change", baseBranch: "main", title: "Title", body: "Body"
+      }
+    })).rejects.toBe(failure);
+    expect(list).toHaveBeenCalledTimes(
+      "status" in failure && failure.status === 422 &&
+      "response" in failure && failure.response.data.errors[0]?.message.startsWith("A pull request already exists") ? 2 : 1
+    );
+  });
+
+  it.each(["closed", "merged", "head", "base", "head-repository", "base-repository"])(
+    "does not reuse a PR with mismatched %s", async (mismatch) => {
+      const client = createMockClient();
+      const existing = {
+        id: 44, number: 55, state: mismatch === "closed" ? "closed" : "open",
+        merged_at: mismatch === "merged" ? "2026-01-01" : null,
+        head: { ref: mismatch === "head" ? "other" : "afk/change",
+          repo: { full_name: mismatch === "head-repository" ? "fork/demo" : "acme/demo" } },
+        base: { ref: mismatch === "base" ? "other" : "main",
+          repo: { full_name: mismatch === "base-repository" ? "acme/other" : "acme/demo" } }
+      };
+      Object.assign(client.pulls, { list: vi.fn().mockResolvedValue({ data: [existing] }) });
+      await new GitHubMirror("fake-token", client).openPullRequest({
+        owner: "acme", repo: "demo", changeRequest: {
+          workItemId: "wi_1", branchName: "afk/change", baseBranch: "main", title: "Title", body: "Body"
+        }
+      });
+      expect(client.pullCreates).toHaveLength(1);
+    }
+  );
 
   it("Given PR review comments exist, when they are listed, then current actionable comments are returned", async () => {
     const mirror = new GitHubMirror("token", createMockClient());
