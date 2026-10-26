@@ -111,3 +111,7 @@ PR publication, review follow-up, cancellation, interruption recovery, Docker, G
 ## Subsequent watcher fix
 
 The [patched-build Codex rerun](../2026-10-26-watcher-fix/README.md) completed with one uninterrupted watcher and zero post-kickoff interventions. It deliberately exercised `+00:00` worker timestamps. The original published-package results above are unchanged.
+
+## Claude access clarification
+
+The user subsequently confirmed that no Claude access is available. The [credential-free rerun](../2026-10-26-claude-no-access/README.md) validates expected failure handling; a successful Claude implementation baseline remains blocked by that prerequisite. The original login failure alone does not establish an AFK authentication defect.

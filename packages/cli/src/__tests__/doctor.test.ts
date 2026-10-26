@@ -58,6 +58,54 @@ describe("afk CLI — doctor command", () => {
     expect(output).toContain("FAIL env:SECOND_REQUIRED_ENV: Missing required env var SECOND_REQUIRED_ENV");
   });
 
+  it("Given Claude has no credentials, when doctor --json runs, then it reports missing authentication", async () => {
+    const fixture = await createFixture(tempDir);
+    configureClaudeAuthFixture(fixture.repoDir, tempDir, { loggedIn: false, authMethod: "none" }, 1);
+
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    const payload = JSON.parse(output);
+    expect(payload.ok).toBe(false);
+    expect(payload.checks).toContainEqual(expect.objectContaining({
+      label: "runner auth", ok: false, error: expect.stringContaining("Claude authentication missing")
+    }));
+    expect(payload.failures).toContainEqual(expect.stringContaining("--bare"));
+    expect(await fixture.store.listRuns()).toEqual([]);
+  });
+
+  it("Given Claude reports configured authentication, when doctor runs, then it reports configuration without exposing account details", async () => {
+    const fixture = await createFixture(tempDir);
+    configureClaudeAuthFixture(fixture.repoDir, tempDir, {
+      loggedIn: true, authMethod: "api_key", email: "private@example.invalid", apiKey: "private-test-value"
+    }, 0);
+
+    const output = await captureConsole(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    expect(JSON.parse(output)).toMatchObject({ ok: true, failures: [] });
+    expect(JSON.parse(output).checks).toContainEqual(expect.objectContaining({
+      label: "runner auth", ok: true, detail: expect.stringContaining("credential validity has not been tested")
+    }));
+    expect(output).not.toContain("private@example.invalid");
+    expect(output).not.toContain("private-test-value");
+  });
+
+  it.each([
+    { status: undefined, exitCode: 0 },
+    { status: {}, exitCode: 0 },
+    { status: { loggedIn: true }, exitCode: 1 }
+  ])("Given unusable Claude auth status $status with exit $exitCode, when doctor runs, then it fails closed", async ({ status, exitCode }) => {
+    const fixture = await createFixture(tempDir);
+    configureClaudeAuthFixture(fixture.repoDir, tempDir, status, exitCode);
+    const output = await captureConsoleForRejected(async () => {
+      await fixture.cli(["doctor", "--json"]);
+    });
+    expect(JSON.parse(output).checks).toContainEqual(expect.objectContaining({
+      label: "runner auth", ok: false, error: expect.stringContaining("Unable to determine Claude authentication")
+    }));
+  });
+
   it("Given local workflow prerequisites are present, when doctor --json runs, then it reports structured success", async () => {
     const fixture = await createFixture(tempDir);
 
@@ -233,6 +281,23 @@ describe("afk CLI — doctor command", () => {
     });
   });
 });
+
+function configureClaudeAuthFixture(repoDir: string, tempDir: string, status: unknown, exitCode: number): void {
+  const configPath = path.join(repoDir, ".afk", "config.yaml");
+  const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+  config.runner = { kind: "claude", requiredEnv: [], envAllowlist: [] };
+  config.execution = { backend: "local-process" };
+  fs.writeFileSync(configPath, YAML.stringify(config));
+  const claudePath = path.join(tempDir, "bin", "claude");
+  fs.writeFileSync(claudePath, `#!${process.execPath}
+if (process.argv.slice(2).join(' ') !== '--bare auth status --json' || process.env.HOME === ${JSON.stringify(process.env.HOME)}) {
+  process.exit(2);
+}
+console.log(${JSON.stringify(JSON.stringify(status))});
+process.exit(${exitCode});
+`);
+  fs.chmodSync(claudePath, 0o755);
+}
 
 async function captureConsoleForRejected(action: () => Promise<void>): Promise<string> {
   const lines: string[] = [];

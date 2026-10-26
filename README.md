@@ -159,7 +159,9 @@ pnpm afk doctor
 pnpm afk run file brief.md --json
 ```
 
-Local runner profiles set `execution.backend: local-process` and `github.enabled: false`, so `doctor` can pass in a plain local repo without Docker, an `origin` remote, or a GitHub token. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`, but they do not require API key environment variables by default. That lets AFK use whichever local account/session the CLI already knows about.
+Local runner profiles set `execution.backend: local-process` and `github.enabled: false`, so `doctor` can pass in a plain local repo without Docker, an `origin` remote, or a GitHub token. The Claude and Codex profiles require the `claude` or `codex` executable to exist on `PATH`. Codex can use its existing local account/session.
+
+The built-in local Claude profile uses `--bare` and an isolated home directory. Configure `ANTHROPIC_API_KEY` or supported provider credentials; a Claude subscription login alone is not used in bare mode. `doctor` checks Claude's offline authentication status in that execution context and fails when authentication is missing or cannot be determined. A passing check means authentication is configured, not that the credentials have been validated with a model request. Custom runner commands and Docker retain their existing executable and required-environment checks.
 
 AFK is not tied to one agent. Each repository can choose:
 

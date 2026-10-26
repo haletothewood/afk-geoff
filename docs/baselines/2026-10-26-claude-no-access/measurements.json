@@ -1,0 +1,62 @@
+[
+  {
+    "step": "install",
+    "exitCode": 0,
+    "elapsedSeconds": 1.391
+  },
+  {
+    "step": "git-init",
+    "exitCode": 0,
+    "elapsedSeconds": 0.027
+  },
+  {
+    "step": "init",
+    "exitCode": 0,
+    "elapsedSeconds": 0.067
+  },
+  {
+    "step": "git-add",
+    "exitCode": 0,
+    "elapsedSeconds": 0.021
+  },
+  {
+    "step": "git-commit",
+    "exitCode": 0,
+    "elapsedSeconds": 0.026
+  },
+  {
+    "step": "claude-version",
+    "exitCode": 0,
+    "elapsedSeconds": 0.015
+  },
+  {
+    "step": "direct-probe",
+    "exitCode": 1,
+    "elapsedSeconds": 0.437
+  },
+  {
+    "step": "doctor",
+    "exitCode": 0,
+    "elapsedSeconds": 0.111
+  },
+  {
+    "step": "kickoff",
+    "exitCode": 0,
+    "elapsedSeconds": 0.113
+  },
+  {
+    "step": "watch",
+    "exitCode": 1,
+    "elapsedSeconds": 2.113
+  },
+  {
+    "step": "handoff",
+    "exitCode": 0,
+    "elapsedSeconds": 0.106
+  },
+  {
+    "step": "inspect",
+    "exitCode": 0,
+    "elapsedSeconds": 0.106
+  }
+]
