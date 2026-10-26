@@ -27,6 +27,7 @@ import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import type { loadProjectConfig, resolveProjectPaths } from "@afk-geoff/shared";
 import { attachTerminalFailure, formatErrorMessage } from "./cli-utils.js";
 import { emitRunEvent, isRunEventsEnabled } from "./run-events.js";
+import { hostNodeEnv, hostNodeShellPrelude } from "./host-node-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1845,7 +1846,7 @@ export async function resolvePackageManager(cwd: string): Promise<PackageManager
 
 async function getPathPnpmVersion(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync("pnpm", ["--version"], { cwd, timeout: 10_000 });
+    const { stdout } = await execFileAsync("pnpm", ["--version"], { cwd, timeout: 10_000, env: hostNodeEnv() });
     return stdout.trim() || undefined;
   } catch {
     return undefined;
@@ -1865,8 +1866,9 @@ export async function runVerificationCommands(commands: string[], cwd: string, p
       const shellCommand = packageManager.shellPrelude
         ? `${packageManager.shellPrelude}\n${trimmed}`
         : trimmed;
-      const { stdout, stderr } = await execFileAsync("bash", ["-lc", shellCommand], {
+      const { stdout, stderr } = await execFileAsync("bash", ["-lc", `${hostNodeShellPrelude()}\n${shellCommand}`], {
         cwd,
+        env: hostNodeEnv(),
         timeout: 5 * 60 * 1000
       });
       results.push({ command: cmd, exitCode: 0, stdout, stderr, passed: true });
@@ -1939,6 +1941,7 @@ export function spawnReviewProcess(
 
     const child = spawn(invocation.command, invocation.args, {
       cwd,
+      env: hostNodeEnv(),
       stdio: ["pipe", stdoutFd, stderrFd]
     });
 

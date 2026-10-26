@@ -503,9 +503,21 @@ process.stdin.on('end', () => {
     process.env.PATH = `${fixture.repoDir}:${process.env.PATH ?? ""}`;
     writeBrief(fixture.repoDir, { verification: ["pnpm --version"] });
 
-    const output = await captureConsole(async () => {
-      await fixture.cli(["run", "file", "brief.md", "--json"]);
-    });
+    // Model an AFK Node installation with isolated package-manager shims.
+    const selectedNode = path.join(fixture.repoDir, "node");
+    fs.symlinkSync(process.execPath, selectedNode);
+    execFileSync("git", ["add", "node"], { cwd: fixture.repoDir });
+    execFileSync("git", ["commit", "-m", "add fixture Node installation"], { cwd: fixture.repoDir });
+    const originalExecPath = process.execPath;
+    process.execPath = selectedNode;
+    let output: string;
+    try {
+      output = await captureConsole(async () => {
+        await fixture.cli(["run", "file", "brief.md", "--json"]);
+      });
+    } finally {
+      process.execPath = originalExecPath;
+    }
 
     expect(output.split("\n").filter(Boolean).every((line) => line.trim().startsWith("{"))).toBe(true);
     const payloads = parseNdjson(output);
