@@ -39,6 +39,10 @@ pnpm dlx afk-geoff init --runner-profile claude
 pnpm dlx afk-geoff doctor
 ```
 
+The default local Claude profile uses `--bare`. Configure `ANTHROPIC_API_KEY` or supported provider credentials; Claude subscription login alone is not used. `doctor` checks `claude --bare auth status --json` for configured authentication without making a model request, so it does not validate credentials with the provider. Missing authentication is reported by doctor, and login errors from execution or review are retained in the failure handoff. Custom commands manage their own authentication.
+
+For local execution, AFK preserves the Node installation that launched it across implementation, review, and verification, including login shells. Select the intended Node runtime before starting AFK; its directory is prepended to child `PATH` so available package-manager shims use that runtime. Docker execution uses the container runtime.
+
 Create a brief such as `brief.md`, then start an isolated run:
 
 ```bash
