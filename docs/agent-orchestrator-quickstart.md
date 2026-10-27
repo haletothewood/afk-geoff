@@ -31,7 +31,7 @@ afk() { command afk "$@"; }
 If `afk` is not on `PATH`, use this checkout directly:
 
 ```bash
-afk() { /opt/homebrew/bin/node "/Users/david/Documents/AFK Geoff/packages/cli/bin/afk.js" "$@"; }
+afk() { node /path/to/afk-geoff/packages/cli/bin/afk.js "$@"; }
 ```
 
 For a one-off installed CLI in a target repo, use:
@@ -86,7 +86,7 @@ git add .afk/config.yaml .afk/smoke-runner.mjs
 git commit -m "configure afk smoke runner"
 ```
 
-Local runner profiles use the host CLI authentication that already exists on the machine. They do not require API key environment variables by default.
+Codex can use its existing local session. The built-in Claude profile uses `--bare` and an isolated home, so configure `ANTHROPIC_API_KEY` or supported provider credentials; subscription login alone is not used. Its doctor check establishes configured authentication without making a model request. See [runner setup](running-afk.md#local-runner-profiles).
 
 For another agent CLI, configure a custom command in `.afk/config.yaml`:
 

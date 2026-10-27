@@ -1,157 +1,121 @@
 # AFK Geoff
 
-> A boringly reliable execution layer for autonomous coding agents.
+**Give your coding agent a brief. Get verified changes and a reviewable pull request.**
 
-AFK Geoff turns a repository work brief into an isolated implementation run, verified changes, an independent review, and a machine-readable handoff. It is designed to be driven by humans, scripts, CI jobs, bots, or higher-level agent frameworks.
+AFK runs Codex, Claude, or a custom CLI in an isolated Git worktree. It runs your checks, asks a reviewer to inspect the result, and sends issues through a bounded fix loop. You get the branch, logs, verification results, and a structured handoff to decide what happens next.
 
-AFK is not another coding agent. It provides the execution loop around agents such as Codex, Claude, or a custom CLI runner.
+AFK can open and update a PR. Merging and deployment remain with you or your orchestrator.
 
-## What it can do
+## First run
 
-- accept work from a local brief or mirrored GitHub issue
-- run changes in an isolated Git branch and worktree
-- invoke configurable implementation and review runners
-- execute project-specific verification commands
-- run a bounded review-and-fix loop
-- retain progress, logs, verification evidence, and final results under `.afk/`
-- stream machine-readable lifecycle events for external orchestrators
-- publish an optional pull request
-- apply review feedback to the existing pull-request branch
-- run locally in the foreground or as a detached background process
+You need Node.js 22+, pnpm, Git, and an installed, authenticated Codex CLI. Start in an existing repository with a committed `main` branch. Set `baseBranch` in `.afk/config.yaml` if your branch has another name.
 
-AFK blocks or reports a non-publishable result when verification, review, repository state, or publishing requirements are not satisfied. `final-result.json` is the authoritative completion artifact.
-
-## Quick start
-
-AFK requires Node.js 22 or newer and a Git repository.
-
-Initialize it with a local Codex runner:
-
-```bash
-pnpm dlx afk-geoff init --runner-profile codex
-pnpm dlx afk-geoff doctor
+```sh
+pnpm add -D afk-geoff@0.2.1
+pnpm exec afk init --runner-profile codex
+pnpm exec afk doctor --json
 ```
 
-Or use Claude:
+Proceed when doctor reports `ok: true`. This profile runs locally and leaves GitHub publishing disabled. Commit the dependency changes and AFK configuration before starting work. No Docker or GitHub token is needed for this first run.
 
-```bash
-pnpm dlx afk-geoff init --runner-profile claude
-pnpm dlx afk-geoff doctor
+Save the following as `brief.md`. This small demonstration adds two new files and uses Node's built-in test runner; it needs no test-framework setup.
+
+```markdown
+# AFK Execution Brief
+
+## Requirement
+Normalize whitespace in display labels.
+
+## Work Item Title
+Normalize label whitespace
+
+## Work Item Body
+Add afk-label-demo.mjs at the repository root, exporting normalizeLabel.
+For strings, trim leading and trailing whitespace and collapse runs of
+whitespace to one space. Return non-string inputs unchanged. Add tests in
+afk-label-demo.test.mjs using node:test and node:assert/strict.
+Keep these demo files separate from application code.
+
+## Acceptance Criteria
+- Leading and trailing whitespace is removed.
+- Internal spaces, tabs and newlines collapse to one space.
+- Non-string inputs are returned unchanged.
+- Tests cover spaces, tabs, newlines, empty strings and non-string inputs.
+
+## Verification
+- node --test afk-label-demo.test.mjs
 ```
 
-The default local Claude profile uses `--bare`. Configure `ANTHROPIC_API_KEY` or supported provider credentials; Claude subscription login alone is not used. `doctor` checks `claude --bare auth status --json` for configured authentication without making a model request, so it does not validate credentials with the provider. Missing authentication is reported by doctor, and login errors from execution or review are retained in the failure handoff. Custom commands manage their own authentication.
+For real work, replace this demonstration with a focused project task and checks that demonstrate its acceptance criteria. Ensure the two demo filenames are unused before trying the example.
 
-For local execution, AFK preserves the Node installation that launched it across implementation, review, and verification, including login shells. Select the intended Node runtime before starting AFK; its directory is prepended to child `PATH` so available package-manager shims use that runtime. Docker execution uses the container runtime.
-
-Create a brief such as `brief.md`, then start an isolated run:
-
-```bash
-pnpm dlx afk-geoff run file brief.md --detach --json
+```sh
+pnpm exec afk run file brief.md --detach --json
 ```
 
-Watch it and retrieve the final handoff:
+Use the `runId` from the final output line:
 
-```bash
-pnpm dlx afk-geoff watch <run-id> --json
-pnpm dlx afk-geoff handoff <run-id> --json
+```sh
+pnpm exec afk watch <run-id> --json
+pnpm exec afk handoff <run-id> --json
 ```
 
-If verification repeatedly failed on a reviewed, unchanged commit because of an external condition, correct that condition and retry only verification:
+A successful handoff has `publishable: true`, review `PASS`, verification passed, and a clean worktree. Inspect the diff and evidence before merging. A completed process alone does not establish success; `final-result.json` is the authoritative result.
 
-```bash
-pnpm dlx afk-geoff retry <run-id> --stage verification --json
+## What AFK checks
+
+- **Isolation:** work happens on a separate branch and worktree.
+- **Verification:** project and brief commands must pass; choose checks that establish the requested outcome.
+- **Review:** a separate reviewer invocation inspects the result; it can use the same agent as implementation or a different configured runner.
+- **Repository state:** publication readiness requires a committed diff and clean worktree.
+- **Evidence:** `.afk/runs/` retains progress, logs, review and verification results, and failure details.
+
+The review is another model invocation, not a guarantee of correctness. Local workers execute commands on your machine; a worktree isolates Git changes, not operating-system access. Use trusted repositories and review generated changes.
+
+## Open a pull request
+
+Configure a GitHub `origin` remote and provide `GH_TOKEN` with the repository access needed for publishing. Enable integration in `.afk/config.yaml`:
+
+```yaml
+github:
+  enabled: true
 ```
 
-AFK refuses this recovery if the reviewed commit changed or the worktree is dirty.
+Commit the configuration, rerun doctor, then add `--pr` to your run:
 
-Use `--pr` on the run command when the result should be published as a pull request.
-
-For a repo-local installation:
-
-```bash
-pnpm add -D afk-geoff
-pnpm afk init --runner-profile codex
+```sh
+pnpm exec afk doctor --json
+pnpm exec afk run file brief.md --detach --pr --json
 ```
 
-## Execution model
+To address review feedback on the same PR branch, use the work-item ID from the run:
 
-```text
-brief or issue
-    ↓
-isolated branch and worktree
-    ↓
-implementation runner
-    ↓
-project verification plus execution-brief verification
-    ↓
-independent review
-    ↓
-fix and re-verify when needed
-    ↓
-structured handoff or pull request
+```sh
+pnpm exec afk follow-up <work-item-id> --json
 ```
 
-The outer orchestrator or human remains responsible for choosing the work, reviewing the evidence, and deciding whether to publish, retry, narrow, or reject the result.
+## Runners and current limits
 
-## Roadmap
+Codex uses its existing local session. The built-in Claude profile uses `--bare` and an isolated home: configure `ANTHROPIC_API_KEY` or supported provider credentials; subscription login alone is not used. Its doctor check establishes configured authentication, not successful provider access. Custom commands manage their own authentication.
 
-The next priorities are:
+AFK preserves the Node installation that launched it across local work, review, and verification. Start it with the Node version used to install native dependencies. Docker workers use their image's runtime.
 
-1. Continue hardening the pull-request comment resolution contract for reviewer-directed follow-up runs.
-2. Stabilize and document the machine-readable orchestration contract.
-3. Harden run lifecycle and worktree ownership for reliable detached and concurrent execution.
+AFK is early-stage software. Local execution is the primary path; GitHub Actions execution is experimental. Detached-run ownership, cancellation, and recovery remain active roadmap work. The recorded Codex fixture completed without intervention after the watcher fix; a successful live Claude baseline remains unvalidated because Claude access was unavailable.
 
-After that, planned work includes stronger work admission and back pressure, hardened backend selection, the optional GitHub Actions backend, additional source and publishing adapters, and reliable runner usage accounting.
+## Version status
 
-Roadmap order may change as the execution contract is tested in real repositories. See the [public roadmap](https://github.com/haletothewood/afk-geoff/blob/main/docs/roadmap.md) for current direction.
+The first-run instructions target published **v0.2.1**, which includes watcher timestamp, Claude authentication diagnostics, PR-retry, and Node-runtime fixes.
 
-## Current status
-
-AFK Geoff is early-stage software. Local execution is the primary workflow, GitHub Actions support is experimental, and human review is recommended before merging generated changes.
+**Unreleased on main:** required commit-signature policy discovers target requirements, checks configured signing capability, and gates publication on local and GitHub verification across execution and recovery. This is not included in npm v0.2.1. See the [signing configuration](https://github.com/haletothewood/afk-geoff/blob/main/docs/running-afk.md#local-runner-profiles) for the source-build behavior.
 
 ## Documentation
 
-- [Repository and full documentation](https://github.com/haletothewood/afk-geoff)
+- [Runner profiles, signing, execution modes and GitHub Actions](https://github.com/haletothewood/afk-geoff/blob/main/docs/running-afk.md)
 - [Agent orchestrator quick start](https://github.com/haletothewood/afk-geoff/blob/main/docs/agent-orchestrator-quickstart.md)
-- [Machine-readable orchestrator contract](https://github.com/haletothewood/afk-geoff/blob/main/docs/orchestrator-contract.md)
-- [Public roadmap](https://github.com/haletothewood/afk-geoff/blob/main/docs/roadmap.md)
+- [Machine-readable protocol and evidence](https://github.com/haletothewood/afk-geoff/blob/main/docs/orchestrator-contract.md)
+- [Parent-process integration example](https://github.com/haletothewood/afk-geoff/blob/main/examples/orchestrator)
+- [Roadmap](https://github.com/haletothewood/afk-geoff/blob/main/docs/roadmap.md)
+- [Build and release guide](https://github.com/haletothewood/afk-geoff/blob/main/docs/development.md)
 
-## License
+## License status
 
-See the repository for licensing information.
-
-## Required commit signatures
-
-AFK discovers required signatures from GitHub rulesets and classic protection on
-`baseBranch` before worker execution. Configure signing in `.afk/config.yaml`:
-
-```yaml
-git:
-  signing:
-    mode: auto # auto (default), enabled, or disabled
-    # key: an existing Git signing key identifier or SSH key path
-```
-
-`auto` requires signing when the target branch does; optional repositories still
-allow unsigned commits. `enabled` explicitly requires signing, including when
-policy discovery is unavailable. `disabled` cannot override a required target
-policy. Configure Git's signing format, program, key and local verification trust
-in the execution environment. AFK never provisions keys or changes global Git
-configuration. Caller `GIT_CONFIG_*` entries, including credential helpers and SSH
-URL rewrites, are preserved; signing overrides are appended for worker processes.
-
-`doctor --json` reports the effective policy and a bounded sign-and-verify probe.
-An unknown policy, disabled required signing, or an unavailable/unverifiable key
-blocks work with policy/environment evidence and remediation. AFK signs host work,
-fix and follow-up commits, and checks the entire `baseBranch..HEAD` range,
-including worker-created commits. Review and verification remain independent gates.
-
-Required signing stays non-publishable until GitHub confirms every introduced
-commit signature after push. A missing, pending or rejected host result blocks
-publication; a PR need not exist for this check. Local-only enforced signing cannot
-provide host confirmation. Publication recovery, review retry and verification
-retry reevaluate current policy and signatures rather than trusting old artifacts.
-Inspect `final-result.json` and `evidencePacket.commitSigning` for the policy,
-per-commit evidence, host confirmation and remaining blockers. Restore policy read
-access or signing capability and retry; AFK does not rewrite unsigned history or
-weaken protection.
+This repository does not currently declare a license. No open-source license grant is stated here.
