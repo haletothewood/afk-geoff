@@ -457,17 +457,21 @@ async function continueAfterReviewIssues(
   if (!finalResult) {
     throw new Error(`Continuation run ${continuationRun.id} did not produce a final result`);
   }
-  const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const signing = await evaluateCommitSigning(ctx, sourceRun.worktreePath, sourceRun.branchName);
+  const evaluatedResult = applySigningEvaluation(finalResult, signing);
+  const status = result.status === "done" && evaluatedResult.publishable !== true ? "blocked" : result.status;
+  const evidencePacket = isRecord(evaluatedResult.evidencePacket) ? evaluatedResult.evidencePacket : {};
   fs.writeFileSync(finalResultPath, JSON.stringify({
-    ...finalResult,
+    ...evaluatedResult,
+    status,
     recovery,
     evidencePacket: { ...evidencePacket, recovery }
   }, null, 2));
   await ctx.store.updateRun(continuationRun.id, {
-    status: result.status === "failed" ? "failed" : "completed",
+    status: status === "failed" ? "failed" : "completed",
     summary: result.summary
   });
-  await ctx.store.updateWorkItemStatus(sourceRun.workItemId, result.status);
+  await ctx.store.updateWorkItemStatus(sourceRun.workItemId, status);
   await refreshRequirementStatuses(ctx);
   const latestReview = getRecordArray(finalResult.reviewResults).at(-1);
   const verdict = latestReview?.verdict === "PASS" || latestReview?.verdict === "ISSUES" || latestReview?.verdict === "BLOCKED"
@@ -479,8 +483,8 @@ async function continueAfterReviewIssues(
   return {
     runId: continuationRun.id,
     workItemId: sourceRun.workItemId,
-    status: result.status,
-    publishable: finalResult.publishable === true,
+    status,
+    publishable: evaluatedResult.publishable === true,
     reusedStages: recovery.reusedStages,
     retriedStages: recovery.retriedStages,
     review: {

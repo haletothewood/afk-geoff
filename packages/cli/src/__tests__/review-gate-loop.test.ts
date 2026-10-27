@@ -344,6 +344,49 @@ describe("afk CLI — autonomous review gate loop", { timeout: 30_000 }, () => {
     }));
   });
 
+  it.each([true, false])("review retry verifies continuation commits before completion (host accepts: %s)", async (accepted) => {
+    const github = new MockGitHubMirror();
+    const verifier = vi.spyOn(github, "verifyCommitSignatures");
+    verifier.mockImplementation(async ({ shas }) => shas.map((sha) => ({
+      sha, verified: verifier.mock.calls.length === 1 || accepted, reason: "test host verdict"
+    })));
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: github,
+      runnerScriptSuffix: 'fs.appendFileSync(path.join(process.cwd(), "fixes.txt"), "fixed");',
+      signing: { mode: "enabled", key: "fixture-key" },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "openpgp" }),
+      verification: ['node -e "process.exit(0)"']
+    });
+    configureFakeSigning(fixture.repoDir);
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend")!;
+    await fixture.cli(["run", backend.id]);
+    const [sourceRun] = await fixture.store.listRuns();
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Handle retry exhaustion explicitly"] }, "PASS"
+    ]);
+
+    const output = await captureConsole(() => fixture.cli(["retry", sourceRun!.id, "--stage", "review", "--json"]));
+    const outcome = JSON.parse(output.trim().split("\n").at(-1)!);
+    const [continuation] = await fixture.store.listRuns();
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: continuation!.worktreePath!, encoding: "utf8" }).trim();
+    expect(verifier).toHaveBeenCalledTimes(2);
+    expect(verifier.mock.calls[1]![0].shas).toContain(head);
+    expect(verifier.mock.calls[0]![0].shas).not.toContain(head);
+    const finalResult = JSON.parse(fs.readFileSync(path.join(continuation!.runDir, "final-result.json"), "utf8"));
+    expect(finalResult).toMatchObject({
+      status: accepted ? "done" : "blocked",
+      publishable: accepted,
+      evidencePacket: { commitSigning: { hostVerification: { verified: accepted } } }
+    });
+    expect(outcome).toMatchObject({ status: accepted ? "done" : "blocked", publishable: accepted });
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend.id)?.status).toBe(accepted ? "done" : "blocked");
+  });
+
   it("review retry: accumulated issue evidence survives a recovered later review", async () => {
     const fixture = await createFixture(tempDir, {
       verification: ['node -e "process.exit(0)"']
