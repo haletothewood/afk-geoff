@@ -1,3 +1,4 @@
+import YAML from "yaml";
 import { configureFakeSigning } from "./fake-signing.js";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -21,6 +22,89 @@ afterEach(() => {
 });
 
 describe("signing recovery regressions", { timeout: 30_000 }, () => {
+  it.each([
+    ["verification", "commit", "PASS"], ["verification", "dirty", "PASS"],
+    ["review", "commit", "PASS"], ["review", "dirty", "PASS"],
+    ["review", "commit", "ISSUES"], ["review", "dirty", "ISSUES"]
+  ] as const)("blocks %s retry when the stage makes the worktree %s with verdict %s", async (stage, mutation, verdict) => {
+    tempDir = makeTempDir();
+    const mirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true, githubMirror: mirror,
+      signing: { mode: "enabled", key: "fixture-key" },
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "openpgp" }),
+      verification: [stage === "verification" ? 'node -e "process.exit(1)"' : 'node -e "process.exit(0)"']
+    });
+    configureFakeSigning(fixture.repoDir);
+    writeReviewVerdicts(fixture.repoDir, [stage === "review" ? "__MISSING__" : "PASS"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const item = (await fixture.items(requirement.id)).find((entry) => entry.planKey === "backend")!;
+    await fixture.cli(["run", item.id]);
+    const [run] = await fixture.store.listRuns();
+    const finalPath = path.join(run!.runDir, "final-result.json");
+    const before = JSON.parse(fs.readFileSync(finalPath, "utf8"));
+    const script = path.join(tempDir, "mutate.cjs");
+    fs.writeFileSync(script, `const fs = require('node:fs');
+      const {execFileSync} = require('node:child_process');
+      fs.writeFileSync('mutation.txt', 'changed');
+      ${mutation === "commit" ? `execFileSync('git', ['add', 'mutation.txt']); execFileSync('git', ['commit', '-S', '-m', 'unreviewed']);` : ""}
+      ${stage === "review" ? `fs.writeFileSync(${JSON.stringify(before.reviewContractFailure?.resultPath)}, JSON.stringify({verdict: ${JSON.stringify(verdict)}, issues: ['Review issue']}));` : ""}
+    `);
+    if (stage === "verification") {
+      for (const summary of before.verificationSummaries) {
+        for (const result of summary.results) result.command = `node ${script}`;
+      }
+      fs.writeFileSync(finalPath, JSON.stringify(before));
+    } else {
+      const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+      const config = YAML.parse(fs.readFileSync(configPath, "utf8"));
+      config.runner.reviewCommand = [process.execPath, script];
+      fs.writeFileSync(configPath, YAML.stringify(config));
+    }
+    const hostVerification = vi.spyOn(mirror, "verifyCommitSignatures");
+    const remoteBefore = execFileSync("git", ["ls-remote", "origin"], { cwd: fixture.repoDir, encoding: "utf8" });
+    await fixture.cli(["retry", run!.id, "--stage", stage]);
+    const result = JSON.parse(fs.readFileSync(finalPath, "utf8"));
+    expect(result.status).toBe("blocked");
+    expect(result.publishable).toBe(false);
+    expect(result.whyNotPublishable.join("; ")).toMatch(/HEAD changed|worktree is dirty/);
+    expect(hostVerification).not.toHaveBeenCalled();
+    expect(await fixture.store.listRuns()).toHaveLength(1);
+    expect(execFileSync("git", ["ls-remote", "origin"], { cwd: fixture.repoDir, encoding: "utf8" })).toBe(remoteBefore);
+  });
+
+  it("writes a non-publishable terminal artifact when the verifier hangs after a successful probe", { timeout: 60_000 }, async () => {
+    tempDir = makeTempDir();
+    const mirror = new MockGitHubMirror();
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true, githubMirror: mirror,
+      signing: { mode: "enabled", key: "fixture-key" }
+    });
+    const hostVerification = vi.spyOn(mirror, "verifyCommitSignatures");
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const item = (await fixture.items(requirement.id)).find((entry) => entry.planKey === "backend")!;
+    configureFakeSigning(fixture.repoDir);
+    const program = path.join(fixture.repoDir, ".afk", "fake-gpg.cjs");
+    const marker = path.join(tempDir, "probe-verified");
+    const source = fs.readFileSync(program, "utf8").replace("if (args.includes('--verify')) {", `if (args.includes('--verify')) {
+      if (fs.existsSync(${JSON.stringify(marker)})) {
+        setTimeout(() => process.exit(1), 15_000);
+        return;
+      }
+      fs.writeFileSync(${JSON.stringify(marker)}, 'verified');`);
+    fs.writeFileSync(program, source);
+    await expect(fixture.cli(["run", item.id])).rejects.toThrow(/timed out/);
+    const [run] = await fixture.store.listRuns();
+    const result = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8"));
+    expect(result.commitSigningPolicy.capability.verified).toBe(true);
+    expect(result.publishable).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.commitSignatureEvidence).toEqual([expect.objectContaining({ signed: true, verified: false, reason: expect.stringContaining("timed out") })]);
+    expect(hostVerification).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])("preserves inherited Git settings when enforced=%s", async (enforced) => {
     vi.stubEnv("GIT_CONFIG_COUNT", "3");
     const inherited = [

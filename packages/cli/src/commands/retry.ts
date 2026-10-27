@@ -181,7 +181,7 @@ export async function retryRunVerification(
     .filter((result) => !result.passed)
     .map((result) => `${failureLabel(result)} failed: ${result.command} (exit ${result.exitCode})`);
   const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
-  const signing = await evaluateCommitSigning(ctx, run.worktreePath, run.branchName);
+  const signing = await evaluateRetrySigning(ctx, run.worktreePath, run.branchName, currentHead);
   const previousPublishability = isRecord(evidencePacket.publishability) ? evidencePacket.publishability : {};
   const priorVerificationMessages = new Set(getRecordArray(previousPublishability.blockers)
     .filter((blocker) => ["product", "verification", "environment"].includes(String(blocker.category)) && /verification/i.test(String(blocker.message)))
@@ -366,7 +366,7 @@ export async function retryRunReview(
   const retainedReasons = getStringArray(finalResult.whyNotPublishable).filter((message) => message !== terminalMessage);
   const retainedBlockers = getRecordArray(finalResult.publishabilityBlockers).filter((blocker) => blocker.message !== terminalMessage);
   const { terminalFailure: _terminalFailure, reviewContractFailure: _reviewContractFailure, ...reusableResult } = finalResult;
-  const signing = await evaluateCommitSigning(ctx, run.worktreePath, run.branchName);
+  const signing = await evaluateRetrySigning(ctx, run.worktreePath, run.branchName, reviewedHead);
   const updated = applySigningEvaluation({
     ...reusableResult, status: passed ? "done" : "blocked", summary, reviewResults, recovery,
     whyNotPublishable: [...retainedReasons, ...whyNotPublishable],
@@ -397,7 +397,7 @@ export async function retryRunReview(
   await ctx.store.updateWorkItemStatus(run.workItemId, publishable ? "done" : "blocked");
   await refreshRequirementStatuses(ctx);
 
-  if (reviewResult.verdict === "ISSUES") {
+  if (reviewResult.verdict === "ISSUES" && signing.evidenceValid) {
     return await continueAfterReviewIssues(ctx, run, reviewResult.issues?.length
       ? reviewResult.issues
       : ["Unspecified review issue"], recovery);
@@ -621,4 +621,20 @@ function getStringArray(value: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Reused stage evidence is valid only for the same clean HEAD after execution. */
+async function evaluateRetrySigning(
+  ctx: CliContext, worktreePath: string, branchName: string | undefined, expectedHead: string
+): Promise<Awaited<ReturnType<typeof evaluateCommitSigning>> & { evidenceValid: boolean }> {
+  const { stdout: head } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: worktreePath });
+  const { stdout: status } = await execFileAsync("git", ["status", "--porcelain"], { cwd: worktreePath });
+  const blockers = [
+    ...(head.trim() !== expectedHead ? ["Recovery evidence is invalid: worktree HEAD changed during retry"] : []),
+    ...(status.trim() ? ["Recovery evidence is invalid: worktree is dirty after retry"] : [])
+  ];
+  if (blockers.length) {
+    return { policy: ctx.commitSigningPolicy, commits: [], satisfied: false, blockers, evidenceValid: false };
+  }
+  return { ...await evaluateCommitSigning(ctx, worktreePath, branchName), evidenceValid: true };
 }

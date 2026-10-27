@@ -5,6 +5,8 @@ import type { CommitSignatureVerificationSource } from "@afk-geoff/core";
 import type { CliContext } from "./types.js";
 import { HOST_SIGNATURE_VERIFICATION_PENDING_MESSAGE, type EffectiveCommitSigningPolicy } from "./commit-signing-policy.js";
 
+const SIGNATURE_VERIFICATION_TIMEOUT_MS = 10_000;
+
 export interface CommitSignatureEvidence {
   sha: string;
   signed: boolean;
@@ -28,10 +30,14 @@ export function readCommitSignatureEvidence(worktreePath: string, baseBranch: st
         return { sha, signed: false, verified: false };
       }
       try {
-        execFileSync("git", ["verify-commit", sha], { cwd: worktreePath, stdio: "ignore" });
+        execFileSync("git", ["verify-commit", sha], { cwd: worktreePath, stdio: "ignore", timeout: SIGNATURE_VERIFICATION_TIMEOUT_MS, killSignal: "SIGKILL" });
         return { sha, signed: true, verified: true };
-      } catch {
-        return { sha, signed: true, verified: false };
+      } catch (error) {
+        const timedOut = error instanceof Error && "code" in error && error.code === "ETIMEDOUT";
+        return {
+          sha, signed: true, verified: false,
+          ...(timedOut ? { reason: `signature verification timed out after ${SIGNATURE_VERIFICATION_TIMEOUT_MS}ms` } : {})
+        };
       }
     });
   } catch {
