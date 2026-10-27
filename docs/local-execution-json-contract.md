@@ -287,4 +287,30 @@ If repository or configuration context cannot load, this envelope has `backend: 
 
 The foreground `run_result.finalResultPath` and the later `inspect --json` and `handoff --json` path fields identify this artifact only after it exists. A command omits an artifact path if persistence did not produce that file. Detached callers should wait for a terminal run state and then obtain the path through `inspect` or `handoff`.
 
+The artifact also includes `commitSigningPolicy` and `commitSignatureEvidence`. When the effective target policy or operator mode enforces signing, callers must require the policy to be publishable and every AFK branch commit to be signed and verified. The evidence packet mirrors this under `commitSigning`; inspect and handoff project the same authoritative publishability decision.
+
 The observation, handoff, pull-request publication, and review follow-up envelopes are frozen separately in [Local Observation and Publishing JSON Contract](local-observation-publishing-json-contract.md).
+
+### Additive signing evidence
+
+`doctor --json` and `run_result` add `commitSigningPolicy` when repository context
+loads successfully (including run errors after context load). Context failures
+omit it. Existing fields and lifecycle-event schemas are unchanged. The doctor
+check list additionally contains `commit signing policy`.
+
+The policy contains `targetBranch`, `mode` (`auto`, `enabled`, `disabled`),
+`requirement` (`required`, `optional`, `unavailable`), `source`
+(`github-branch-rules`, `operator`, `local-default`), `enforced`, `publishable`,
+and `capability` (`available`, `verified`, `format`, optional `reason`). Optional
+`failure` contains `category` (`policy` or `environment`), `message` and
+`remediation`. Policy `publishable` reports admission readiness only; it is not
+proof that the final branch or host signatures satisfy publication gates.
+
+Final artifacts add `commitSigningPolicy` and `commitSignatureEvidence` entries
+with `sha`, `signed`, `verified`, and optional `reason`. The evidence packet's
+`commitSigning` contains `policy`, `commits`, `satisfied`, optional `blockers`, and
+optional `hostVerification` (`verified`, optional `message`). Local verification
+alone cannot set `satisfied` for enforced signing: every range commit also needs
+GitHub confirmation. Signature blockers use `policy` or `environment` categories.
+Legacy artifacts without these fields are reread against current policy and the
+complete Git range during recovery; absent evidence never proves satisfaction.

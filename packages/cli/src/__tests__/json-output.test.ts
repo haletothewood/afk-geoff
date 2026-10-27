@@ -132,6 +132,7 @@ process.stdin.on('end', () => {
       "backend",
       "branchName",
       "command",
+      "commitSigningPolicy",
       "detached",
       "finalResultPath",
       "finalVerdict",
@@ -195,6 +196,7 @@ process.stdin.on('end', () => {
         "backend",
         "branchName",
         "command",
+        "commitSigningPolicy",
         "detachLogPaths",
         "detached",
         "kind",
@@ -255,6 +257,7 @@ process.stdin.on('end', () => {
       "backend",
       "branchName",
       "command",
+      "commitSigningPolicy",
       "detachLogPaths",
       "detached",
       "kind",
@@ -298,6 +301,7 @@ process.stdin.on('end', () => {
     expect(Object.keys(payload).sort()).toEqual([
       "backend",
       "command",
+      "commitSigningPolicy",
       "detached",
       "error",
       "kind",
@@ -337,6 +341,7 @@ process.stdin.on('end', () => {
       expect(Object.keys(payload).sort()).toEqual([
         "backend",
         "command",
+        "commitSigningPolicy",
         "detached",
         "error",
         "kind",
@@ -376,6 +381,7 @@ process.stdin.on('end', () => {
     expect(Object.keys(payload).sort()).toEqual([
       "backend",
       "command",
+      "commitSigningPolicy",
       "detached",
       "error",
       "kind",

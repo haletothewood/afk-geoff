@@ -1,9 +1,10 @@
+import { configureFakeSigning } from "./fake-signing.js";
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureConsole, createFixture, makeTempDir, rewriteConfig, writeFakeDocker, writeReviewVerdicts } from "./test-helpers.js";
+import { captureConsole, createFixture, makeTempDir, MockGitHubMirror, rewriteConfig, writeFakeDocker, writeReviewVerdicts } from "./test-helpers.js";
 
 // Each case runs real git, shell and Node subprocesses; allow for full-suite load.
 describe("afk CLI — autonomous review gate loop", { timeout: 30_000 }, () => {
@@ -341,6 +342,49 @@ describe("afk CLI — autonomous review gate loop", { timeout: 30_000 }, () => {
         retriedStages: ["review"]
       })
     }));
+  });
+
+  it.each([true, false])("review retry verifies continuation commits before completion (host accepts: %s)", async (accepted) => {
+    const github = new MockGitHubMirror();
+    const verifier = vi.spyOn(github, "verifyCommitSignatures");
+    verifier.mockImplementation(async ({ shas }) => shas.map((sha) => ({
+      sha, verified: verifier.mock.calls.length === 1 || accepted, reason: "test host verdict"
+    })));
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: github,
+      runnerScriptSuffix: 'fs.appendFileSync(path.join(process.cwd(), "fixes.txt"), "fixed");',
+      signing: { mode: "enabled", key: "fixture-key" },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "openpgp" }),
+      verification: ['node -e "process.exit(0)"']
+    });
+    configureFakeSigning(fixture.repoDir);
+    writeReviewVerdicts(fixture.repoDir, ["__MISSING__"]);
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend")!;
+    await fixture.cli(["run", backend.id]);
+    const [sourceRun] = await fixture.store.listRuns();
+    writeReviewVerdicts(fixture.repoDir, [
+      { verdict: "ISSUES", issues: ["Handle retry exhaustion explicitly"] }, "PASS"
+    ]);
+
+    const output = await captureConsole(() => fixture.cli(["retry", sourceRun!.id, "--stage", "review", "--json"]));
+    const outcome = JSON.parse(output.trim().split("\n").at(-1)!);
+    const [continuation] = await fixture.store.listRuns();
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: continuation!.worktreePath!, encoding: "utf8" }).trim();
+    expect(verifier).toHaveBeenCalledTimes(2);
+    expect(verifier.mock.calls[1]![0].shas).toContain(head);
+    expect(verifier.mock.calls[0]![0].shas).not.toContain(head);
+    const finalResult = JSON.parse(fs.readFileSync(path.join(continuation!.runDir, "final-result.json"), "utf8"));
+    expect(finalResult).toMatchObject({
+      status: accepted ? "done" : "blocked",
+      publishable: accepted,
+      evidencePacket: { commitSigning: { hostVerification: { verified: accepted } } }
+    });
+    expect(outcome).toMatchObject({ status: accepted ? "done" : "blocked", publishable: accepted });
+    expect((await fixture.items(requirement.id)).find((item) => item.id === backend.id)?.status).toBe(accepted ? "done" : "blocked");
   });
 
   it("review retry: accumulated issue evidence survives a recovered later review", async () => {
@@ -918,6 +962,126 @@ if (prompt.includes("# Issues to fix")) {
     };
     expect(finalResult.status).toBe("blocked");
     expect(finalResult.recovery).toBeUndefined();
+  });
+
+  it("verification retry rechecks current signing policy and the complete commit range when legacy evidence is missing", async () => {
+    let signatureRequirement: "optional" | "required" = "optional";
+    const readinessMarker = path.join(tempDir, "verification-ready");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: new MockGitHubMirror(),
+      targetCommitSignaturePolicyResolver: async () => ({
+        requirement: signatureRequirement,
+        source: "github-branch-rules"
+      }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" })
+    });
+    const configPath = path.join(fixture.repoDir, ".afk", "config.yaml");
+    const config = YAML.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (config as { verification: string[] }).verification = [
+      `node -e 'process.exit(require("fs").existsSync(${JSON.stringify(readinessMarker)}) ? 0 : 1)'`
+    ];
+    fs.writeFileSync(configPath, YAML.stringify(config));
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    const finalResultPath = path.join(run!.runDir, "final-result.json");
+    const legacyFinalResult = JSON.parse(fs.readFileSync(finalResultPath, "utf8")) as {
+      evidencePacket: Record<string, unknown>;
+      repeatedFailure: { unchangedHead: string };
+    };
+    fs.writeFileSync(path.join(run!.worktreePath!, "legacy-fix-phase.txt"), "done\n");
+    execFileSync("git", ["add", "legacy-fix-phase.txt"], { cwd: run!.worktreePath! });
+    execFileSync("git", ["commit", "-m", "legacy fix phase"], { cwd: run!.worktreePath! });
+    legacyFinalResult.repeatedFailure.unchangedHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: run!.worktreePath!,
+      encoding: "utf8"
+    }).trim();
+    delete legacyFinalResult.evidencePacket.commitSigning;
+    fs.writeFileSync(finalResultPath, JSON.stringify(legacyFinalResult, null, 2));
+
+    signatureRequirement = "required";
+    fs.writeFileSync(readinessMarker, "ready\n");
+    await fixture.cli(["retry", run!.id, "--stage", "verification"]);
+
+    const finalResult = JSON.parse(fs.readFileSync(finalResultPath, "utf8")) as {
+      status: string;
+      publishable: boolean;
+      commitSigningPolicy: { requirement: string };
+      commitSignatureEvidence: Array<{ sha: string; signed: boolean; verified: boolean }>;
+      evidencePacket: {
+        commitSigning: {
+          satisfied: boolean;
+          commits: Array<{ sha: string; signed: boolean; verified: boolean }>;
+        };
+      };
+    };
+    const expectedRange = execFileSync("git", ["rev-list", "--reverse", "main..HEAD"], {
+      cwd: run!.worktreePath!,
+      encoding: "utf8"
+    }).trim().split("\n").filter(Boolean);
+
+    expect(expectedRange).toHaveLength(2);
+    expect(finalResult.status).toBe("blocked");
+    expect(finalResult.publishable).toBe(false);
+    expect(finalResult.commitSigningPolicy.requirement).toBe("required");
+    expect(finalResult.commitSignatureEvidence.map((commit) => commit.sha)).toEqual(expectedRange);
+    expect(finalResult.commitSignatureEvidence.every((commit) => !commit.signed && !commit.verified)).toBe(true);
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: false,
+      commits: finalResult.commitSignatureEvidence
+    });
+  });
+
+  it("verification retry requires authoritative host verification for a required-signature range", async () => {
+    const signingKey = "fixture-key";
+    const readinessMarker = path.join(tempDir, "verification-ready");
+    const fixture = await createFixture(tempDir, {
+      githubEnabled: true,
+      githubMirror: new MockGitHubMirror(),
+      signing: { mode: "auto", key: signingKey },
+      targetCommitSignaturePolicyResolver: async () => ({ requirement: "required", source: "github-branch-rules" }),
+      signingCapabilityResolver: async () => ({ available: true, verified: true, format: "ssh" }),
+      verification: [
+        `node -e 'process.exit(require("fs").existsSync(${JSON.stringify(readinessMarker)}) ? 0 : 1)'`
+      ]
+    });
+    configureFakeSigning(fixture.repoDir);
+
+    const requirement = await fixture.capture("Add a queue-based resend workflow.");
+    await fixture.seedQueue(requirement.id);
+    const backend = (await fixture.items(requirement.id)).find((item) => item.planKey === "backend");
+    expect(backend).toBeDefined();
+
+    await fixture.cli(["run", backend!.id]);
+    const [run] = await fixture.store.listRuns();
+    fs.writeFileSync(readinessMarker, "ready\n");
+    await fixture.cli(["retry", run!.id, "--stage", "verification"]);
+
+    const finalResult = JSON.parse(fs.readFileSync(path.join(run!.runDir, "final-result.json"), "utf8")) as {
+      status: string;
+      publishable: boolean;
+      evidencePacket: {
+        commitSigning: {
+          satisfied: boolean;
+          commits: Array<{ signed: boolean; verified: boolean }>;
+          hostVerification: { verified: boolean };
+        };
+      };
+    };
+    expect(finalResult.status).toBe("done");
+    expect(finalResult.publishable).toBe(true);
+    expect(finalResult.evidencePacket.commitSigning.commits.length).toBeGreaterThan(0);
+    expect(finalResult.evidencePacket.commitSigning.commits.every((commit) => commit.signed && commit.verified)).toBe(true);
+    expect(finalResult.evidencePacket.commitSigning).toMatchObject({
+      satisfied: true,
+      hostVerification: { verified: true }
+    });
   });
 
   it("environment verification failure: a missing tool blocks after one worker without launching a fix worker", async () => {

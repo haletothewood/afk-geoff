@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { GitHubIssueWorkSource } from "@afk-geoff/adapter-github";
 import { branchNameForWorkItem } from "@afk-geoff/adapter-local-git";
 import {
@@ -20,6 +20,7 @@ import { NoOpSourceUpdater, tryPostSourceUpdate } from "../source-updater.js";
 import { emitRunEvent } from "../run-events.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import { MarkdownFileWorkSource, resolveBriefPath } from "../file-work-source.js";
+import { evaluateRunSigning } from "../commit-signing-evidence.js";
 import type { CliContext, CliDependencies, DetachedRunOptions, RunOutcome } from "../types.js";
 
 export async function runWorkItem(
@@ -131,6 +132,11 @@ export async function runTrackedWorkItem(
     }
 
     if (ctx.resultPublisher && result.branchName && result.worktreePath) {
+      const signingRun = await latestRunForWorkItem(ctx, workItem.id);
+      if (signingRun) {
+        if (result.recovery) recordRecoveryMetadata(signingRun.runDir, result.recovery);
+        await evaluateRunSigning(ctx, { ...signingRun, worktreePath: result.worktreePath, branchName: result.branchName });
+      }
       const publication = await ctx.resultPublisher.publish({
         workItem,
         branchName: result.branchName,
@@ -239,6 +245,17 @@ async function tryReusePublishableFinalization(
     return undefined;
   }
 
+  // Publication recovery reuses review and verification only for the same clean commit.
+  const reviews = Array.isArray(finalResult.reviewResults) ? finalResult.reviewResults.filter(isJsonRecord) : [];
+  const verification = Array.isArray(finalResult.verificationSummaries) ? finalResult.verificationSummaries.filter(isJsonRecord).at(-1) : undefined;
+  const results = Array.isArray(verification?.results) ? verification.results.filter(isJsonRecord) : [];
+  const commits = Array.isArray(finalResult.commits) ? finalResult.commits.filter(isJsonRecord).filter((commit) => typeof commit.sha === "string") : [];
+  const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: run.worktreePath, encoding: "utf8" }).trim();
+  const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: run.worktreePath, encoding: "utf8" }).trim();
+  if (reviews.at(-1)?.verdict !== "PASS" || results.some((result) => result.passed !== true) || dirty || commits.at(-1)?.sha !== head) {
+    throw new Error("Publication recovery requires the unchanged reviewed commit, passing verification and a clean worktree; inspect the run before retrying");
+  }
+
   const summary = typeof finalResult.latestWorkerSummary === "string"
     ? finalResult.latestWorkerSummary
     : typeof workerResult.summary === "string"
@@ -314,7 +331,7 @@ function recordRecoveryMetadata(runDir: string, recovery: RecoveryMetadata): voi
           ...completedEvidencePacket,
           publishability: {
             ...existingPublishability,
-            publishable: true,
+            publishable: whyNotPublishable.length === 0 && publishabilityBlockers.length === 0,
             blockers: withoutTerminalFailureBlocker(existingPublishability.blockers, terminalFailure)
           },
           recommendedHumanAction: "publish",
@@ -327,7 +344,7 @@ function recordRecoveryMetadata(runDir: string, recovery: RecoveryMetadata): voi
     JSON.stringify({
       ...completedFinalResult,
       status: "done",
-      publishable: true,
+      publishable: whyNotPublishable.length === 0 && publishabilityBlockers.length === 0,
       whyNotPublishable,
       publishabilityBlockers,
       recovery,

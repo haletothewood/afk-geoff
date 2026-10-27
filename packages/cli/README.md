@@ -119,3 +119,39 @@ AFK Geoff is early-stage software. Local execution is the primary workflow, GitH
 ## License
 
 See the repository for licensing information.
+
+## Required commit signatures
+
+AFK discovers required signatures from GitHub rulesets and classic protection on
+`baseBranch` before worker execution. Configure signing in `.afk/config.yaml`:
+
+```yaml
+git:
+  signing:
+    mode: auto # auto (default), enabled, or disabled
+    # key: an existing Git signing key identifier or SSH key path
+```
+
+`auto` requires signing when the target branch does; optional repositories still
+allow unsigned commits. `enabled` explicitly requires signing, including when
+policy discovery is unavailable. `disabled` cannot override a required target
+policy. Configure Git's signing format, program, key and local verification trust
+in the execution environment. AFK never provisions keys or changes global Git
+configuration. Caller `GIT_CONFIG_*` entries, including credential helpers and SSH
+URL rewrites, are preserved; signing overrides are appended for worker processes.
+
+`doctor --json` reports the effective policy and a bounded sign-and-verify probe.
+An unknown policy, disabled required signing, or an unavailable/unverifiable key
+blocks work with policy/environment evidence and remediation. AFK signs host work,
+fix and follow-up commits, and checks the entire `baseBranch..HEAD` range,
+including worker-created commits. Review and verification remain independent gates.
+
+Required signing stays non-publishable until GitHub confirms every introduced
+commit signature after push. A missing, pending or rejected host result blocks
+publication; a PR need not exist for this check. Local-only enforced signing cannot
+provide host confirmation. Publication recovery, review retry and verification
+retry reevaluate current policy and signatures rather than trusting old artifacts.
+Inspect `final-result.json` and `evidencePacket.commitSigning` for the policy,
+per-commit evidence, host confirmation and remaining blockers. Restore policy read
+access or signing capability and retry; AFK does not rewrite unsigned history or
+weaken protection.

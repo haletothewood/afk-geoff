@@ -105,11 +105,12 @@ export interface CodeHost {
   createWorktree(input: { cwd: string; branchName: string; baseBranch: string; path: string }): Promise<void>;
   createWorktreeFromBranch(input: { cwd: string; branchName: string; path: string }): Promise<void>;
   removeWorktree(input: { cwd: string; path: string; force?: boolean }): Promise<void>;
-  commitAll(input: { cwd: string; message: string }): Promise<{ created: boolean; sha?: string }>;
+  commitAll(input: { cwd: string; message: string; sign?: boolean; signingKey?: string }): Promise<{ created: boolean; sha?: string }>;
   pushBranch(input: { cwd: string; branchName: string }): Promise<void>;
   deleteRemoteBranch(input: { cwd: string; branchName: string }): Promise<void>;
   deleteLocalBranch(input: { cwd: string; branchName: string }): Promise<void>;
   hasDiffAgainst(input: { cwd: string; baseBranch: string }): Promise<boolean>;
+  listCommitsSince?(input: { cwd: string; baseBranch: string }): Promise<string[]>;
 }
 
 export interface WorkspaceRuntime {
@@ -145,6 +146,10 @@ export interface ChangeRequestPublisher {
 
 export interface PullRequestReviewSource {
   listPullRequestReviewComments(input: { owner: string; repo: string; pullNumber: number }): Promise<Array<{ id: string; body: string; path?: string; line?: number }>>;
+}
+
+export interface CommitSignatureVerificationSource {
+  verifyCommitSignatures(input: { owner: string; repo: string; shas: string[] }): Promise<Array<{ sha: string; verified: boolean; reason?: string }>>;
 }
 
 export interface WorkflowDispatcher {
@@ -227,6 +232,7 @@ export interface ResultPublisher {
     summary: string;
     agentName: string;
     modelLabel: string;
+    requireVerifiedCommitSignatures?: boolean;
     pullRequest?: {
       title: string;
       body: string;
