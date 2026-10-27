@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { evaluateCommitSigning, applySigningEvaluation } from "../commit-signing-evidence.js";
 import {
   dedupeVerificationEntries,
   parseJsonWithRecovery,
@@ -9,7 +10,12 @@ import {
   tagVerificationEntries,
   type VerificationCommandResult
 } from "@afk-geoff/shared";
-import { formatInvocation, resolvePackageManager, runVerificationCommands, spawnReviewProcess } from "../local-docker-execution-backend.js";
+import {
+  formatInvocation,
+  resolvePackageManager,
+  runVerificationCommands,
+  spawnReviewProcess
+} from "../local-docker-execution-backend.js";
 import { emitRunEvent } from "../run-events.js";
 import { mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
 import type { CliContext } from "../types.js";
@@ -174,49 +180,35 @@ export async function retryRunVerification(
   const whyNotPublishable = passed ? [] : results
     .filter((result) => !result.passed)
     .map((result) => `${failureLabel(result)} failed: ${result.command} (exit ${result.exitCode})`);
+  const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
+  const signing = await evaluateCommitSigning(ctx, run.worktreePath, run.branchName);
+  const previousPublishability = isRecord(evidencePacket.publishability) ? evidencePacket.publishability : {};
+  const priorVerificationMessages = new Set(getRecordArray(previousPublishability.blockers)
+    .filter((blocker) => ["product", "verification", "environment"].includes(String(blocker.category)) && /verification/i.test(String(blocker.message)))
+    .map((blocker) => blocker.message));
+  const retainedReasons = getStringArray(finalResult.whyNotPublishable).filter((message) => !priorVerificationMessages.has(message) && message !== finalResult.summary);
+  const retainedBlockers = getRecordArray(finalResult.publishabilityBlockers).filter((blocker) => !priorVerificationMessages.has(blocker.message) && blocker.message !== finalResult.summary);
   const summary = passed
     ? `Verification retry passed on reviewed commit ${currentHead.slice(0, 12)}`
     : `Verification retry failed on reviewed commit ${currentHead.slice(0, 12)}`;
-  const evidencePacket = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
-  const updatedEvidence = {
-    ...evidencePacket,
-    verification: {
-      status: passed ? "passed" : "failed",
-      commands: results.map((result) => ({
-        command: result.command,
-        passed: result.passed,
-        exitCode: result.exitCode,
-        ...(result.failureCategory ? { failureCategory: result.failureCategory } : {})
-      }))
-    },
-    publishability: {
-      publishable: passed,
-      blockers: passed ? [] : whyNotPublishable.map((message) => ({ category: "verification", message }))
-    },
-    recommendedHumanAction: passed ? "publish" : "retry",
-    recovery
-  };
-  fs.writeFileSync(finalResultPath, JSON.stringify({
-    ...finalResult,
-    status: passed ? "done" : "blocked",
-    summary,
-    verificationSummaries,
-    publishable: passed,
-    whyNotPublishable,
-    publishabilityBlockers: updatedEvidence.publishability.blockers,
-    recovery,
-    evidencePacket: updatedEvidence
-  }, null, 2));
+  const updated = applySigningEvaluation({
+    ...finalResult, status: passed ? "done" : "blocked", summary, verificationSummaries, recovery,
+    whyNotPublishable: [...retainedReasons, ...whyNotPublishable],
+    publishabilityBlockers: [...retainedBlockers, ...whyNotPublishable.map((message) => ({ category: "verification", message }))],
+    evidencePacket: { ...evidencePacket, publishability: { blockers: retainedBlockers }, verification: { status: passed ? "passed" : "failed", commands: results }, recovery }
+  }, signing);
+  const publishable = updated.publishable === true;
+  fs.writeFileSync(finalResultPath, JSON.stringify({ ...updated, status: publishable ? "done" : "blocked" }, null, 2));
 
   await ctx.store.updateRun(runId, { status: "completed", summary });
-  await ctx.store.updateWorkItemStatus(run.workItemId, passed ? "done" : "blocked");
+  await ctx.store.updateWorkItemStatus(run.workItemId, publishable ? "done" : "blocked");
   await refreshRequirementStatuses(ctx);
 
   return {
     runId,
     workItemId: run.workItemId,
-    status: passed ? "done" : "blocked",
-    publishable: passed,
+    status: publishable ? "done" : "blocked",
+    publishable,
     reusedStages: recovery.reusedStages,
     retriedStages: recovery.retriedStages,
     verification: { status: passed ? "passed" : "failed", commands: results },
@@ -370,28 +362,19 @@ export async function retryRunReview(
   const previousEvidence = isRecord(finalResult.evidencePacket) ? finalResult.evidencePacket : {};
   const { terminalFailure: _evidenceFailure, ...evidenceWithoutFailure } = previousEvidence;
   const reviewEvidence = summarizeReviewEvidence(reviewResults);
-  const updatedEvidence = {
-    ...evidenceWithoutFailure,
-    review: reviewEvidence,
-    publishability: {
-      publishable: passed,
-      blockers: whyNotPublishable.map((message) => ({ category: "review", message }))
-    },
-    recommendedHumanAction: passed ? "publish" : "retry",
-    recovery
-  };
+  const terminalMessage = isRecord(finalResult.terminalFailure) ? finalResult.terminalFailure.message : undefined;
+  const retainedReasons = getStringArray(finalResult.whyNotPublishable).filter((message) => message !== terminalMessage);
+  const retainedBlockers = getRecordArray(finalResult.publishabilityBlockers).filter((blocker) => blocker.message !== terminalMessage);
   const { terminalFailure: _terminalFailure, reviewContractFailure: _reviewContractFailure, ...reusableResult } = finalResult;
-  fs.writeFileSync(finalResultPath, JSON.stringify({
-    ...reusableResult,
-    status: passed ? "done" : "blocked",
-    summary,
-    reviewResults,
-    publishable: passed,
-    whyNotPublishable,
-    publishabilityBlockers: updatedEvidence.publishability.blockers,
-    recovery,
-    evidencePacket: updatedEvidence
-  }, null, 2));
+  const signing = await evaluateCommitSigning(ctx, run.worktreePath, run.branchName);
+  const updated = applySigningEvaluation({
+    ...reusableResult, status: passed ? "done" : "blocked", summary, reviewResults, recovery,
+    whyNotPublishable: [...retainedReasons, ...whyNotPublishable],
+    publishabilityBlockers: [...retainedBlockers, ...whyNotPublishable.map((message) => ({ category: "review", message }))],
+    evidencePacket: { ...evidenceWithoutFailure, publishability: { blockers: retainedBlockers }, review: reviewEvidence, recovery }
+  }, signing);
+  const publishable = updated.publishable === true;
+  fs.writeFileSync(finalResultPath, JSON.stringify({ ...updated, status: publishable ? "done" : "blocked" }, null, 2));
   emitRunEvent({
     event: passed ? "review_completed" : reviewResult.verdict === "ISSUES" ? "review_issues" : "review_completed",
     runId,
@@ -411,7 +394,7 @@ export async function retryRunReview(
     resultPath
   } as Parameters<typeof emitRunEvent>[0]);
   await ctx.store.updateRun(runId, { status: "completed", summary });
-  await ctx.store.updateWorkItemStatus(run.workItemId, passed ? "done" : "blocked");
+  await ctx.store.updateWorkItemStatus(run.workItemId, publishable ? "done" : "blocked");
   await refreshRequirementStatuses(ctx);
 
   if (reviewResult.verdict === "ISSUES") {
@@ -423,8 +406,8 @@ export async function retryRunReview(
   return {
     runId,
     workItemId: run.workItemId,
-    status: passed ? "done" : "blocked",
-    publishable: passed,
+    status: publishable ? "done" : "blocked",
+    publishable,
     reusedStages: recovery.reusedStages,
     retriedStages: recovery.retriedStages,
     review: {
@@ -630,6 +613,10 @@ function summarizeReviewEvidence(reviewResults: Array<Record<string, unknown>>):
     addressedIssueCount: Math.max(0, issueCount - remainingIssues.length),
     remainingIssues
   };
+}
+
+function getStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

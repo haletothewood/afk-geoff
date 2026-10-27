@@ -512,7 +512,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
             emitRunEvent({ event: "run_requested", target, ...(value ? { value } : {}) });
             return await runAction(openedContext);
           }), { allowRunEvents: true });
-          printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: openedContext.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, ...outcome }, { compact: true });
+          printJson({ kind: "run_result", command: "run", ok: true, target, ...(value ? { value } : {}), backend: openedContext.executionBackendKind, requirePullRequest: options.pr ?? false, detached: options.detach ?? false, commitSigningPolicy: openedContext.commitSigningPolicy, ...outcome }, { compact: true });
         } catch (error) {
           const terminalFailure = terminalFailureFromError(error);
           printJson({
@@ -524,6 +524,7 @@ export async function runCli(argv = process.argv, dependencies: CliDependencies 
             backend: ctx?.executionBackendKind ?? options.backend ?? null,
             requirePullRequest: options.pr ?? false,
             detached: options.detach ?? false,
+            ...(ctx ? { commitSigningPolicy: ctx.commitSigningPolicy } : {}),
             ...(terminalFailure ? { terminalFailure } : {}),
             error: {
               ...(terminalFailure ? { category: terminalFailure.category } : {}),

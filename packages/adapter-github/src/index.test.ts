@@ -35,6 +35,11 @@ function createMockClient(): OctokitLike & { issueCreates: RecordedIssueCreate[]
     issueCreates,
     pullCreates,
     workflowDispatches,
+    repos: {
+      async getCommit(input) {
+        return { data: { sha: input.ref, commit: { verification: { verified: true, reason: "valid" } } } };
+      }
+    },
     issues: {
       async create(input) {
         issueCreates.push(input);
@@ -306,7 +311,8 @@ describe("GitHubMirror adapter scenarios", () => {
       pushBranch: vi.fn(),
       deleteRemoteBranch: vi.fn(),
       deleteLocalBranch: vi.fn(),
-      hasDiffAgainst: vi.fn()
+      hasDiffAgainst: vi.fn(),
+      listCommitsSince: vi.fn(async () => ["first", "fix"])
     };
     const publisher = new GitHubPullRequestPublisher(codeHost, mirror, {
       owner: "acme",
@@ -347,7 +353,7 @@ describe("GitHubMirror adapter scenarios", () => {
       base: { ref: "main", repo: { full_name: "acme/demo" } }
     };
     const list = vi.fn(async () => {
-      expect(codeHost.pushBranch).toHaveBeenCalledTimes(2);
+      expect(codeHost.pushBranch.mock.calls.length).toBeGreaterThanOrEqual(2);
       return { data: [existing] };
     });
     Object.assign(client.pulls, { list });
@@ -355,10 +361,18 @@ describe("GitHubMirror adapter scenarios", () => {
     expect(reused.url).toBe(result.url);
     expect(reused.externalRef).toMatchObject({ remoteId: "44", remoteNumber: 55 });
     expect(client.pullCreates).toHaveLength(1);
+    const requiredInput = { ...publicationInput, requireVerifiedCommitSignatures: true };
+    const verify = vi.spyOn(mirror, "verifyCommitSignatures");
+    await publisher.publish(requiredInput);
+    expect(verify).toHaveBeenLastCalledWith({ owner: "acme", repo: "demo", shas: ["first", "fix"] });
+    verify.mockResolvedValueOnce([{ sha: "first", verified: true }]);
+    await expect(publisher.publish(requiredInput)).rejects.toThrow("GitHub returned no verification result");
+    verify.mockResolvedValueOnce([{ sha: "first", verified: true }, { sha: "fix", verified: false, reason: "unsigned" }]);
+    await expect(publisher.publish(requiredInput)).rejects.toThrow("fix (unsigned)");
+    expect(client.pullCreates).toHaveLength(1);
     codeHost.pushBranch.mockRejectedValueOnce(new Error("Push failed"));
     await expect(publisher.publish(publicationInput)).rejects.toThrow("Push failed");
-    expect(list).toHaveBeenCalledTimes(1);
-
+    expect(list).toHaveBeenCalledTimes(2);
 
     expect(codeHost.pushBranch).toHaveBeenCalledWith({
       cwd: "/tmp/worktree",

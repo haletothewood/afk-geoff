@@ -52,6 +52,9 @@ export async function runPreflight(
   options: { requirePullRequest: boolean },
   dependencies: CliDependencies
 ): Promise<void> {
+  console.log(
+    `[signing] mode ${ctx.commitSigningPolicy.mode}; target ${ctx.commitSigningPolicy.targetBranch}: ${ctx.commitSigningPolicy.requirement}; capability ${ctx.commitSigningPolicy.capability.verified ? "verified" : ctx.commitSigningPolicy.enforced ? "unavailable" : "not required"}`
+  );
   // 1. Verify the runner executable exists on PATH.
   const runnerInvocation = ctx.runner.buildInvocation({
     mode: "work",

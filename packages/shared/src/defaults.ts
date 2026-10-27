@@ -29,6 +29,11 @@ export function defaultProjectConfig(): ProjectConfig {
     github: {
       enabled: true
     },
+    git: {
+      signing: {
+        mode: "auto"
+      }
+    },
     runner: {
       kind: "claude",
       envAllowlist: ["GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]

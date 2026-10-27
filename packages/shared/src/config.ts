@@ -29,6 +29,16 @@ export const projectConfigSchema = z.object({
       repo: z.string().min(1).optional()
     })
     .default({ enabled: true }),
+  git: z
+    .object({
+      signing: z
+        .object({
+          mode: z.enum(["auto", "enabled", "disabled"]).default("auto"),
+          key: z.string().min(1).optional()
+        })
+        .default({ mode: "auto" })
+    })
+    .default({ signing: { mode: "auto" } }),
   runner: z.object({
     kind: runnerKindSchema.default("claude"),
     model: z.string().min(1).optional(),

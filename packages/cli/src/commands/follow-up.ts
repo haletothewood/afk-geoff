@@ -4,6 +4,7 @@ import type { PullRequestReviewSource } from "@afk-geoff/core";
 import { dedupeVerificationEntries, resolvePackageManagerContract, tagVerificationEntries, verificationCommands } from "@afk-geoff/shared";
 import { attachTerminalFailure, buildFallbackSourceComment, formatErrorMessage, terminalFailureFromError } from "../cli-utils.js";
 import { latestRunForWorkItem, markWorkItemRunFailed, mustGetRequirement, mustGetWorkItem, refreshRequirementStatuses } from "../store-helpers.js";
+import { evaluateRunSigning } from "../commit-signing-evidence.js";
 import type { CliContext, ReviewCommentSummary, RunOutcome, VerificationSummary } from "../types.js";
 
 export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string): Promise<RunOutcome> {
@@ -135,10 +136,12 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
 
   if (result.hasDiff && result.branchName && result.worktreePath) {
     try {
-      await ctx.git.pushBranch({
-        cwd: result.worktreePath,
-        branchName: result.branchName
-      });
+      if (!ctx.commitSigningPolicy.enforced) {
+        await ctx.git.pushBranch({
+          cwd: result.worktreePath,
+          branchName: result.branchName
+        });
+      }
     } catch (error) {
       const terminalFailure = {
         category: "publishing" as const,
@@ -146,6 +149,27 @@ export async function runPullRequestFollowUp(ctx: CliContext, workItemId: string
       };
       await markWorkItemRunFailed(ctx, workItem.id, terminalFailure.message, terminalFailure.category);
       throw attachTerminalFailure(error, terminalFailure);
+    }
+    if (ctx.commitSigningPolicy.enforced) {
+      try {
+        const verifiedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (!verifiedRun) throw new Error("Cannot verify commit signatures without a tracked run");
+        await evaluateRunSigning(ctx, { ...verifiedRun, worktreePath: result.worktreePath, branchName: result.branchName });
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : String(error);
+        const blockedRun = await latestRunForWorkItem(ctx, workItem.id);
+        if (blockedRun) {
+          await ctx.store.updateRun(blockedRun.id, { status: "completed", summary });
+        }
+        await ctx.store.updateWorkItemStatus(workItem.id, "blocked");
+        return {
+          workItemId: workItem.id,
+          ...(blockedRun ? { runId: blockedRun.id, status: "blocked" as const } : { status: "blocked" as const }),
+          branchName: result.branchName,
+          actionableReviewComments,
+          ...(pullRef.url ? { prUrl: pullRef.url } : {})
+        };
+      }
     }
   }
 
